@@ -47,12 +47,13 @@ class HelpTailMotionConfig : Record {
 class LeaderHelpChatLayoutModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("LeaderHelpChatLayout")
-    Constants("tailMotionVersion" to 3, "imeInsetsVersion" to 5, "dockControlsVersion" to 1)
+    Constants("tailMotionVersion" to 3, "imeInsetsVersion" to 5, "dockControlsVersion" to 1, "emptyHintMotionVersion" to 1)
     View(LeaderHelpChatLayoutView::class) {
       Events("onImeInsetChange")
       Prop("scrollId") { view: LeaderHelpChatLayoutView, id: String -> view.scrollId = id }
       Prop("dockId") { view: LeaderHelpChatLayoutView, id: String -> view.dockId = id }
       Prop("controlsId") { view: LeaderHelpChatLayoutView, id: String -> view.controlsId = id }
+      Prop("emptyHintId") { view: LeaderHelpChatLayoutView, id: String -> view.emptyHintId = id }
       Prop("viewportId") { view: LeaderHelpChatLayoutView, id: String -> view.viewportId = id }
       Prop("allowFollow") { view: LeaderHelpChatLayoutView, value: Boolean -> view.allowFollow = value }
       Prop("reducedMotion") { view: LeaderHelpChatLayoutView, value: Boolean -> view.reducedMotion = value }
@@ -101,6 +102,7 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
   }
   private fun releaseImeOwnership() {
     releaseControls()
+    releaseEmptyHint()
     managedWindow?.let { window ->
       // Edge-to-edge chrome belongs to the app, not the temporary IME owner.
       // Restoring the Activity's old contrast scrim can flash a dark system-bar
@@ -125,6 +127,13 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
       postInvalidateOnAnimation()
     }
   var viewportId = ""
+  var emptyHintId = ""
+    set(value) {
+      if (field == value) return
+      releaseEmptyHint()
+      field = value
+      postInvalidateOnAnimation()
+    }
   var allowFollow = false
     set(value) {
       if (field != value) {
@@ -151,6 +160,7 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
   private var scroll: ScrollView? = null
   private var dock: View? = null
   private var controls: View? = null
+  private var emptyHint: View? = null
   private var viewport: View? = null
   private val viewportClip = Rect()
   private var viewportClipHeight = -1
@@ -190,6 +200,29 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
   private fun releaseControls() {
     controls?.translationY = 0f
     controls = null
+  }
+  private fun releaseEmptyHint() {
+    emptyHint?.translationY = 0f
+    emptyHint = null
+  }
+  private fun synchronizeEmptyHint(dockTop: Float) {
+    if (emptyHint?.isAttachedToWindow != true) {
+      releaseEmptyHint()
+      emptyHint = findNativeView(rootView, emptyHintId)
+    }
+    emptyHint?.let { hint ->
+      // Yoga keeps the resting viewport (header -> resting dock) unchanged.
+      // Its centered contents move by half the dock's actual displacement,
+      // in this same IME/pre-draw pass. Settled JS insets never move it again.
+      // Using measured bounds also reconciles dock growth and window resize.
+      // Do not measure the translated hint itself: getLocationInWindow rounds
+      // to pixels, which feeds a half-pixel translation back into the next
+      // pre-draw. Derive its resting top from its unchanged parent instead.
+      val parent = hint.parent as? View ?: return
+      val hintTop = layoutWindowTop(parent) + hint.top - parent.scrollY
+      val translation = (max(hintTop, dockTop) - hintTop - hint.height) / 2f
+      if (abs(hint.translationY - translation) > .01f) hint.translationY = translation
+    }
   }
   private fun keyboardTop(bottom: Int, containerBottom: Float): Float {
     if (bottom <= 0) return containerBottom
@@ -421,6 +454,7 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
       controls = findNativeView(rootView, controlsId)
     }
     controls?.translationY = dockImeTranslation
+    synchronizeEmptyHint(layoutWindowTop(footer) + dockImeTranslation)
     if (viewport?.isAttachedToWindow != true) {
       viewport = findNativeView(rootView, viewportId)
       viewportClipHeight = -1; viewportClipWidth = -1
@@ -508,7 +542,9 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
         "imeBottom" to imeBottom / density, "imeAnimating" to imeAnimating,
         "dockImeTranslation" to dockImeTranslation / density,
         "controlsAttached" to (controls?.isAttachedToWindow == true),
-        "controlsImeTranslation" to (controls?.translationY ?: 0f) / density))
+        "controlsImeTranslation" to (controls?.translationY ?: 0f) / density,
+        "emptyHintAttached" to (emptyHint?.isAttachedToWindow == true),
+        "emptyHintTranslation" to (emptyHint?.translationY ?: 0f) / density))
       if (frames.size > 240) frames.removeFirst()
     }
   }
@@ -541,6 +577,6 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     }
     return null
   }
-  fun diagnostics(): Map<String, Any> = if (!debug) emptyMap() else mapOf("following" to following, "tailMotionVersion" to 3, "imeInsetsVersion" to 5, "dockControlsVersion" to 1, "tailMotionEnabled" to tailMotionEnabled, "tailDurationMs" to tailDurationMs, "tailCurve" to tailCurve, "tailMaxViewport" to tailMaxViewport, "controlsAttached" to (controls?.isAttachedToWindow == true), "controlsImeTranslation" to (controls?.translationY ?: 0f) / density, "frames" to frames.toList())
+  fun diagnostics(): Map<String, Any> = if (!debug) emptyMap() else mapOf("following" to following, "tailMotionVersion" to 3, "imeInsetsVersion" to 5, "dockControlsVersion" to 1, "emptyHintMotionVersion" to 1, "tailMotionEnabled" to tailMotionEnabled, "tailDurationMs" to tailDurationMs, "tailCurve" to tailCurve, "tailMaxViewport" to tailMaxViewport, "controlsAttached" to (controls?.isAttachedToWindow == true), "controlsImeTranslation" to (controls?.translationY ?: 0f) / density, "emptyHintAttached" to (emptyHint?.isAttachedToWindow == true), "emptyHintTranslation" to (emptyHint?.translationY ?: 0f) / density, "frames" to frames.toList())
   fun resetDiagnostics() { frames.clear() }
 }

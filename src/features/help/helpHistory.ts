@@ -2,6 +2,7 @@ import { API_BASE_URL } from '@/utils/config';
 import type { HelpTicket } from './helpApi';
 import { readHistoryDelta, readHistorySnapshot, listHistoryRecords, readHistoryMessage, readHistoryMessages, readHistoryRecord, removeHistoryTicket, writeHistoryChange, writeAccountChanges } from './helpHistoryDatabase';
 import { validHelpAnchor } from './helpHistoryModel';
+import type {HelpReadReceipt} from './helpHistoryRecord';
 import type { HelpCachedWindow, HelpHistoryPage, HelpSyncResult, HelpViewportAnchor, HelpHistoryWindowSelector } from './helpHistoryTypes';
 
 export const helpHistoryScope = (userId: number) => `${encodeURIComponent(API_BASE_URL)}:${userId}`;
@@ -33,6 +34,9 @@ export async function cacheHelpPage(userId: number, ticket: HelpTicket, page: He
 }
 export async function cacheHelpSync(userId: number, ticketId: number, sync: HelpSyncResult) {
   await writeHistoryChange(helpHistoryScope(userId), ticketId, {sync});
+}
+export async function cacheHelpRead(userId:number,ticketId:number,readReceipt:HelpReadReceipt){
+  await writeHistoryChange(helpHistoryScope(userId),ticketId,{readReceipt});
 }
 export async function readCachedHelpRange(userId:number,ticketId:number,from:number,to:number,limit=100){return readHistoryMessages(helpHistoryScope(userId),ticketId,from,to,limit);}
 export async function readCachedHelpMessage(userId:number,ticketId:number,messageId:number){return readHistoryMessage(helpHistoryScope(userId),ticketId,messageId);}

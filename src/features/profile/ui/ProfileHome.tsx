@@ -1,10 +1,11 @@
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
-import { Avatar, Button, Divider, List, Switch, Text, TouchableRipple } from 'react-native-paper';
+import { Button, Divider, List, Switch, Text, TouchableRipple } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import type { Profile } from '@/src/entities/user/types';
 import { profileIdentity, type ProfileSectionKey } from '../lib/presentation';
 import { ProfileLogoutButton } from './ProfileLogoutButton';
+import {UserAvatar, resolveProfileAvatar} from '@/components/Profile/UserAvatar';
 
 type Props = {
   profile: Profile; version: string; trackingEnabled: boolean; trackingBusy: boolean;
@@ -35,9 +36,7 @@ export function ProfileHome(props: Props) {
   return <View style={styles.body}>
     <View style={styles.identity}>
       <TouchableRipple onPress={() => onOpen('personal')} accessibilityRole="button" accessibilityLabel="Изменить фото и личные данные" borderless style={styles.avatar}>
-        {profile.avatarUrl ? <Avatar.Image size={76} source={{ uri: profile.avatarUrl }} /> : identity.initials
-          ? <Avatar.Text size={76} label={identity.initials} color="#2563EB" style={styles.avatarFill} labelStyle={styles.initials} />
-          : <Avatar.Icon size={76} icon="account-outline" color="#2563EB" style={styles.avatarFill} />}
+        <UserAvatar identityKey={profile.id} uri={resolveProfileAvatar(profile)} size={76} initials={identity.initials} accessibilityLabel={`Фото: ${identity.name}`}/>
       </TouchableRipple>
       <View style={styles.identityText}>
         <Text style={styles.name}>{identity.name}</Text>
@@ -54,7 +53,7 @@ export function ProfileHome(props: Props) {
       <Row title="Контакты для клиентов" description="Телефоны, мессенджеры и почта" icon="people-outline" onPress={() => onOpen('contacts')} />
     </Section>
     <Section title="РАБОЧИЕ ИНСТРУМЕНТЫ">
-      {profile.employeeProfile && <Row title="Подключение 1С" description="Личная учётная запись и доступ ИИ" icon="server-outline" onPress={() => onOpen('onec')} />}
+      {profile.employeeProfile && <Row title="Подключения" description="1С и почта" icon="link-outline" onPress={() => onOpen('onec')} />}
       <View style={styles.trackingRow}>
         <View style={styles.trackingLink}>
           <List.Item title="Геолокация" description={props.trackingText} onPress={() => onOpen('tracking')}
@@ -80,7 +79,7 @@ export function ProfileHome(props: Props) {
 const styles = StyleSheet.create({
   body: { width: '100%', maxWidth: 720, alignSelf: 'center', paddingHorizontal: 18, paddingTop: 0, paddingBottom: 12 },
   identity: { flexDirection: 'row', alignItems: 'center', gap: 16, paddingVertical: 0, marginBottom: 14 },
-  avatar: { borderRadius: 38 }, avatarFill: { backgroundColor: '#DBE7FF' }, initials: { fontSize: 28, fontWeight: '700' },
+  avatar: { borderRadius: 38 },
   identityText: { flex: 1, gap: 4 }, name: { fontSize: 18, lineHeight: 23, fontWeight: '700', color: '#0F172A' },
   subtitle: { fontSize: 14, lineHeight: 20, color: '#64748B' }, connection: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   connectionText: { fontSize: 13, lineHeight: 20 }, edit: { borderRadius: 8 }, editContent: { minHeight: 40 }, editLabel: { fontSize: 14, fontWeight: '700' },

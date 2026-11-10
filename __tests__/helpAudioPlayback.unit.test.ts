@@ -140,10 +140,37 @@ test('new source waits for an older in-flight seek, so its completion cannot see
   expect(mockPlayer.replace).toHaveBeenCalledWith(null); expect(mockPlayer.replace).not.toHaveBeenCalledWith({ uri: 'file://second' });
   await act(async () => { finish(); await seeking; await playing; }); expect(mockPlayer.replace).toHaveBeenLastCalledWith({ uri: 'file://second' });
 });
-test('replaying a finished voice rewinds first and stop clears all metadata', async () => {
+test('a finished voice closes the shared player and can be played again from its row', async () => {
   await render(); await start(); await status({ currentTime: 20, playing: false, didJustFinish: true });
-  await act(async () => { await controller.toggle(); }); expect(mockPlayer.seekTo).toHaveBeenLastCalledWith(0); expect(controller.positionSeconds).toBe(0);
+  expect(controller).toMatchObject({ current: null, playing: false, durationSeconds: 0, loading: false });
+  expect(mockPlayer.replace).toHaveBeenLastCalledWith(null);
+  await act(async () => controller.play(item(1), async () => ({ uri: 'file://voice-1.m4a' })));
+  await status({ currentTime: 0, playing: true, didJustFinish: false, isLoaded: true, duration: 20 });
+  expect(controller.current?.messageId).toBe(1); expect(controller.positionSeconds).toBe(0);
   await act(async () => controller.stop()); expect(controller).toMatchObject({ current: null, playing: false, durationSeconds: 0, loading: false });
+});
+test('pause retains the player and a previous source finish cannot dismiss a new source before it plays', async () => {
+  await render(); await start();
+  await act(async () => controller.toggle());
+  await status({ playing: false, currentTime: 8 });
+  expect(controller.current?.messageId).toBe(1);
+  await act(async () => controller.play(item(2), async () => ({ uri: 'file://voice-2.m4a' })));
+  await status({ playing: false, currentTime: 20, didJustFinish: true });
+  expect(controller.current?.messageId).toBe(2);
+  await status({ playing: true, currentTime: 0, didJustFinish: false });
+  await status({ playing: false, currentTime: 20, didJustFinish: true });
+  expect(controller.current).toBeNull();
+});
+test('transfer progress is scoped to the active resolver and closing aborts it', async () => {
+  await render();
+  let options: any, finish!: (source: { uri: string }) => void, pending!: Promise<void>;
+  await act(async () => { pending = controller.play(item(1), (_attachment, value) => { options = value; return new Promise(done => { finish = done; }); }); });
+  await act(async () => options.onProgress({ transferred: 25, total: 100 }));
+  expect(controller.transferProgress).toEqual({ transferred: 25, total: 100 });
+  await act(async () => controller.stop());
+  expect(options.signal.aborted).toBe(true);
+  await act(async () => { options.onProgress({ transferred: 100, total: 100 }); finish({ uri: 'file://old' }); await pending; });
+  expect(controller.current).toBeNull(); expect(controller.transferProgress).toBeUndefined();
 });
 test('load failure reports a generic actionable error and toggle retries with the saved resolver', async () => {
   await render(); const resolve = jest.fn().mockRejectedValueOnce(new Error('private source URL')).mockResolvedValue({ uri: 'file://retry' });

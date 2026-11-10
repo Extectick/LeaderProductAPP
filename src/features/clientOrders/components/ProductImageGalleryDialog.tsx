@@ -19,31 +19,34 @@ function isRemoteImageUri(src?: string | null) {
   return !!src && !src.startsWith('data:');
 }
 
-export function WebProductImage({
-  src,
-  alt,
-  sx,
-  loading = 'lazy',
-  spinnerSize = 18,
-  objectFit = 'contain',
-}: {
+type WebProductImageProps = {
   src: string;
   alt: string;
   sx?: any;
   loading?: 'lazy' | 'eager';
   spinnerSize?: number;
   objectFit?: 'cover' | 'contain';
-}) {
+};
+
+export function WebProductImage(props: WebProductImageProps) {
+  // A new source gets its own load state. A reset effect can run after a cached
+  // image's onLoad and leave a finished image behind a permanent spinner.
+  return <WebProductImageSource key={props.src} {...props} />;
+}
+
+function WebProductImageSource({
+  src,
+  alt,
+  sx,
+  loading = 'lazy',
+  spinnerSize = 18,
+  objectFit = 'contain',
+}: WebProductImageProps) {
   const [loaded, setLoaded] = React.useState(!isRemoteImageUri(src));
   const [failed, setFailed] = React.useState(false);
   const displaySrc = failed ? PRODUCT_IMAGE_PLACEHOLDER_URI : src;
   const shouldShowLoader = isRemoteImageUri(src) && !loaded && !failed;
   const sxList = Array.isArray(sx) ? sx : [sx];
-
-  React.useEffect(() => {
-    setLoaded(!isRemoteImageUri(src));
-    setFailed(false);
-  }, [src]);
 
   return (
     <Box
@@ -52,7 +55,7 @@ export function WebProductImage({
           position: 'relative',
           display: 'block',
           overflow: 'hidden',
-          bgcolor: '#F8FAFC',
+          bgcolor: 'var(--co-panel, #F8FAFC)',
         },
         ...sxList,
       ]}
@@ -85,7 +88,7 @@ export function WebProductImage({
             inset: 0,
             display: 'grid',
             placeItems: 'center',
-            bgcolor: 'rgba(248, 250, 252, 0.78)',
+            bgcolor: 'var(--co-panel, rgba(248, 250, 252, 0.78))',
           }}
         >
           <CircularProgress size={spinnerSize} thickness={4.5} />

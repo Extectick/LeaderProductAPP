@@ -1,3 +1,4 @@
+jest.mock('react-native-reanimated',()=>require('./mocks/reanimated'));
 import React from 'react';
 import TestRenderer, {act} from 'react-test-renderer';
 import {PanResponder} from 'react-native';

@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native';
 import type { HelpMessage } from '../src/features/help/helpApi';
 import type { HelpPending } from '../src/features/help/helpDurableTypes';
 
-jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
+jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons', MaterialCommunityIcons: 'MaterialCommunityIcons' }));
 jest.mock('../src/features/help/helpTheme', () => ({ useHelpReducedMotion: () => false, useHelpTheme: () => ({ surface: '#222', text: '#fff', muted: '#999', outgoing: '#234', accentText: '#68b', danger: '#f99' }) }));
 jest.mock('../src/features/help/components/HelpPrimitives', () => ({ HelpIcon: 'HelpIcon', HelpAvatar: 'HelpAvatar' }));
 jest.mock('../src/features/help/components/HelpMedia', () => ({ HelpAudio: 'HelpAudio', HelpImage: 'HelpImage' }));
@@ -78,7 +78,10 @@ test('queued files use the full album and file tile before upload completes',asy
   await act(async()=>{view=TestRenderer.create(React.createElement(HelpPendingMessage,{item,onRetry:jest.fn()}));});
   try{
     expect(view.root.findByType('HelpImage' as any).props.attachment.localUri).toBe(files[0].uri);
-    expect(view.root.findAllByProps({testID:'help-attachment-uploading'}).length).toBeGreaterThan(0);
+    const upload=view.root.findAllByProps({accessibilityLabel:'Отправка файла document.pdf'})[0];
+    expect(upload.props.disabled).toBe(true);
+    expect(upload.props.accessibilityState).toMatchObject({busy:true,disabled:true});
+    expect(view.root.findAllByProps({accessibilityRole:'progressbar',accessibilityLabel:'Отправка document.pdf'}).length).toBeGreaterThan(0);
     const text=view.root.findAllByType(require('react-native').Text).map(node=>node.props.children);
     expect(text).not.toContain('photo.jpg');expect(text).toContain('document.pdf');
     expect(view.root.findAllByProps({testID:'help-pending-content'})).toHaveLength(0);

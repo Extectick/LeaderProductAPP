@@ -1,0 +1,29 @@
+{
+  "date":"2026-11-07",
+  "target":"actual ClientOrdersWebScreen through local synthetic fixture8131",
+  "viewport":{"width":1440,"height":900,"rail":72},
+  "statesChecked":["dark draft","document menu","expanded header","date calendar","organization autocomplete","posted readOnly","error offline","offline to online without remount"],
+  "results":{
+    "darkPopupSurface":"rgb(34,43,53)",
+    "darkPopupText":"rgb(242,244,247)",
+    "readOnlyNumericInputsDisabled":6,
+    "readOnlySubmitAndAddDisabled":true,
+    "readOnlyMenuSaveClearCancelDisabled":true,
+    "queueButtonDisabledOfflineEnabledAfterReconnect":true,
+    "fixtureImagesLoaded":4,
+    "blackIoniconsAfterFix":0,
+    "blockedLiveNetworkAttempts":0,
+    "ownPreviewTabClosed":true
+  },
+  "findings":[
+    {"severity":"P2","issue":"Unspecified Ionicons color rendered black in dark theme, including toolbar, table and calendar arrows","state":"fixed and browser rechecked","owner":"orders_web_implementation and root"},
+    {"severity":"observation","issue":"Main send action remains enabled offline; underlying workspace has durable queue semantics. No real submit performed.","state":"not classified as a defect"}
+  ],
+  "screenshots":{
+    "darkReadOnlyFinal":"/home/extectick/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mw5hhtye-de196229.png",
+    "darkErrorOfflineCalendarFinal":"/home/extectick/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mw5hhj8h-eb0e0c8e.png",
+    "darkMenuBeforeIconFix":"/home/extectick/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mw5hf19v-391a08f0.png",
+    "darkOrganizationAutocomplete":"/home/extectick/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mw5hfwn0-58e1e2f5.png"
+  },
+  "limits":["In-memory mock business layer; does not verify real API/1C or durable storage","Product thumbnails use bundled demo/company icon","Browser snapshots expose bounded diagnostic output; full console audit is not asserted"]
+}

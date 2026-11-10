@@ -14,6 +14,25 @@ const page=(from:number,to:number,eventCursor=10):HelpHistoryPage=>({messages:Ar
 const sync=(overrides:Partial<HelpSyncResult>={}):HelpSyncResult=>({ticket,events:[],messages:[],deletedMessageIds:[],nextCursor:20,eventCursor:20,snapshotCursor:20,hasMore:false,lastSequence:300,lastReadSequence:100,firstUnreadSequence:101,...overrides});
 beforeEach(async()=>{await AsyncStorage.clear();});
 
+test('read receipts preserve a newer cached answer while advancing only their own confirmed cursor',async()=>{
+  const newer={...ticket,lastSequence:301,lastReadSequence:100,unreadCount:2,updatedAt:'2026-11-06T10:01:00Z'};
+  await writeHistoryChange('dev:read',7,{sync:sync({ticket:newer,lastSequence:301,firstUnreadSequence:300,snapshotCursor:30,nextCursor:30,messages:[message(301)]})});
+  await writeHistoryChange('dev:read',7,{readReceipt:{sequence:300,unreadCount:0,lastSequence:300,snapshotCursor:20}});
+  expect(await readHistoryRecord('dev:read',7)).toMatchObject({lastReadSequence:300,lastSequence:301,snapshotCursor:30,syncCursor:30,ticket:{lastReadSequence:300,unreadCount:2}});
+  expect((await readHistoryMessages('dev:read',7,301,301))[0].id).toBe(301);
+  // Replay supplies the precise remaining unread count without losing our ack.
+  await writeHistoryChange('dev:read',7,{sync:sync({ticket:{...newer,lastReadSequence:300,unreadCount:1},lastReadSequence:300,lastSequence:301,firstUnreadSequence:301,snapshotCursor:31,nextCursor:31})});
+  expect(await readHistoryRecord('dev:read',7)).toMatchObject({firstUnreadSequence:301,ticket:{unreadCount:1}});
+});
+
+test('a list-only read update with unchanged metadata persists its count and cannot restore a consumed unread anchor',async()=>{
+  const before={...ticket,unreadCount:200,updatedAt:'2026-11-06T10:00:00Z'};
+  await writeHistoryChange('dev:read-list',7,{ticket:before,page:page(1,300)});
+  await writeHistoryChange('dev:read-list',7,{ticket:{...before,lastReadSequence:300,unreadCount:0}});
+  await writeHistoryChange('dev:read-list',7,{ticket:before,page:page(1,300)});
+  expect(await readHistoryRecord('dev:read-list',7)).toMatchObject({lastReadSequence:300,firstUnreadSequence:null,ticket:{lastReadSequence:300,unreadCount:0}});
+});
+
 test('web delta selects committed rows and versioned tombstones in one document read; ID sweeps read keys only',async()=>{
   await writeHistoryChange('dev:delta',7,{ticket,page:page(1,600)});
   await writeHistoryChange('dev:delta',7,{sync:sync({messages:[message(599,'stream')],deletedMessageIds:[2]})});

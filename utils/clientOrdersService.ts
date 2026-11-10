@@ -307,6 +307,10 @@ export type ClientOrderInvoice = {
 };
 
 export type ClientOrder = {
+  sourceBaseKey?: string;
+  sourceTruncated?: boolean;
+  commentTruncated?: boolean;
+  sourceCurrencyName?: string;
   draftReview?: {
     code: string;
     message: string;
@@ -524,7 +528,7 @@ function mapPagedResponse<T>(res: { ok: boolean; data?: { items?: T[] } | T[]; m
   };
 }
 
-function normalizeClientOrder(order: ClientOrder): ClientOrder {
+export function normalizeClientOrder(order: ClientOrder): ClientOrder {
   const items = Array.isArray((order as any).items) ? order.items : [];
   const events = Array.isArray((order as any).events) ? order.events : [];
   const invoices: ClientOrderInvoice[] = Array.isArray(order.invoices) ? order.invoices : [];
@@ -596,15 +600,23 @@ export async function getClientOrdersTodaySummary(options: { force?: boolean } =
   return options.force ? load() : dedupeRead(`GET ${path}`, load);
 }
 
-export async function getClientOrder(guid: string) {
-  const path = API_ENDPOINTS.CLIENT_ORDERS.DETAIL(guid);
-  return dedupeRead(`GET ${path}`, async () => {
+export async function getClientOrder(guid: string, options: {baseKey?: string; expectedUserId?: number; signal?: AbortSignal} = {}) {
+  const path = API_ENDPOINTS.CLIENT_ORDERS.DETAIL(guid) + (options.baseKey === undefined ? '' : `?baseKey=${encodeURIComponent(options.baseKey)}`);
+  const load = async () => {
+    options.signal?.throwIfAborted();
     const res = await apiClient<void, ClientOrder>(path, {
       timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS,
+      ...(options.expectedUserId===undefined?{}:{expectedUserId:options.expectedUserId}),
+      ...(options.signal?{signal:options.signal}:{}),
+      ...(options.baseKey===undefined?{}:{networkRetryCount:0}),
     });
-    if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось загрузить заказ клиента', res.message));
+    options.signal?.throwIfAborted();
+    if (!res.ok || !res.data) throw Object.assign(new Error(getErrorMessage('Не удалось загрузить заказ клиента', res.message)), {code:res.backendErrorCode||res.errorCode});
+    if(options.baseKey!==undefined&&(typeof res.data.guid!=='string'||res.data.guid.toLowerCase()!==guid.toLowerCase()||res.data.sourceBaseKey!==options.baseKey||res.data.readOnly!==true))throw Object.assign(new Error('Не удалось проверить источник заказа.'),{code:'CLIENT_ORDER_SOURCE_MISMATCH'});
     return normalizeClientOrder(res.data);
-  });
+  };
+  // Source-bound requests must not share another account's or canceled caller's lease.
+  return options.baseKey!==undefined||options.signal||options.expectedUserId!==undefined?load():dedupeRead(`GET ${path}`,load);
 }
 
 export async function getClientOrderInvoices(guid: string) {

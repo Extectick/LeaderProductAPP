@@ -14,7 +14,7 @@ jest.mock('react-native-reanimated', () => {
   const React = require('react'), RN = require('react-native');
   return { __esModule:true, default:{View:RN.View}, cancelAnimation:jest.fn(),runOnJS:(fn:unknown)=>fn,
     useSharedValue:(value:unknown)=>React.useRef({value}).current,
-    useAnimatedStyle:(fn:()=>any)=>({get transform(){return fn().transform;}}),withTiming:(value:unknown)=>value };
+    useAnimatedStyle:(fn:()=>any)=>({get transform(){return fn().transform;},get opacity(){return fn().opacity;}}),withTiming:(value:unknown)=>value };
 });
 let mockSnapshot = {
   recording: false,
@@ -100,6 +100,8 @@ jest.mock('../src/features/help/HelpAudioPlayback', () => ({
     stop: jest.fn()
   })
 }));
+jest.mock('../src/features/help/helpHaptics',()=>({helpHaptic:jest.fn()}),{virtual:true});
+const {helpHaptic}=require('../src/features/help/helpHaptics');
 Object.defineProperty(Platform, 'OS', {
   configurable: true,
   value: 'android'
@@ -157,7 +159,17 @@ describe('Android voice draft transitions', () => {
   function mic() {
     const handlers = tree.root.findByType('GestureDetector' as any).props.gesture.handlers;
     return {props:{
-      onPanResponderGrant: () => {mockTouchPosition={absoluteX:0,absoluteY:0};handlers.onTouchesDown({allTouches:[mockTouchPosition]},{activate:()=>handlers.onStart()});},
+      onPanResponderGrant: () => {
+        mockTouchPosition={absoluteX:0,absoluteY:0};
+        // RNGH dispatches pointer DOWN before Pan's native handle() calls begin.
+        // Android rejects setGestureState(ACTIVE) unless it is already BEGAN.
+        let state:'undetermined'|'began'|'active'|'failed'='undetermined';
+        handlers.onTouchesDown({allTouches:[mockTouchPosition]},{
+          begin:()=>{if(state==='undetermined')state='began';},
+          activate:()=>{if(state==='began'){state='active';handlers.onStart();}},
+          fail:()=>{state='failed';},
+        });
+      },
       onPanResponderMove: (_:unknown,g:{dx:number;dy:number}) => { jest.advanceTimersByTime(16);mockTouchPosition={absoluteX:g.dx,absoluteY:g.dy};handlers.onUpdate(mockTouchPosition); },
       onPanResponderRelease: () => handlers.onEnd(mockTouchPosition,true)
     }};
@@ -187,6 +199,15 @@ describe('Android voice draft transitions', () => {
     await act(async()=>button('Приостановить запись').props.onPress());
     expect(StyleSheet.flatten(tree.root.findByProps({testID:'help-voice-paused'}).props.style)).toMatchObject({height:48,marginTop:0});
     expect(props.onSend).not.toHaveBeenCalled();
+  });
+  test('a stationary finger starts recording before any move event', async () => {
+    await render();
+    await act(async () => mic().props.onPanResponderGrant());
+    expect(mockNative.start).toHaveBeenCalledTimes(1);
+    expect(tree.root.findAllByProps({testID:'help-voice-holding'}).length).toBeGreaterThan(0);
+    await tick(2000);
+    await act(async () => mic().props.onPanResponderRelease());
+    expect(props.onSend).toHaveBeenCalledTimes(1);
   });
   test('mic switches between single axes until locking, then ignores further dragging', async () => {
     await render();
@@ -430,5 +451,56 @@ describe('Android voice draft transitions', () => {
     expect(mockNative.start).not.toHaveBeenCalled();
     expect(props.onActive).toHaveBeenLastCalledWith(false);
     expect(props.error).toHaveBeenCalled();
+    expect(helpHaptic).not.toHaveBeenCalled();
+  });
+  test('sound samples drive the centre of the live wave and silence does not invent speech',async()=>{
+    await render();await lock();
+    await act(async()=>tree.root.findAllByProps({testID:'help-voice-wave'})[0].props.onLayout({nativeEvent:{layout:{width:150}}}));
+    mockSnapshot={...mockSnapshot,amplitude:.05};await tick(1000);
+    const bars=tree.root.findAll(n=>typeof n.props.testID==='string'&&/^help-voice-live-bar-/.test(n.props.testID)&&typeof n.type!=='string');
+    const scale=(index:number)=>StyleSheet.flatten(bars[index].props.style).transform[0].scaleY;
+    expect(bars.length).toBe(25);
+    expect(scale(12)).toBeGreaterThan(.5);
+    expect(StyleSheet.flatten(bars[12].props.style).opacity).toBe(1);
+    expect(scale(0)).toBeLessThan(.1);
+    expect(scale(11)).toBe(scale(13));
+    mockSnapshot={...mockSnapshot,amplitude:0};
+    for(let sample=0;sample<16;sample++)await tick(1080+sample*80);
+    expect(scale(12)).toBeLessThan(.1);
+    expect(StyleSheet.flatten(bars[12].props.style).opacity).toBe(0);
+    await act(async()=>button('Приостановить запись').props.onPress());
+    expect(tree.root.findAllByProps({testID:'help-voice-trim-wave'}).length).toBeGreaterThan(0);
+  });
+  test('voice haptics acknowledge successful explicit transitions, not polling, restore or background pause',async()=>{
+    await render();expect(helpHaptic).not.toHaveBeenCalled();
+    await lock();expect(helpHaptic.mock.calls.map((row:any[])=>row[0])).toEqual(['recordStart','recordLock']);
+    await tick(2000);await tick(2080);
+    expect(helpHaptic).toHaveBeenCalledTimes(2);
+    await act(async()=>button('Приостановить запись').props.onPress());
+    expect(helpHaptic).toHaveBeenLastCalledWith('recordPause');
+    await act(async()=>button('Продолжить запись').props.onPress());
+    expect(helpHaptic).toHaveBeenLastCalledWith('recordResume');
+    await act(async()=>appChange('background'));
+    expect(helpHaptic).toHaveBeenCalledTimes(4);
+    await act(async()=>appChange('active'));
+    await act(async()=>button('Удалить запись').props.onPress());
+    expect(helpHaptic).toHaveBeenLastCalledWith('recordCancel');
+    expect(helpHaptic).not.toHaveBeenCalledWith('send');
+  });
+  test('restoring a saved native recording does not produce startup or locking haptics',async()=>{
+    mockSnapshot={recording:true,durationMs:2000,amplitude:0,hasDraft:true};
+    await render();expect(button('Приостановить запись')).toBeDefined();
+    await tick(2080);expect(helpHaptic).not.toHaveBeenCalled();
+  });
+  test('failed recorder operations never acknowledge a transition with a vibration',async()=>{
+    await render();mockNative.start.mockRejectedValueOnce(new Error('native start failed'));
+    await act(async()=>mic().props.onPanResponderGrant());expect(helpHaptic).not.toHaveBeenCalled();
+    await lock();helpHaptic.mockClear();
+    mockNative.pause.mockRejectedValueOnce(new Error('native pause failed'));
+    await act(async()=>button('Приостановить запись').props.onPress());
+    expect(helpHaptic).not.toHaveBeenCalled();
+    mockNative.discard.mockRejectedValueOnce(new Error('native discard failed'));
+    await act(async()=>button('Отменить запись').props.onPress());
+    expect(helpHaptic).not.toHaveBeenCalled();
   });
 });

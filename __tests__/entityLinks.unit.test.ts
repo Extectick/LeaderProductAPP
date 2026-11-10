@@ -22,3 +22,10 @@ test('native intents only rewrite confirmed entity URI syntax and preserve other
  expect(redirectEntitySystemPath(development)).toBe(development);expect(takeEntityLinkIntent()).toBeNull();
  expect(redirectEntitySystemPath('/home')).toBe('/home');
 });
+
+test('application product uses its own explicit GUID namespace',()=>{
+ const target={v:1 as const,source:'app' as const,kind:'product' as const,guid:'aaaa1111-bbbb-4111-8111-ccccdddd0001'};
+ expect(buildEntityLink(target)).toBe('leaderproduct://entity/v1/product/'+target.guid);
+ expect(parseEntityLink(buildEntityLink(target))).toEqual(target);
+ expect(normalizeEntityTarget({...target,id:'121'})).toBeNull();
+});

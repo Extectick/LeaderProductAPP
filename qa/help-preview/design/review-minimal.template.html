@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Минимальный просмотр ответов</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--foreground, #18212d); font: 14px/1.45 var(--font-sans, system-ui, sans-serif); }
+    main { max-width: 390px; margin: 0 auto; }
+    .answer { display: flex; align-items: center; gap: 8px; padding: 6px 0; margin-bottom: 8px; }
+    .copy { flex: 1; min-width: 0; }
+    .question { margin: 0 0 3px; color: var(--muted-foreground, #627185); font-size: 12px; line-height: 17px; }
+    .value { margin: 0; font-size: 14px; line-height: 21px; overflow-wrap: anywhere; }
+    .value[contenteditable=true] { outline: none; box-shadow: 0 1px 0 var(--primary, #3289ff); }
+    button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground, #627185); cursor: pointer; font: inherit; }
+    button:hover, button:focus-visible { color: var(--primary, #3289ff); }
+    button:focus-visible { outline: 2px solid var(--ring, #3289ff); outline-offset: 1px; border-radius: 6px; }
+    .edit, .back { flex: 0 0 44px; width: 44px; }
+    svg { display: block; width: 19px; height: 19px; }
+    svg * { stroke: currentColor !important; }
+    footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 4px; }
+    .send { color: var(--primary, #2563eb); font-weight: 500; padding: 0 4px; }
+    .send:disabled { color: var(--success, #21864e); cursor: default; }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <!-- Design-only artifact. No API, storage, account data or application entry. -->
+  <!-- Official Ionicons SVG assets: https://github.com/ionic-team/ionicons, MIT. -->
+  <main aria-label="Ответы перед отправкой">
+    <section class="answer">
+      <div class="copy"><p class="question">На каком шаге появляется ошибка?</p><p class="value">При открытии документа</p></div>
+      <button class="edit" type="button" aria-label="Изменить ответ 1" title="Изменить ответ">{{pencil}}</button>
+    </section>
+    <section class="answer">
+      <div class="copy"><p class="question">Что вы уже попробовали?</p><p class="value">Повторный вход, другой документ</p></div>
+      <button class="edit" type="button" aria-label="Изменить ответ 2" title="Изменить ответ">{{pencil}}</button>
+    </section>
+    <section class="answer">
+      <div class="copy"><p class="question">Какой текст ошибки вы видите?</p><p class="value">Документ недоступен. Ошибка появляется после открытия.</p></div>
+      <button class="edit" type="button" aria-label="Изменить ответ 3" title="Изменить ответ">{{pencil}}</button>
+    </section>
+    <footer>
+      <button class="back" type="button" aria-label="Вернуться к ответам" title="Назад">{{back}}</button>
+      <button class="send" type="button" aria-label="Отправить ответы"><span>Отправить</span>{{send}}</button>
+    </footer>
+    <p class="sr-only" role="status" aria-live="polite"></p>
+  </main>
+  <script>
+    const icons = { pencil: `{{pencil}}`, check: `{{check}}` };
+    const status = document.querySelector('[role=status]');
+    function finish(button, cancel = false) {
+      const value = button.parentElement.querySelector('.value');
+      if (value.contentEditable !== 'true') return;
+      value.textContent = cancel ? value.dataset.original : value.textContent.trim() || value.dataset.original;
+      value.contentEditable = 'false';
+      button.innerHTML = icons.pencil;
+      button.title = 'Изменить ответ';
+      button.setAttribute('aria-label', button.dataset.label);
+      status.textContent = cancel ? 'Изменение отменено' : 'Ответ сохранён';
+    }
+    document.querySelectorAll('.edit').forEach(button => {
+      button.dataset.label = button.getAttribute('aria-label');
+      button.addEventListener('click', () => {
+        const value = button.parentElement.querySelector('.value');
+        if (value.contentEditable === 'true') { finish(button); return; }
+        document.querySelectorAll('.edit').forEach(other => finish(other));
+        value.dataset.original = value.textContent;
+        value.contentEditable = 'true';
+        value.focus();
+        button.innerHTML = icons.check;
+        button.title = 'Сохранить ответ';
+        button.setAttribute('aria-label', 'Сохранить ответ');
+      });
+      button.parentElement.querySelector('.value').addEventListener('keydown', event => {
+        if (event.key === 'Escape' || event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault(); finish(button, event.key === 'Escape'); button.focus();
+        }
+      });
+    });
+    document.querySelector('.back').addEventListener('click', () => {
+      document.querySelectorAll('.edit').forEach(button => finish(button, true));
+      document.querySelector('.edit').click();
+    });
+    document.querySelector('.send').addEventListener('click', event => {
+      document.querySelectorAll('.edit').forEach(button => finish(button));
+      event.currentTarget.disabled = true;
+      event.currentTarget.innerHTML = icons.check + '<span>Готово</span>';
+      status.textContent = 'Дизайн-демонстрация завершена. Данные никуда не отправлены.';
+    });
+  </script>
+</body>
+</html>

@@ -10,6 +10,7 @@ import {
   AppState,
   Easing,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -136,6 +137,18 @@ export default function AuthScreen() {
   const btnGradient = useMemo(() => [grad[0], grad[1]] as [string, string], [grad]);
   const styles = useMemo(() => getAuthScreenStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
+  const [androidKeyboardVisible, setAndroidKeyboardVisible] = useState(
+    () => Platform.OS === 'android' && Keyboard.isVisible()
+  );
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const show = Keyboard.addListener('keyboardDidShow', () => setAndroidKeyboardVisible(true));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setAndroidKeyboardVisible(false));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
   const { width: winW, height: winH } = useWindowDimensions();
   const isWeb = Platform.OS === 'web';
   const isWebMobile = isWeb && winW < 768;
@@ -215,8 +228,7 @@ export default function AuthScreen() {
   // ширина стабильна — НЕ меряем её onLayout
   const maxFormWidth = isWeb ? (isWebMobile ? 520 : isWebTablet ? 700 : 470) : 420;
   const outerW = Math.max(0, Math.min(maxFormWidth, winW - contentPadH * 2));
-  const logoWrapSize = Math.round(Math.min(Math.max(outerW * 0.34, 104), isWeb ? 156 : 148));
-  const logoSize = Math.round(logoWrapSize * 0.78);
+  const logoSize = Math.round(Math.min(Math.max(outerW * 0.34, 104), isWeb ? 156 : 148) * 0.78);
 
   /* refs */
   const loginPassRef = useRef<TextInput>(null);
@@ -1149,13 +1161,16 @@ export default function AuthScreen() {
 
   // РЕНДЕР
   return (
-    <BrandedBackground speed={1.5}>
-      <StatusBar barStyle="light-content" />
-      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+    <BrandedBackground speed={1.5} dark={theme === 'dark'} backgroundColor={colors.background}>
+      <StatusBar barStyle={theme === 'dark' ? 'light-content' : 'dark-content'} />
+      <SafeAreaView style={{ flex: 1 }} edges={androidKeyboardVisible ? ['top'] : ['top', 'bottom']}>
         <KeyboardAvoidingView
           style={{ flex: 1 }}
+          // Android already resizes the window with adjustResize. Applying a
+          // second keyboard offset leaves a blank strip above the IME.
+          enabled={Platform.OS !== 'android'}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={insets.top}
+          keyboardVerticalOffset={Platform.OS === 'android' ? 0 : insets.top}
         >
           {/* Оверлей-лоадер: только пока идёт preload из AsyncStorage ПЕРВЫЙ раз */}
           {!preloadReady && (
@@ -1182,18 +1197,7 @@ export default function AuthScreen() {
           >
             {/* Header */}
             <Animated.View style={[styles.header, { opacity: fadeIn }]}>
-              <View
-                style={[
-                  styles.logoWrap,
-                  {
-                    width: logoWrapSize,
-                    height: logoWrapSize,
-                    borderRadius: Math.round(logoWrapSize * 0.24),
-                  },
-                ]}
-              >
-                <Image source={APP_LOGO} style={{ width: logoSize, height: logoSize }} resizeMode="contain" />
-              </View>
+              <Image source={APP_LOGO} accessibilityLabel="ЛидерПродукт" style={{ width: logoSize, height: logoSize }} resizeMode="contain" />
             </Animated.View>
 
             {/* Tabs */}
@@ -1495,6 +1499,8 @@ export default function AuthScreen() {
                           >
                             <Switch
                               value={remember}
+                              trackColor={{false:colors.inputBorder,true:colors.tint}}
+                              thumbColor={colors.buttonText}
                               onValueChange={(v) => {
                                 void handleRememberToggle(v);
                               }}

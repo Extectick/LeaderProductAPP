@@ -1,6 +1,6 @@
 import { Colors } from '@/constants/Colors';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 type ThemeColors = typeof Colors.light;
 
@@ -33,22 +33,23 @@ export const ThemeProvider: React.FC<{children: React.ReactNode}> = ({ children 
     loadTheme();
   }, [themes]);
 
-  const setTheme = async (newTheme: string) => {
+  const setTheme = useCallback(async (newTheme: string) => {
     if (themes[newTheme]) {
       setThemeState(newTheme);
       await AsyncStorage.setItem('@theme', newTheme);
     }
-  };
+  }, [themes]);
 
-  const addTheme = (name: string, colors: ThemeColors) => {
+  const addTheme = useCallback((name: string, colors: ThemeColors) => {
     setThemes(prev => ({
       ...prev,
       [name]: colors
     }));
-  };
+  }, []);
+  const value = useMemo(() => ({ theme, themes, setTheme, addTheme }), [theme, themes, setTheme, addTheme]);
 
   return (
-    <ThemeContext.Provider value={{ theme, themes, setTheme, addTheme }}>
+    <ThemeContext.Provider value={value}>
       {children}
     </ThemeContext.Provider>
   );

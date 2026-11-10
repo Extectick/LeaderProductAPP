@@ -11,7 +11,7 @@ jest.mock('@react-native-async-storage/async-storage', () => {
 jest.mock('@/utils/config', () => ({API_BASE_URL:'https://dev.example.test'}));
 jest.mock('@/utils/apiClient', () => ({apiClient:jest.fn()}));
 jest.mock('@/utils/tokenService', () => ({getAccessToken:jest.fn(),getAccessTokenForRequest:jest.fn(),refreshToken:jest.fn()}));
-jest.mock('expo-file-system/legacy',()=>({cacheDirectory:'file:///cache/',makeDirectoryAsync:jest.fn(async()=>{}),copyAsync:jest.fn(async()=>{}),deleteAsync:jest.fn(async()=>{}),getInfoAsync:jest.fn(),createUploadTask:jest.fn(),FileSystemUploadType:{MULTIPART:1}}));
+jest.mock('expo-file-system/legacy',()=>({cacheDirectory:'file:///cache/',makeDirectoryAsync:jest.fn(async()=>{}),copyAsync:jest.fn(async()=>{}),moveAsync:jest.fn(async()=>{}),deleteAsync:jest.fn(async()=>{}),getInfoAsync:jest.fn(),createUploadTask:jest.fn(),createDownloadResumable:jest.fn(),FileSystemUploadType:{MULTIPART:1}}));
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { apiClient } from '@/utils/apiClient';
@@ -198,4 +198,86 @@ test('failed native upload removes only its temporary named copy',async()=>{
   expect(fs.copyAsync).toHaveBeenCalledWith({from:'file:///recording.m4a',to:expect.stringMatching(/\/\.\._%D0/)});
   expect(fs.deleteAsync).toHaveBeenCalledWith(expect.stringMatching(/^file:\/\/\/cache\/help-upload-[^/]+\/$/),{idempotent:true});
   expect(fs.deleteAsync).not.toHaveBeenCalledWith('file:///recording.m4a',expect.anything());
+});
+
+test('sent voice retains an independent account-scoped local copy and replay does not download',async()=>{
+ Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
+ const fs=require('expo-file-system/legacy'),known=new Set(['file:///draft/voice.m4a']);
+ const attachment={id:'sent-voice',url:'/help/attachments/sent-voice/content',name:'voice.m4a',mimeType:'audio/mp4',kind:'AUDIO',size:128} as HelpAttachment;
+ fs.getInfoAsync.mockImplementation(async(uri:string)=>({exists:known.has(uri),isDirectory:false,size:128}));
+ fs.copyAsync.mockImplementation(async({from,to}:{from:string;to:string})=>{if(!known.has(from))throw Error('missing');known.add(to);});
+ fs.createUploadTask.mockImplementation((_url:string,_uri:string,_options:any,onProgress:any)=>({uploadAsync:async()=>{onProgress?.({totalBytesSent:64,totalBytesExpectedToSend:128});return{status:201,body:JSON.stringify({attachments:[attachment]})};},cancelAsync:jest.fn()}));
+ const progress=jest.fn();await uploadHelpFiles([{uri:'file:///draft/voice.m4a',name:'voice.m4a'}],1,progress);
+ expect(progress).toHaveBeenCalledWith({transferred:64,total:128});
+ known.delete('file:///draft/voice.m4a');
+ const source=await loadHelpMedia(attachment,1);
+ expect(source.uri).toContain('/help-audio/https%3A%2F%2Fdev.example.test/1/sent-voice.m4a');
+ expect(fs.createDownloadResumable).not.toHaveBeenCalled();
+ (getAccessTokenForRequest as jest.Mock).mockResolvedValue(jwt(2));(getAccessToken as jest.Mock).mockResolvedValue(jwt(2));
+ await expect(loadHelpMedia(attachment,1)).rejects.toMatchObject({code:'HELP_ACCOUNT_CHANGED'});
+});
+
+test('remote voice downloads with measured byte progress and native cache replays without network',async()=>{
+ Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
+ const fs=require('expo-file-system/legacy'),known=new Set<string>();
+ const attachment={id:'remote-voice',url:'/help/attachments/remote-voice/content',name:'remote.m4a',mimeType:'audio/mp4',kind:'AUDIO',size:200} as HelpAttachment;
+ fs.getInfoAsync.mockImplementation(async(uri:string)=>({exists:known.has(uri),isDirectory:false,size:200}));
+ fs.moveAsync.mockImplementation(async({from,to}:{from:string;to:string})=>{known.delete(from);known.add(to);});
+ const cancel=jest.fn(async()=>{});
+ fs.createDownloadResumable.mockImplementation((_url:string,path:string,_options:any,onProgress:any)=>({downloadAsync:async()=>{onProgress({totalBytesWritten:50,totalBytesExpectedToWrite:200});known.add(path);return{status:200,uri:path};},cancelAsync:cancel}));
+ const progress=jest.fn(),source=await loadHelpMedia(attachment,1,{onProgress:progress});
+ expect(progress.mock.calls.map((call:any)=>call[0])).toEqual([{transferred:50,total:200},{transferred:200,total:200}]);
+ expect(cancel).toHaveBeenCalledTimes(1);
+ expect(await loadHelpMedia(attachment,1)).toEqual(source);
+ expect(fs.createDownloadResumable).toHaveBeenCalledTimes(1);
+});
+
+test('canceled audio download does not publish its incomplete cache',async()=>{
+ Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
+ const fs=require('expo-file-system/legacy'),controller=new AbortController();
+ fs.getInfoAsync.mockResolvedValue({exists:false});
+ const attachment={id:'cancel-voice',url:'/help/attachments/cancel-voice/content',name:'voice.m4a',kind:'AUDIO',size:200} as HelpAttachment;
+ const cancel=jest.fn(async()=>{});
+ fs.createDownloadResumable.mockImplementation((_url:string,path:string)=>({downloadAsync:async()=>{controller.abort();return{status:200,uri:path};},cancelAsync:cancel}));
+ await expect(loadHelpMedia(attachment,1,{signal:controller.signal})).rejects.toMatchObject({name:'AbortError'});
+ expect(fs.moveAsync).not.toHaveBeenCalled();expect(cancel).toHaveBeenCalled();
+ expect(fs.deleteAsync).toHaveBeenCalledWith(expect.stringContaining('.part'),{idempotent:true});
+});
+
+test('truncated web audio is rejected and cannot become a replay cache hit',async()=>{
+ Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});
+ const attachment={id:'truncated-web-voice',url:'/help/attachments/truncated-web-voice/content',name:'voice.webm',mimeType:'audio/webm',kind:'AUDIO',size:200} as HelpAttachment;
+ global.fetch=jest.fn(async()=>({ok:true,status:200,headers:{get:()=>null},blob:async()=>({size:100})})) as any;
+ await expect(loadHelpMedia(attachment,1)).rejects.toThrow('Неполное голосовое');
+ await expect(loadHelpMedia(attachment,1)).rejects.toThrow('Неполное голосовое');
+ expect(global.fetch).toHaveBeenCalledTimes(2);
+});
+
+test('web sent voice reuses its retained Blob after the composer URL is released',async()=>{
+ Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});
+ const attachment={id:'own-web-voice',url:'/help/attachments/own-web-voice/content',name:'voice.webm',mimeType:'audio/webm',kind:'AUDIO',size:4} as HelpAttachment;
+ const blob={size:4,type:'audio/webm'} as File;
+ (apiClient as jest.Mock).mockResolvedValue({ok:true,status:201,data:{attachments:[attachment]}});
+ const originalForm=global.FormData,originalCreate=URL.createObjectURL;
+ global.FormData=class{append(){}} as any;URL.createObjectURL=jest.fn(()=> 'blob:retained-owned-audio');global.fetch=jest.fn() as any;
+ try{
+   await uploadHelpFiles([{uri:'blob:composer-already-released',file:blob,name:'voice.webm',mimeType:'audio/webm'}],1);
+   expect(await loadHelpMedia(attachment,1)).toEqual({uri:'blob:retained-owned-audio'});
+   expect(URL.createObjectURL).toHaveBeenCalledWith(blob);
+   expect(global.fetch).not.toHaveBeenCalled();
+ }finally{global.FormData=originalForm;URL.createObjectURL=originalCreate;}
+});
+
+test('audio transcription uses authenticated saved reads and long cancellable recognition',async()=>{
+  (apiClient as jest.Mock).mockResolvedValue({ok:true,status:200,data:{attachmentId:'voice-1',status:'transcribed',text:'Заказ'}});
+  const signal=new AbortController().signal;
+  await createHelpApi(1).audioTranscript('voice-1',false,signal);
+  expect(apiClient).toHaveBeenLastCalledWith('/help/attachments/voice-1/transcript',expect.objectContaining({method:'GET',signal,timeoutMs:30000,headers:{Authorization:`Bearer ${jwt(1)}`}}));
+  await createHelpApi(1).audioTranscript('voice-1',true,signal);
+  expect(apiClient).toHaveBeenLastCalledWith('/help/attachments/voice-1/transcript',expect.objectContaining({method:'POST',body:{},signal,timeoutMs:120000}));
+});
+test('cancelled transcript does not publish a late successful response',async()=>{
+  const controller=new AbortController();
+  (apiClient as jest.Mock).mockImplementationOnce(async()=>{controller.abort();return{ok:true,status:200,data:{attachmentId:'voice-1',status:'transcribed',text:'late'}};});
+  await expect(createHelpApi(1).audioTranscript('voice-1',false,controller.signal)).rejects.toThrow();
 });

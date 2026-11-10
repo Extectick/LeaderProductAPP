@@ -7,6 +7,8 @@ import { ActivityIndicator, Avatar, Button, Dialog, Divider, Icon, IconButton, L
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppHeader } from '@/components/AppHeader';
+import {AppDesktopDialog} from '@/components/ui/AppDesktopDialog';
+import {APP_LAYOUT} from '@/src/shared/layout/appLayout';
 import { useOptionalTabBarVisibility } from '@/components/Navigation/TabBarVisibilityContext';
 import { useOptionalLastServiceRoute } from '@/src/features/navigation/LastServiceRouteContext';
 import TrackingDayPanel from '@/src/features/tracking/TrackingDayPanel';
@@ -51,6 +53,7 @@ export default function TrackingServiceScreen() {
   const lastService = useOptionalLastServiceRoute();
   const setTabBarHidden = useOptionalTabBarVisibility()?.setHidden;
   const wide = width >= 920;
+  const desktopWeb=Platform.OS==='web'&&width>APP_LAYOUT.compactMax;
   const [users, setUsers] = useState<TrackingV2User[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState<string | null>(null);
@@ -323,6 +326,26 @@ export default function TrackingServiceScreen() {
     <IconButton icon="chevron-right" size={24} accessibilityLabel="Следующий день" disabled={selectedDay >= today} onPress={() => selectDay(trackingShiftDay(selectedDay, 1))} style={styles.dateArrow} />
   </Surface>;
 
+  const employeePicker=<SearchPickerScreen<TrackingV2User>
+          visible={pickerVisible} pickerKey="tracking-employees" topInset={desktopWeb?0:insets.top} title="Сотрудники" titleIcon="account-group-outline"
+          onClose={() => setPickerVisible(false)} search={query} searchPlaceholder="ФИО, отдел или роль" searchLoading={usersLoading && usersOffset === 0}
+          onSearchChange={(value) => { setQuery(value); setUsersOffset(0); setUsers([]); setUsersHasMore(false); }}
+          data={users} keyExtractor={(user) => String(user.id)} extraData={selectedUser?.id}
+          contentContainerStyle={{ paddingBottom: desktopWeb?12:bottomInset }}
+          renderItem={({ item }) => <List.Item
+            title={displayName(item)} titleNumberOfLines={2} description={employeeDescription(item)} descriptionNumberOfLines={2}
+            titleStyle={styles.employeeName} descriptionStyle={styles.employeeDescription}
+            style={[styles.employeeRow, item.id === selectedUser?.id && styles.employeeSelected]}
+            accessibilityLabel={`${displayName(item)}. ${employeeDescription(item)}`} accessibilityState={{ selected: item.id === selectedUser?.id }}
+            onPress={() => { setSelectedUser(item); setPickerVisible(false); }}
+            left={() => <View style={styles.employeeAvatar}>{item.avatarUrl ? <Avatar.Image size={42} source={{ uri: item.avatarUrl }} /> : <Avatar.Text size={42} label={[item.lastName, item.firstName].filter(Boolean).map((part) => part![0]).join('').slice(0, 2) || '?'} style={styles.avatarFallback} color="#2563EB" />}</View>}
+            right={(props) => <List.Icon {...props} icon={item.id === selectedUser?.id ? 'check-circle' : 'chevron-right'} color={item.id === selectedUser?.id ? '#16A34A' : '#94A3B8'} />}
+          />}
+          ListEmptyComponent={usersLoading ? null : <View style={styles.empty}><Text style={styles.emptyText}>{usersError || 'Сотрудники не найдены'}</Text></View>}
+          ListFooterComponent={usersError ? <Button onPress={() => setUsersRetry((value) => value + 1)}>Повторить загрузку</Button> : usersLoading && usersOffset > 0 ? <ActivityIndicator style={styles.empty} /> : null}
+          onEndReached={() => { if (usersHasMore && !usersPageInFlight.current && !usersLoading && !usersError) { usersPageInFlight.current = true; setUsersOffset((value) => value + 100); } }}
+        />;
+
   return <View style={styles.root}>
     <AppHeader title="" icon="map-outline" variant="flat" compact dense tight showBack onBack={closeService} entranceMotion="none" showServerStatus={false}
       titleSlot={<TouchableRipple accessibilityRole="button" accessibilityLabel={`Выбрать сотрудника. ${displayName(selectedUser)}`} onPress={() => { setQuery(''); setUsersOffset(0); setUsers([]); setUsersHasMore(false); setPickerVisible(true); }} style={styles.userButton}>
@@ -370,29 +393,7 @@ export default function TrackingServiceScreen() {
       </Surface> : <TrackingDayPanel summary={summary} expanded={detailsExpanded} onExpandedChange={setDetailsExpanded} bottomInset={bottomInset} dateControls={dateControls} navigation={navigation} onHeaderHeightChange={setPanelHeaderHeight} onRefresh={() => void loadDay()} refreshing={loading} refreshDisabled={!selectedUser} listProps={eventListProps} />}
     </View>
 
-    <Modal visible={pickerVisible} onRequestClose={() => setPickerVisible(false)} animationType="slide" statusBarTranslucent>
-      <View style={styles.root}>
-        <SearchPickerScreen<TrackingV2User>
-          visible={pickerVisible} pickerKey="tracking-employees" topInset={insets.top} title="Сотрудники" titleIcon="account-group-outline"
-          onClose={() => setPickerVisible(false)} search={query} searchPlaceholder="ФИО, отдел или роль" searchLoading={usersLoading && usersOffset === 0}
-          onSearchChange={(value) => { setQuery(value); setUsersOffset(0); setUsers([]); setUsersHasMore(false); }}
-          data={users} keyExtractor={(user) => String(user.id)} extraData={selectedUser?.id}
-          contentContainerStyle={{ paddingBottom: bottomInset }}
-          renderItem={({ item }) => <List.Item
-            title={displayName(item)} titleNumberOfLines={2} description={employeeDescription(item)} descriptionNumberOfLines={2}
-            titleStyle={styles.employeeName} descriptionStyle={styles.employeeDescription}
-            style={[styles.employeeRow, item.id === selectedUser?.id && styles.employeeSelected]}
-            accessibilityLabel={`${displayName(item)}. ${employeeDescription(item)}`} accessibilityState={{ selected: item.id === selectedUser?.id }}
-            onPress={() => { setSelectedUser(item); setPickerVisible(false); }}
-            left={() => <View style={styles.employeeAvatar}>{item.avatarUrl ? <Avatar.Image size={42} source={{ uri: item.avatarUrl }} /> : <Avatar.Text size={42} label={[item.lastName, item.firstName].filter(Boolean).map((part) => part![0]).join('').slice(0, 2) || '?'} style={styles.avatarFallback} color="#2563EB" />}</View>}
-            right={(props) => <List.Icon {...props} icon={item.id === selectedUser?.id ? 'check-circle' : 'chevron-right'} color={item.id === selectedUser?.id ? '#16A34A' : '#94A3B8'} />}
-          />}
-          ListEmptyComponent={usersLoading ? null : <View style={styles.empty}><Text style={styles.emptyText}>{usersError || 'Сотрудники не найдены'}</Text></View>}
-          ListFooterComponent={usersError ? <Button onPress={() => setUsersRetry((value) => value + 1)}>Повторить загрузку</Button> : usersLoading && usersOffset > 0 ? <ActivityIndicator style={styles.empty} /> : null}
-          onEndReached={() => { if (usersHasMore && !usersPageInFlight.current && !usersLoading && !usersError) { usersPageInFlight.current = true; setUsersOffset((value) => value + 100); } }}
-        />
-      </View>
-    </Modal>
+    {desktopWeb?<AppDesktopDialog visible={pickerVisible} onClose={()=>setPickerVisible(false)} accessibilityLabel="Сотрудники" showClose={false} maxWidth={640} height={640} scrollable={false} contentStyle={{paddingHorizontal:0,paddingBottom:0}} testID="tracking-employee-dialog">{employeePicker}</AppDesktopDialog>:<Modal visible={pickerVisible} onRequestClose={() => setPickerVisible(false)} animationType="slide" statusBarTranslucent><View style={styles.root}>{employeePicker}</View></Modal>}
     <Portal>
       <Dialog visible={dateVisible} onDismiss={() => setDateVisible(false)} style={[styles.dialog, modalStyle]}>
         <Dialog.Title>Дата маршрута</Dialog.Title>

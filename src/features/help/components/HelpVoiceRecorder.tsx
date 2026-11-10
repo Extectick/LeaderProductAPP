@@ -11,6 +11,8 @@ import { useHelpAudioCommands } from '../HelpAudioPlayback';
 import {HelpPhotoPortal,useHelpPhotoPortalFrame} from './HelpPhotoPortal';
 import { helpDuration } from '../helpUiUtils';
 import type { HelpLocalFile } from './HelpComposer';
+import {helpHaptic} from '../helpHaptics';
+import {HelpVoiceWave,HELP_VOICE_WAVE_SAMPLES,helpVoiceMeter} from './HelpVoiceWave';
 type Snapshot = {
   recording: boolean;
   durationMs: number;
@@ -46,26 +48,6 @@ const editDrafts = new Map<string, {
   range: [number, number];
 }>();
 const MIN_RANGE = 250;
-const VoiceWaveBars = React.memo(function VoiceWaveBars({samples,width,paused,duration,range,accent,line}:{
-  samples:React.MutableRefObject<number[]>;width:number;paused:boolean;duration:number;range:[number,number];accent:string;line:string;
-}) {
-  const [, repaint] = useState(0);
-  useEffect(() => {
-    if (paused) return;
-    const timer = setInterval(() => repaint(value => value + 1), 80);
-    return () => clearInterval(timer);
-  }, [paused]);
-  const wave = samples.current, count = Math.max(8, Math.floor(width / 6));
-  const bars = Array.from({length:count}, (_, i) => {
-    if (!paused) return wave[wave.length - count + i] ?? 0;
-    const from = Math.floor(i * wave.length / count), to = Math.max(from + 1, Math.floor((i + 1) * wave.length / count));
-    return Math.max(0, ...wave.slice(from, to));
-  });
-  return <View pointerEvents="none" style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',height:44}}>
-    {bars.map((value,i)=><View key={i} style={{width:4,borderRadius:2,height:Math.max(3,value*44),backgroundColor:paused&&(i/count<range[0]/duration||i/count>range[1]/duration)?line:accent}}/>)}
-  </View>;
-});
-
 /** One composer row for every voice state. Native owns recording across navigation. */
 export function HelpVoiceRecorder(props: Props) {
   const c = useHelpTheme(),
@@ -99,6 +81,7 @@ export function HelpVoiceRecorder(props: Props) {
   });
   const statusRevision=useRef(0);
   const waveSamples = useRef<number[]>([]);
+  const liveSamples=useSharedValue<number[]>([]);
   const haloLevel = useSharedValue(0);
   const dragX = useSharedValue(0), dragY = useSharedValue(0);
 
@@ -157,6 +140,8 @@ export function HelpVoiceRecorder(props: Props) {
     const generation = ++state.current.generation;
     const initialRevision=statusRevision.current;
     waveSamples.current = waveDrafts.get(props.draftKey) ?? [];
+    liveSamples.value=waveSamples.current.slice(-HELP_VOICE_WAVE_SAMPLES);
+    meter.current=0;haloLevel.value=0;
     void native!.snapshot(props.draftKey).then(value => {
       if (state.current.mounted && generation === state.current.generation && initialRevision===statusRevision.current) {
         applySnapshot(value);
@@ -175,12 +160,11 @@ export function HelpVoiceRecorder(props: Props) {
         if (value.recording) {
           // Microphone values are linear amplitudes. A dB scale makes ordinary
           // speech visible; fast attack keeps consonants instead of smoothing them away.
-          const db = 20 * Math.log10(Math.max(.00001, value.amplitude));
-          const amplitude = Math.max(0, Math.min(1, (db + 60) / 54));
-          meter.current = Math.max(amplitude, meter.current * .72);
+          meter.current = helpVoiceMeter(value.amplitude,meter.current);
           haloLevel.value = meter.current;
-          waveSamples.current.push(Math.max(.06, meter.current));
+          waveSamples.current.push(meter.current);
           if (waveSamples.current.length > 800) waveSamples.current.shift();
+          liveSamples.value=waveSamples.current.slice(-HELP_VOICE_WAVE_SAMPLES);
           waveDrafts.set(props.draftKey, waveSamples.current);
         } else {
           meter.current = 0;
@@ -236,15 +220,19 @@ export function HelpVoiceRecorder(props: Props) {
     animation.start();
     return () => animation.stop();
   }, [phase, reduced, hint]);
-  async function pause() {
+  async function pause(feedback=false) {
     if (state.current.starting || state.current.working || state.current.phase === 'paused') return;
+    const wasRecording=['holding','locked'].includes(state.current.phase);
+    const generation=state.current.generation;
     statusRevision.current++;
     try {
       const value = await native!.pause(props.draftKey);
       if (state.current.mounted) {
+        const changedToPause=['holding','locked'].includes(state.current.phase);
         applySnapshot(value);
         setRange([0, value.durationMs]);
         haloLevel.value = 0;
+        if(feedback&&wasRecording&&changedToPause&&generation===state.current.generation&&!value.recording&&value.hasDraft&&!state.current.background&&latest.current.screenActive!==false)helpHaptic('recordPause');
       }
     } catch {
       if (state.current.mounted) latest.current.error('Не удалось приостановить запись.');
@@ -300,6 +288,7 @@ export function HelpVoiceRecorder(props: Props) {
       state.current.duration = value.durationMs;
       setDuration(value.durationMs);
       changePhase(life.locked ? 'locked' : 'holding');
+      if(value.recording)helpHaptic(resuming?'recordResume':'recordStart');
     } catch (error) {
       if (life.mounted) {
         const value = await native!.snapshot(props.draftKey);
@@ -318,6 +307,7 @@ export function HelpVoiceRecorder(props: Props) {
   }
   async function finish(action: 'send' | 'cancel') {
     const life = state.current;
+    const generation=life.generation;
     if (life.starting) {
       life.release = action;
       return;
@@ -336,7 +326,10 @@ export function HelpVoiceRecorder(props: Props) {
         editDrafts.delete(props.draftKey);
         sendExport.current = null;
         waveSamples.current = [];
+        liveSamples.value=[];
+        meter.current=0;
         changePhase('idle');
+        if(life.mounted&&generation===life.generation&&!life.background&&latest.current.screenActive!==false)helpHaptic('recordCancel');
         return;
       }
       const wasPaused = life.phase === 'paused';
@@ -369,6 +362,8 @@ export function HelpVoiceRecorder(props: Props) {
         editDrafts.delete(props.draftKey);
         sendExport.current = null;
         waveSamples.current = [];
+        liveSamples.value=[];
+        meter.current=0;
         changePhase('idle');
       } else changePhase('paused');
     } catch {
@@ -390,7 +385,7 @@ export function HelpVoiceRecorder(props: Props) {
     if (state.current.locked || !['preparing','holding'].includes(state.current.phase)) return;
     if (intent === 2) {
       state.current.locked = true;
-      if (state.current.phase === 'holding') changePhase('locked');
+      if (state.current.phase === 'holding') {changePhase('locked');helpHaptic('recordLock');}
     } else void finish(intent === 1 ? 'cancel' : 'send');
   }
   function interruptDrag() {
@@ -407,6 +402,9 @@ export function HelpVoiceRecorder(props: Props) {
       const touch = event.allTouches[0];
       if (!touch) { manager.fail(); return; }
       dragOriginX.value = touch.absoluteX; dragOriginY.value = touch.absoluteY;
+      // Pointer DOWN arrives before Pan's native begin(). Android rejects an
+      // ACTIVE transition from UNDETERMINED, so establish BEGAN explicitly.
+      manager.begin();
       manager.activate();
     })
     .onStart(() => {
@@ -492,8 +490,8 @@ export function HelpVoiceRecorder(props: Props) {
     progress = duration ? Math.min(1, range[0] / duration + playback.currentTime * 1000 / duration) : 0;
   const actionStyle = {
     position: 'absolute' as const,
-    right: active ? -3 : 4,
-    bottom: active ? -9 : 4,
+    right: active ? -3 : 5,
+    bottom: active ? -9 : 5,
     width: active ? 64 : 38,
     height: active ? 64 : 38,
     borderRadius: 32,
@@ -507,7 +505,7 @@ export function HelpVoiceRecorder(props: Props) {
     const tick=()=>{if(!alive)return;actionRef.current?.measureInWindow((x,y,width,height)=>{if(alive&&width>0&&height>0)setActionRect(previous=>previous?.x===x&&previous.y===y?previous:{x,y,width,height});});if(Date.now()<until)frame=requestAnimationFrame(tick);};
     frame=requestAnimationFrame(tick);return()=>{alive=false;cancelAnimationFrame(frame);};
   },[locked]);
-  const pauseControl=active && (locked || paused) ? <Pressable accessibilityRole="button" accessibilityLabel={paused ? 'Продолжить запись' : 'Приостановить запись'} disabled={working || props.disabled || paused && duration >= 60000} onPress={() => void (paused ? start(true) : pause())} style={{
+  const pauseControl=active && (locked || paused) ? <Pressable accessibilityRole="button" accessibilityLabel={paused ? 'Продолжить запись' : 'Приостановить запись'} disabled={working || props.disabled || paused && duration >= 60000} onPress={() => void (paused ? start(true) : pause(true))} style={{
       position: 'absolute',
       ...(locked&&host&&actionRect?{left:actionRect.x-host.x+(actionRect.width-36)/2,top:Math.max(8,actionRect.y-host.y-60)}:{right:locked?11:70,bottom:locked?72:1}),
       width: 36,
@@ -555,7 +553,7 @@ export function HelpVoiceRecorder(props: Props) {
         height: 44,
         justifyContent: 'center'
       }}>
-        <VoiceWaveBars samples={waveSamples} width={waveWidth} paused={paused} duration={duration} range={range} accent={c.accent} line={c.line}/>
+        <HelpVoiceWave samples={liveSamples} history={waveSamples} width={waveWidth} paused={paused} duration={duration} range={range} accent={c.accent} line={c.line} reduced={reduced}/>
         {paused ? <>
           {playback.playing ? <View pointerEvents="none" style={{
             position: 'absolute',

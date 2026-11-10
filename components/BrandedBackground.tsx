@@ -35,16 +35,20 @@ export interface AuroraBackgroundProps extends PropsWithChildren {
   speed?: number;
   /** Доп. стили корневого контейнера */
   style?: StyleProp<ViewStyle>;
+  dark?: boolean;
+  backgroundColor?: string;
 }
 
 /**
- * Светлый «aurora»-фон (без тёмных цветов).
+ * «Aurora»-фон с отдельной приглушённой палитрой для тёмной темы.
  * Использование: <BrandedBackground><YourContent /></BrandedBackground>
  */
 export default function BrandedBackground({
   children,
   style,
   speed = 1,
+  dark = false,
+  backgroundColor,
 }: AuroraBackgroundProps) {
   const { width, height } = useWindowDimensions();
   const base = Math.max(width, height);
@@ -84,27 +88,27 @@ export default function BrandedBackground({
   };
 
   return (
-    <View style={[styles.container, style]}>
-      {/* слой 1 — светло-холодные тона */}
+    <View style={[styles.container, {backgroundColor:backgroundColor ?? (dark ? '#0F0F11' : '#f8fafc')}, style]}>
+      {/* Холодные тона */}
       <AnimatedLG
         pointerEvents="none"
-        colors={['#bfdbfe', '#a5f3fc', '#ddd6fe']} // blue-200, cyan-200, violet-200
+        colors={dark ? ['#15253C', '#123331', '#262239'] : ['#bfdbfe', '#a5f3fc', '#ddd6fe']}
         start={{ x: 0.1, y: 0.1 }}
         end={{ x: 0.9, y: 0.9 }}
         style={[styles.gradient, centeredFrame, layer1]}
       />
-      {/* слой 2 — светлые тёплые */}
+      {/* Тёплые тона */}
       <AnimatedLG
         pointerEvents="none"
-        colors={['#fbcfe8', '#fde68a', '#e9d5ff']} // pink-200, amber-200, purple-200
+        colors={dark ? ['#321E2C', '#302819', '#292039'] : ['#fbcfe8', '#fde68a', '#e9d5ff']}
         start={{ x: 0.2, y: 0.8 }}
         end={{ x: 0.8, y: 0.2 }}
         style={[styles.gradient, centeredFrame, layer2]}
       />
-      {/* слой 3 — мягкие зелёные акценты */}
+      {/* Зелёные акценты */}
       <AnimatedLG
         pointerEvents="none"
-        colors={['#bbf7d0', '#a7f3d0', '#d9f99d']} // green-200, emerald-200, lime-200
+        colors={dark ? ['#173022', '#12312C', '#28311A'] : ['#bbf7d0', '#a7f3d0', '#d9f99d']}
         start={{ x: 0, y: 0.5 }}
         end={{ x: 1, y: 0.5 }}
         style={[styles.gradient, centeredFrame, layer3]}
@@ -119,8 +123,7 @@ export default function BrandedBackground({
 }
 
 const styles = StyleSheet.create({
-  // светлая подложка вместо #050816
-  container: { flex: 1, backgroundColor: '#f8fafc', overflow: 'hidden' }, // slate-50
+  container: { flex: 1, overflow: 'hidden' },
   gradient: {
     // opacity управляется анимированным стилем; это поле можно оставить пустым
   },

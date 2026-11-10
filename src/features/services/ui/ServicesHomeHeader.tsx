@@ -4,9 +4,10 @@ import Svg, {Path} from 'react-native-svg';
 import {Ionicons} from '@expo/vector-icons';
 import {AppHeader} from '@/components/AppHeader';
 import {APP_TOOLBAR_LAYOUT as layout} from '@/components/ui/appToolbarLayout';
-import {useThemeColor} from '@/hooks/useThemeColor';
+import {useAppSurfaceTheme} from '@/components/ui/appSurfaceTokens';
 import {servicesTokens} from './servicesTokens';
 import {COMPANY_WORDMARK_PATH,COMPANY_WORDMARK_VIEWBOX} from '../assets/companyWordmark';
+import {APP_LAYOUT} from '@/src/shared/layout/appLayout';
 
 // Size the visible company symbol, rather than its transparent bitmap canvas.
 const logoScale = layout.actionSize / 824;
@@ -15,8 +16,7 @@ const wordmarkHeight = 20;
 
 /** The catalogue alone owns the company lockup; service toolbars keep their own controls. */
 export function ServicesHomeHeader({avatar, onProfile}: {avatar?: React.ReactNode; onProfile: () => void}) {
-  const avatarBackground = useThemeColor({light: '#EAF2FF', dark: '#203043'}, 'background');
-  const accent = useThemeColor({light: '#2563EB', dark: '#68B0FF'}, 'text');
+  const {soft:avatarBackground,accentText:accent} = useAppSurfaceTheme();
   return <AppHeader title="Лидер Продукт" icon="apps-outline" showBack={false} variant="flat" entranceMotion="none" showServerStatus={false}
     contentSlot={<View testID="services-home-header" style={styles.row}>
       <View testID="services-company-logo" style={styles.logoViewport}>
@@ -24,7 +24,7 @@ export function ServicesHomeHeader({avatar, onProfile}: {avatar?: React.ReactNod
       </View>
       <View accessibilityLabel="Лидер Продукт — мы всегда в рынке" style={styles.identity}>
         <View testID="services-company-name" style={styles.wordmarkViewport}>
-          <Svg {...(Platform.OS === 'web' ? { 'aria-hidden': true, focusable: false } : { accessible: false })} width="100%" height={wordmarkHeight} viewBox={COMPANY_WORDMARK_VIEWBOX} preserveAspectRatio="xMinYMid meet">
+          <Svg {...(Platform.OS === 'web' ? { 'aria-hidden': true, pointerEvents: 'none' as const } : { accessible: false })} width="100%" height={wordmarkHeight} viewBox={COMPANY_WORDMARK_VIEWBOX} preserveAspectRatio="xMinYMid meet">
             <Path d={COMPANY_WORDMARK_PATH} fill="#97BF20" fillRule="evenodd"/>
           </Svg>
         </View>
@@ -38,7 +38,7 @@ export function ServicesHomeHeader({avatar, onProfile}: {avatar?: React.ReactNod
 }
 
 const styles = StyleSheet.create({
-  row: {width: '100%', maxWidth: servicesTokens.row.maxContentWidth, alignSelf: 'center', paddingHorizontal: layout.inset, paddingTop: layout.top, paddingBottom: layout.bottom, flexDirection: 'row', alignItems: 'center', gap: layout.gap},
+  row: {width: '100%', maxWidth: Platform.OS==='web'?APP_LAYOUT.catalogMaxWidth:servicesTokens.row.maxContentWidth, alignSelf: 'center', paddingHorizontal: layout.inset, paddingTop: layout.top, paddingBottom: layout.bottom, flexDirection: 'row', alignItems: 'center', gap: layout.gap},
   logoViewport: {width: layout.actionSize, height: layout.actionSize},
   logoImage: {position:'absolute',width:1024*logoScale,height:1024*logoScale,left:-131*logoScale,top:-89*logoScale},
   identity: {flex: 1, minWidth: 0, justifyContent: 'center', gap: 0},

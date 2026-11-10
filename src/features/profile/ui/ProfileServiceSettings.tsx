@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { IconButton } from 'react-native-paper';
+import { Alert, Modal, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { IconButton, TextInput } from 'react-native-paper';
 import * as Clipboard from 'expo-clipboard';
 import type { Profile } from '@/src/entities/user/types';
 import { addCredentials, changePassword, requestPasswordReset, resendVerification, verify, verifyPasswordReset } from '@/utils/authService';
@@ -12,6 +12,10 @@ import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { getTrackingAdminHealth, type TrackingAdminHealth } from '@/utils/trackingApi';
 import OTP6Input from '@/components/OTP6Input';
 import { isValidEmail } from '@/src/features/profile/lib/verification';
+import {AppDesktopDialog} from '@/components/ui/AppDesktopDialog';
+import {useAppSurfaceTheme} from '@/components/ui/appSurfaceTokens';
+import {appWebControlProps,appWebControlContentProps} from '@/components/ui/appWebInteraction';
+import {APP_LAYOUT} from '@/src/shared/layout/appLayout';
 
 // Keep the established verification and native tracking flows separate from the profile landing page.
 type CredentialsStep = 'credentials' | 'verify';
@@ -50,6 +54,8 @@ export function CredentialsSection({
   profile: Profile | null;
   onAdded: () => Promise<void>;
 }) {
+  const {width}=useWindowDimensions(),c=useAppSurfaceTheme();
+  const desktopWeb=Platform.OS==='web'&&width>APP_LAYOUT.compactMax;
   const authMethods = resolveAuthMethods(profile);
   const shouldShowSetup = (authMethods.telegramLinked || authMethods.maxLinked) && !authMethods.passwordLoginEnabled;
   const emailFromProfile = (profile?.email || '').trim().toLowerCase();
@@ -358,6 +364,157 @@ export function CredentialsSection({
     setResetModalNotice(null);
   };
 
+  const ResetPasswordField=desktopWeb?TextInput:ProfileField;
+  const resetFieldTheme=desktopWeb?{mode:'flat' as const,textColor:c.text,underlineColor:c.line,activeUnderlineColor:c.accent,theme:{colors:{onSurfaceVariant:c.muted}},style:{backgroundColor:'transparent',paddingHorizontal:0,fontSize:16}}:{};
+  const resetModalContent=<>
+            {!desktopWeb?<Text style={styles.credentialsTitle}>Сброс пароля</Text>:null}
+            <Text style={[styles.credentialsSubtitle,desktopWeb?{color:c.muted}:null]}>
+              {resetModalStep === 0
+                ? `Введите код из письма для ${emailFromProfile}.`
+                : `Укажите новый пароль для ${emailFromProfile}.`}
+            </Text>
+
+            {resetModalError ? <Text style={[styles.credentialsError,desktopWeb?{color:c.danger}:null]}>{resetModalError}</Text> : null}
+            {resetModalNotice ? <Text style={[styles.credentialsNotice,desktopWeb?{color:c.accentText}:null]}>{resetModalNotice}</Text> : null}
+
+            {resetModalStep === 0 ? (
+              <>
+                <OTP6Input
+                  value={resetCode}
+                  onChange={onResetCodeChange}
+                  onFilled={(value) => {
+                    void onVerifyResetCode(value, 'auto');
+                  }}
+                  disabled={resetModalBusy}
+                  error={Boolean(resetModalError)}
+                  secure={false}
+                  autoFocus
+                />
+                <View style={styles.resetModalActions}>
+                  <Pressable {...appWebControlProps('subtle')}
+                    onPress={() => {
+                      void onPasteResetCode();
+                    }}
+                    disabled={resetModalBusy || resetResending}
+                    style={({ pressed }) => [
+                      styles.credentialsSecondaryButton,
+                      desktopWeb&&{minHeight:44,justifyContent:'center',backgroundColor:c.soft},
+                      (resetModalBusy || resetResending) && styles.credentialsButtonDisabled,
+                      pressed && !(resetModalBusy || resetResending) ? styles.credentialsSecondaryButtonPressed : null,
+                    ]}
+                  >
+                    <Text {...appWebControlContentProps()} style={[styles.credentialsSecondaryButtonText,desktopWeb?{color:c.accentText}:null]}>Вставить код</Text>
+                  </Pressable>
+                  <Pressable {...appWebControlProps('subtle')}
+                    onPress={() => {
+                      void onResendResetCode();
+                    }}
+                    disabled={resetModalBusy || resetResending || resetResendTimer > 0}
+                    style={({ pressed }) => [
+                      styles.credentialsSecondaryButton,
+                      desktopWeb&&{minHeight:44,justifyContent:'center',backgroundColor:c.soft},
+                      (resetModalBusy || resetResending || resetResendTimer > 0) && styles.credentialsButtonDisabled,
+                      pressed && !(resetModalBusy || resetResending || resetResendTimer > 0)
+                        ? styles.credentialsSecondaryButtonPressed
+                        : null,
+                    ]}
+                  >
+                    <Text {...appWebControlContentProps()} style={[styles.credentialsSecondaryButtonText,desktopWeb?{color:c.accentText}:null]}>
+                      {resetResending
+                        ? 'Отправка...'
+                        : resetResendTimer > 0
+                        ? `Повторно через ${resetResendTimer}с`
+                        : 'Отправить код повторно'}
+                    </Text>
+                  </Pressable>
+                </View>
+                <View style={styles.resetModalActions}>
+                  <Pressable {...appWebControlProps('filled')}
+                    onPress={() => {
+                      void onVerifyResetCode();
+                    }}
+                    disabled={resetModalBusy || resetResending}
+                    style={({ pressed }) => [
+                      styles.credentialsButton,
+                      desktopWeb&&{minHeight:44,justifyContent:'center',backgroundColor:c.accent},
+                      (resetModalBusy || resetResending) && styles.credentialsButtonDisabled,
+                      pressed && !(resetModalBusy || resetResending) ? styles.credentialsButtonPressed : null,
+                    ]}
+                  >
+                    <Text style={styles.credentialsButtonText}>
+                      {resetModalBusy ? 'Проверка...' : 'Подтвердить код'}
+                    </Text>
+                  </Pressable>
+                  <Pressable {...appWebControlProps('subtle')}
+                    onPress={onCloseResetModal}
+                    disabled={resetModalBusy || resetResending}
+                    style={({ pressed }) => [
+                      styles.credentialsSecondaryButton,
+                      desktopWeb&&{minHeight:44,justifyContent:'center',backgroundColor:c.soft},
+                      (resetModalBusy || resetResending) && styles.credentialsButtonDisabled,
+                      pressed && !(resetModalBusy || resetResending) ? styles.credentialsSecondaryButtonPressed : null,
+                    ]}
+                  >
+                    <Text {...appWebControlContentProps()} style={[styles.credentialsSecondaryButtonText,desktopWeb?{color:c.accentText}:null]}>Отмена</Text>
+                  </Pressable>
+                </View>
+              </>
+            ) : (
+              <>
+                <ResetPasswordField {...resetFieldTheme}
+                  value={resetPassword}
+                  onChangeText={setResetPassword}
+                  label="Новый пароль"
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <ResetPasswordField {...resetFieldTheme}
+                  value={resetPasswordRepeat}
+                  onChangeText={setResetPasswordRepeat}
+                  label="Повторите пароль"
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <View style={styles.resetModalActions}>
+                  <Pressable {...appWebControlProps('filled')}
+                    onPress={() => {
+                      void onSubmitNewPassword();
+                    }}
+                    disabled={resetModalBusy}
+                    style={({ pressed }) => [
+                      styles.credentialsButton,
+                      desktopWeb&&{minHeight:44,justifyContent:'center',backgroundColor:c.accent},
+                      resetModalBusy && styles.credentialsButtonDisabled,
+                      pressed && !resetModalBusy ? styles.credentialsButtonPressed : null,
+                    ]}
+                  >
+                    <Text style={styles.credentialsButtonText}>
+                      {resetModalBusy ? 'Сохранение...' : 'Сохранить пароль'}
+                    </Text>
+                  </Pressable>
+                  <Pressable {...appWebControlProps('subtle')}
+                    onPress={() => {
+                      if (resetModalBusy) return;
+                      setResetModalStep(0);
+                      setResetModalError(null);
+                    }}
+                    disabled={resetModalBusy}
+                    style={({ pressed }) => [
+                      styles.credentialsSecondaryButton,
+                      desktopWeb&&{minHeight:44,justifyContent:'center',backgroundColor:c.soft},
+                      resetModalBusy && styles.credentialsButtonDisabled,
+                      pressed && !resetModalBusy ? styles.credentialsSecondaryButtonPressed : null,
+                    ]}
+                  >
+                    <Text {...appWebControlContentProps()} style={[styles.credentialsSecondaryButtonText,desktopWeb?{color:c.accentText}:null]}>Назад</Text>
+                  </Pressable>
+                </View>
+              </>
+            )}
+  </>;
+
   return (
     <>
       <View>
@@ -381,153 +538,12 @@ export function CredentialsSection({
           onPress={resetting || saving || resending ? undefined : onRequestPasswordReset} /> : null}
       </View>
 
-      <Modal visible={resetModalVisible} transparent animationType="fade" onRequestClose={onCloseResetModal}>
+      {desktopWeb?<AppDesktopDialog visible={resetModalVisible} title="Сброс пароля" onClose={onCloseResetModal} dismissDisabled={resetModalBusy||resetResending} maxWidth={480} contentStyle={{gap:10}} testID="profile-password-reset-dialog">{resetModalContent}</AppDesktopDialog>:<Modal visible={resetModalVisible} transparent animationType="fade" onRequestClose={onCloseResetModal}>
         <View style={styles.resetModalOverlay}>
           <Pressable style={StyleSheet.absoluteFill} onPress={onCloseResetModal} />
-          <View style={styles.resetModalCard}>
-            <Text style={styles.credentialsTitle}>Сброс пароля</Text>
-            <Text style={styles.credentialsSubtitle}>
-              {resetModalStep === 0
-                ? `Введите код из письма для ${emailFromProfile}.`
-                : `Укажите новый пароль для ${emailFromProfile}.`}
-            </Text>
-
-            {resetModalError ? <Text style={styles.credentialsError}>{resetModalError}</Text> : null}
-            {resetModalNotice ? <Text style={styles.credentialsNotice}>{resetModalNotice}</Text> : null}
-
-            {resetModalStep === 0 ? (
-              <>
-                <OTP6Input
-                  value={resetCode}
-                  onChange={onResetCodeChange}
-                  onFilled={(value) => {
-                    void onVerifyResetCode(value, 'auto');
-                  }}
-                  disabled={resetModalBusy}
-                  error={Boolean(resetModalError)}
-                  secure={false}
-                  autoFocus
-                />
-                <View style={styles.resetModalActions}>
-                  <Pressable
-                    onPress={() => {
-                      void onPasteResetCode();
-                    }}
-                    disabled={resetModalBusy || resetResending}
-                    style={({ pressed }) => [
-                      styles.credentialsSecondaryButton,
-                      (resetModalBusy || resetResending) && styles.credentialsButtonDisabled,
-                      pressed && !(resetModalBusy || resetResending) ? styles.credentialsSecondaryButtonPressed : null,
-                    ]}
-                  >
-                    <Text style={styles.credentialsSecondaryButtonText}>Вставить код</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => {
-                      void onResendResetCode();
-                    }}
-                    disabled={resetModalBusy || resetResending || resetResendTimer > 0}
-                    style={({ pressed }) => [
-                      styles.credentialsSecondaryButton,
-                      (resetModalBusy || resetResending || resetResendTimer > 0) && styles.credentialsButtonDisabled,
-                      pressed && !(resetModalBusy || resetResending || resetResendTimer > 0)
-                        ? styles.credentialsSecondaryButtonPressed
-                        : null,
-                    ]}
-                  >
-                    <Text style={styles.credentialsSecondaryButtonText}>
-                      {resetResending
-                        ? 'Отправка...'
-                        : resetResendTimer > 0
-                        ? `Повторно через ${resetResendTimer}с`
-                        : 'Отправить код повторно'}
-                    </Text>
-                  </Pressable>
-                </View>
-                <View style={styles.resetModalActions}>
-                  <Pressable
-                    onPress={() => {
-                      void onVerifyResetCode();
-                    }}
-                    disabled={resetModalBusy || resetResending}
-                    style={({ pressed }) => [
-                      styles.credentialsButton,
-                      (resetModalBusy || resetResending) && styles.credentialsButtonDisabled,
-                      pressed && !(resetModalBusy || resetResending) ? styles.credentialsButtonPressed : null,
-                    ]}
-                  >
-                    <Text style={styles.credentialsButtonText}>
-                      {resetModalBusy ? 'Проверка...' : 'Подтвердить код'}
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={onCloseResetModal}
-                    disabled={resetModalBusy || resetResending}
-                    style={({ pressed }) => [
-                      styles.credentialsSecondaryButton,
-                      (resetModalBusy || resetResending) && styles.credentialsButtonDisabled,
-                      pressed && !(resetModalBusy || resetResending) ? styles.credentialsSecondaryButtonPressed : null,
-                    ]}
-                  >
-                    <Text style={styles.credentialsSecondaryButtonText}>Отмена</Text>
-                  </Pressable>
-                </View>
-              </>
-            ) : (
-              <>
-                <ProfileField
-                  value={resetPassword}
-                  onChangeText={setResetPassword}
-                  label="Новый пароль"
-                  secureTextEntry
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                <ProfileField
-                  value={resetPasswordRepeat}
-                  onChangeText={setResetPasswordRepeat}
-                  label="Повторите пароль"
-                  secureTextEntry
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                <View style={styles.resetModalActions}>
-                  <Pressable
-                    onPress={() => {
-                      void onSubmitNewPassword();
-                    }}
-                    disabled={resetModalBusy}
-                    style={({ pressed }) => [
-                      styles.credentialsButton,
-                      resetModalBusy && styles.credentialsButtonDisabled,
-                      pressed && !resetModalBusy ? styles.credentialsButtonPressed : null,
-                    ]}
-                  >
-                    <Text style={styles.credentialsButtonText}>
-                      {resetModalBusy ? 'Сохранение...' : 'Сохранить пароль'}
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => {
-                      if (resetModalBusy) return;
-                      setResetModalStep(0);
-                      setResetModalError(null);
-                    }}
-                    disabled={resetModalBusy}
-                    style={({ pressed }) => [
-                      styles.credentialsSecondaryButton,
-                      resetModalBusy && styles.credentialsButtonDisabled,
-                      pressed && !resetModalBusy ? styles.credentialsSecondaryButtonPressed : null,
-                    ]}
-                  >
-                    <Text style={styles.credentialsSecondaryButtonText}>Назад</Text>
-                  </Pressable>
-                </View>
-              </>
-            )}
-          </View>
+          <View style={styles.resetModalCard}>{resetModalContent}</View>
         </View>
-      </Modal>
+      </Modal>}
     </>
   );
 }

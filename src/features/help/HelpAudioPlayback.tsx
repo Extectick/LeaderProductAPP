@@ -1,12 +1,12 @@
 import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
-import type { HelpAttachment, HelpMediaSource } from './helpApi';
+import type { HelpAttachment, HelpMediaSource, HelpMediaResolveOptions, HelpTransferProgress } from './helpApi';
 
 export type HelpAudioSpeed = 1 | 1.5 | 2;
 export type HelpAudioItem = { attachment: HelpAttachment; messageId: number; author: string; createdAt: string; ticketId?: number };
 /** Borrow a source from its resolver. The resolver/cache owns URL lifetime,
  * including late or canceled results; playback never revokes shared blob URLs. */
-export type HelpAudioResolver = (attachment: HelpAttachment) => Promise<HelpMediaSource>;
+export type HelpAudioResolver = (attachment: HelpAttachment, options?: HelpMediaResolveOptions) => Promise<HelpMediaSource>;
 export type HelpAudioPlaybackState = {
   current: HelpAudioItem | null;
   positionSeconds: number;
@@ -17,6 +17,7 @@ export type HelpAudioPlaybackState = {
   ready: boolean;
   error: string | null;
   speed: HelpAudioSpeed;
+  transferProgress?: HelpTransferProgress;
 };
 export type HelpAudioPlaybackController = HelpAudioPlaybackState & {
   play: (item: HelpAudioItem, resolve: HelpAudioResolver) => Promise<void>;
@@ -27,7 +28,7 @@ export type HelpAudioPlaybackController = HelpAudioPlaybackState & {
 };
 export type HelpAudioCommands = Pick<HelpAudioPlaybackController, 'play' | 'toggle' | 'seek' | 'setSpeed' | 'stop'>;
 type Options = { userId: number | null | undefined; ticketId: number | null | undefined; onError?: (message: string) => void };
-type Session = { generation: number; item: HelpAudioItem; resolve: HelpAudioResolver; prepared: boolean; wantsPlay: boolean; failed: boolean };
+type Session = { generation: number; item: HelpAudioItem; resolve: HelpAudioResolver; controller: AbortController; prepared: boolean; observedPlayback: boolean; wantsPlay: boolean; failed: boolean };
 const empty = (speed: HelpAudioSpeed = 1): HelpAudioPlaybackState => ({ current: null, positionSeconds: 0, durationSeconds: 0, progress: 0, playing: false, loading: false, ready: false, error: null, speed });
 const seconds = (value: number) => Number.isFinite(value) ? Math.max(0, value) : 0;
 const Context = createContext<HelpAudioPlaybackController | null>(null);
@@ -52,20 +53,21 @@ export function useHelpAudioController({ userId, ticketId, onError }: Options): 
     if (mounted.current) setStored({ scope: identity.current, value });
   }, []);
   const releaseSource = useCallback(() => {
+    session.current?.controller.abort();
     try { player.pause(); } catch { /* useAudioPlayer owns final native disposal. */ }
     try { player.replace(null); } catch { /* Scope cleanup must still invalidate pending work. */ }
     // useHelpService may return this exact URL again on replay or to another
     // consumer. Its account-scoped cache performs the eventual URL revocation.
   }, [player]);
   const stop = useCallback(() => {
-    generation.current++; seekVersion.current++; seeking.current = false; session.current = null;
-    releaseSource(); publish(empty(rate.current));
+    generation.current++; seekVersion.current++; seeking.current = false;
+    releaseSource(); session.current = null; publish(empty(rate.current));
   }, [publish, releaseSource]);
   useLayoutEffect(() => {
     mounted.current = true; rate.current = 1; publish(empty());
     return () => {
-      mounted.current = false; generation.current++; seekVersion.current++; seeking.current = false; session.current = null;
-      releaseSource(); snapshot.current = empty();
+      mounted.current = false; generation.current++; seekVersion.current++; seeking.current = false;
+      releaseSource(); session.current = null; snapshot.current = empty();
     };
   }, [scope, player, publish, releaseSource]);
   const valid = useCallback((operation: number, owner: string) => mounted.current && identity.current === owner && session.current?.generation === operation, []);
@@ -84,11 +86,16 @@ export function useHelpAudioController({ userId, ticketId, onError }: Options): 
     if (!active?.prepared || active.failed || !mounted.current) return;
     if (nativeStatus.error) { fail('Не удалось воспроизвести аудио', active.generation, identity.current); return; }
     const duration = seconds(nativeStatus.duration), position = seeking.current ? snapshot.current.positionSeconds : Math.min(seconds(nativeStatus.currentTime), duration || Infinity);
-    if (nativeStatus.didJustFinish) active.wantsPlay = false;
+    // A late finish from the replaced source must not close a newly loading
+    // track. Only a session observed playing may finish, never a paused/seek UI.
+    if (nativeStatus.didJustFinish && !nativeStatus.playing && active.observedPlayback && active.wantsPlay && !seeking.current) {
+      stop(); return;
+    }
+    if (nativeStatus.isLoaded && nativeStatus.playing && !nativeStatus.didJustFinish) active.observedPlayback = true;
     publish({ ...snapshot.current, positionSeconds: position, durationSeconds: duration, progress: duration ? position / duration : 0,
       ready: nativeStatus.isLoaded, loading: !nativeStatus.isLoaded || nativeStatus.isBuffering,
       playing: nativeStatus.isLoaded && nativeStatus.playing, speed: rate.current });
-  }, [nativeStatus, fail, publish]);
+  }, [nativeStatus, fail, publish, stop]);
 
   const seek = useCallback(async (value: number) => {
     const active = session.current;
@@ -134,17 +141,20 @@ export function useHelpAudioController({ userId, ticketId, onError }: Options): 
     }
     const owner = identity.current, operation = ++generation.current;
     seekVersion.current++; seeking.current = false; releaseSource();
-    const active: Session = { generation: operation, item, resolve, prepared: false, wantsPlay: true, failed: false };
+    const active: Session = { generation: operation, item, resolve, controller: new AbortController(), prepared: false, observedPlayback: false, wantsPlay: true, failed: false };
     session.current = active;
     publish({ ...empty(rate.current), current: item, loading: true });
     try {
-      const resolved = await resolve(item.attachment);
+      const resolved = await resolve(item.attachment, { signal: active.controller.signal, onProgress: value => {
+        if (valid(operation, owner)) publish({ ...snapshot.current, transferProgress: value });
+      } });
       if (!valid(operation, owner)) return;
       await seekQueue.current.catch(() => {});
       if (!valid(operation, owner)) return;
       await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: false });
       if (!valid(operation, owner)) return;
       player.replace(resolved); active.prepared = true;
+      publish({ ...snapshot.current, transferProgress: undefined });
       player.shouldCorrectPitch = true; player.setPlaybackRate(rate.current, 'medium');
       if (active.wantsPlay) player.play();
     } catch {

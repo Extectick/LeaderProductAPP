@@ -2,6 +2,7 @@ import { createHelpApi, uploadHelpFiles, HelpApiError, type HelpDetail } from '.
 import { confirmHelpPending, saveHelpPending, helpRetryDelay } from './helpStorage';
 import type { HelpPending } from './helpDurableTypes';
 import { API_BASE_URL } from '@/utils/config';
+import {publishHelpUploadProgress,clearHelpUploadProgress} from './helpAudioTransfer';
 const requests = new Map<string, Promise<HelpDetail>>();
 function notifyAccepted(observer: ((detail: HelpDetail) => void) | undefined, detail: HelpDetail) {
     try {observer?.(detail);} catch { /* UI observers cannot undo server acceptance. */ }
@@ -19,7 +20,8 @@ export function dispatchHelpPending(userId: number, item: HelpPending, onAccepte
             // Checkpoint each completed upload so retry never repeats earlier files.
             const uploadedFileIds = [...(item.uploadedFileIds ?? [])];
             for (const file of (item.localFiles ?? []).slice(uploadedFileIds.length)) {
-                const [attachment] = await uploadHelpFiles([file], userId);
+                publishHelpUploadProgress(file.uri,{transferred:0,total:null});
+                const [attachment] = await uploadHelpFiles([file], userId,progress=>publishHelpUploadProgress(file.uri,progress));
                 if (!attachment) throw new Error('Сервер не подтвердил загрузку вложения');
                 uploadedFileIds.push(attachment.id);
                 sending = {...sending, uploadedFileIds: [...uploadedFileIds]};
@@ -42,9 +44,11 @@ export function dispatchHelpPending(userId: number, item: HelpPending, onAccepte
                 const drafts: typeof import('./helpAttachmentDrafts') = require('./helpAttachmentDrafts');
                 await drafts.clearHelpAttachmentDraft(userId, `outbox:${item.key}`).catch(() => {});
             }
+            item.localFiles?.forEach(file=>clearHelpUploadProgress(file.uri));
             return detail;
         }
         catch (error) {
+            item.localFiles?.forEach(file=>clearHelpUploadProgress(file.uri));
             const terminal = error instanceof HelpApiError && error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status);
             const attempts = (item.attempts ?? 0) + 1;
             await saveHelpPending(userId, { ...sending, attempts, status: terminal ? 'failed' : 'queued', nextAttemptAt: terminal ? undefined : Date.now() + helpRetryDelay(attempts), error: error instanceof Error ? error.message : 'Не удалось отправить сообщение' });

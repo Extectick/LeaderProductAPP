@@ -28,7 +28,7 @@ test.each([profile,order])('profiles and 1C objects use the same shared viewer c
 test('nested back retains navigation history and connection pages never copy a credential form link',async()=>{
  const value=state();value.frames.push({key:2,kind:'connection',baseKey:'torg2026',title:'Подключение 1С',scrollOffset:0});
  await act(async()=>{view=TestRenderer.create(tree(value));});
- expect(layout().props.backLabel).toBe('Назад к предыдущей карточке');expect(layout().props.actions.map((a:any)=>a.id)).toEqual(['close']);
+ expect(layout().props.backLabel).toBe('Назад к предыдущему просмотру');expect(layout().props.actions.map((a:any)=>a.id)).toEqual(['close']);
  await act(async()=>layout().props.onBack());expect(back).toHaveBeenCalledTimes(1);expect(close).not.toHaveBeenCalled();
 });
 test('late copy completion after account/frame change cannot publish old feedback',async()=>{

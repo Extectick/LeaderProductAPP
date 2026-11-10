@@ -2,7 +2,6 @@ import {Pressable as NativePressable} from 'react-native-gesture-handler';
 import React, { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, AppState, Easing, Image, Keyboard, PanResponder, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Reanimated,{Easing as UiEasing,useAnimatedStyle,withTiming} from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
@@ -11,6 +10,7 @@ import { useHelpRecorderState } from '../useHelpRecorderState';
 import { useHelpTheme, useHelpReducedMotion } from '../helpTheme';
 import { useHelpAudioCommands } from '../HelpAudioPlayback';
 import { helpDuration } from '../helpUiUtils';
+import {helpInputScrollY} from '../helpInputScroll';
 import { HelpIcon, HelpSheet } from './HelpPrimitives';
 import { HelpImage, type ResolveHelpMedia } from './HelpMedia';
 import type { HelpAttachment } from '../helpApi';
@@ -20,18 +20,25 @@ import { HelpPhotoPicker } from './HelpPhotoPicker';
 import {scheduleHelpInputFocus} from '../helpInputFocus';
 import {HelpVoiceRecorder,hasNativeHelpVoice} from './HelpVoiceRecorder';
 import {HelpExpandedEditor,type HelpTextSelection} from './HelpExpandedEditor';
+import {helpHaptic} from '../helpHaptics';
+import {useHelpWebComposer} from '../useHelpWebComposer';
+import {HELP_ATTACHMENT_LIMIT, HELP_ATTACHMENT_MAX_BYTES, helpAttachmentBatchError, shouldSendHelpWebKey} from '../helpWebComposer';
+import {createHelpWebAttachment, releaseHelpWebAttachment, holdHelpWebAttachments} from '../helpWebAttachmentUrls';
+import {HelpWebVoiceControls} from './HelpWebVoiceControls';
+import {HelpComposerVoiceAction} from './HelpComposerVoiceAction';
+import {APP_WEB_FONT, appWebControlProps, appWebControlContentProps} from '../../../../components/ui/appWebInteraction';
 
-export type HelpLocalFile = { durationMs?: number; uri: string; name: string; mimeType?: string; file?: File; size?: number; width?: number; height?: number; assetId?: string };
+export type HelpLocalFile = { durationMs?: number; uri: string; name: string; mimeType?: string; file?: File; size?: number; width?: number; height?: number; assetId?: string; webObjectUrl?: boolean; webVoiceRecording?:boolean; voiceWave?:number[] };
 export type HelpComposeMode = 'message' | 'close' | 'reopen' | 'edit';
 export type HelpComposerHandle = { pickFiles: () => Promise<void> };
 type FocusSuspension = {focusSuspended?:boolean};
-type Props = { inputHint?: string; questionActionLabel?: string; closeAttachmentsKey?:number; blurTarget?:React.RefObject<View|null>; navigationReady?:boolean; onAttachmentVisibility?:(visible:boolean)=>void; screenActive?:boolean; voiceDraftKey?:string; value: string; onChange: (text: string) => void; files: HelpLocalFile[]; onFiles: (files: HelpLocalFile[]) => void; onSend: (voice?: HelpLocalFile, selectedFiles?: HelpLocalFile[], retainVoiceDraft?:boolean) => Promise<boolean | void>; busy: boolean; mode: HelpComposeMode; rating: number; onRating: (rating: number) => void; onCancelMode: () => void; quote?: { name: string; text: string; onPress: () => void; thumbnail?: HelpAttachment }; resolve?: ResolveHelpMedia; recordingAreaHeight?: number; onCancelQuote: () => void; error: (message: string) => void; focusKey?: number; onResize: () => void; disabled?: boolean; sendBlocked?:boolean; onStopAssistant?:()=>void; editClosure?: boolean; existingFiles?: HelpAttachment[]; onRemoveExisting?: (id: string) => void };
+type Props = { questionPanel?: React.ReactNode; questionFooter?: React.ReactNode; inputHint?: string; questionActionLabel?: string; hideSendAction?: boolean; closeAttachmentsKey?:number; blurTarget?:React.RefObject<View|null>; navigationReady?:boolean; onAttachmentVisibility?:(visible:boolean)=>void; screenActive?:boolean; voiceDraftKey?:string; value: string; onChange: (text: string) => void; files: HelpLocalFile[]; onFiles: (files: HelpLocalFile[]) => void; onSend: (voice?: HelpLocalFile, selectedFiles?: HelpLocalFile[], retainVoiceDraft?:boolean) => Promise<boolean | void>; busy: boolean; mode: HelpComposeMode; rating: number; onRating: (rating: number) => void; onCancelMode: () => void; quote?: { name: string; text: string; onPress: () => void; thumbnail?: HelpAttachment }; resolve?: ResolveHelpMedia; recordingAreaHeight?: number; onCancelQuote: () => void; error: (message: string) => void; focusKey?: number; onResize: (inputHeight?:number) => void; disabled?: boolean; sendBlocked?:boolean; onStopAssistant?:()=>void; editClosure?: boolean; existingFiles?: HelpAttachment[]; onRemoveExisting?: (id: string) => void };
 
 const COMPOSER_LINE_HEIGHT = 22;
 const COMPOSER_MAX_HEIGHT = COMPOSER_LINE_HEIGHT * 6.5 + 2;
 const COMPOSER_FONT_SIZE = 18;
-const MAX_ATTACHMENTS = 10;
-const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+const MAX_ATTACHMENTS = HELP_ATTACHMENT_LIMIT;
+const MAX_ATTACHMENT_BYTES = HELP_ATTACHMENT_MAX_BYTES;
 const DRAFT_PHOTO_SIZE = 80;
 
 function HelpDraftPhoto({children,name,disabled,onRemove}:{children:React.ReactNode;name:string;disabled?:boolean;onRemove:()=>void}) {
@@ -52,6 +59,7 @@ export const HelpComposer = forwardRef<HelpComposerHandle, Props & FocusSuspensi
   const stopPlayback = useRef(audioCommands?.stop); stopPlayback.current = audioCommands?.stop;
   const c = useHelpTheme(); const reduced=useHelpReducedMotion(); const input = useRef<TextInput | HelpNativeInputHandle>(null); const [height, setHeight] = useState(22); const [scrollY, setScrollY] = useState(0); const [contentHeight, setContentHeight] = useState(22);
   const [composerHeight, setComposerHeight] = useState(48); const [recordingCardHeight, setRecordingCardHeight] = useState(180);
+  const measuredComposerHeight=useRef(48);
   const [attachmentMenu,setAttachmentMenu]=useState(false);const picking=useRef(false);
   const [photoPickerOpen,setPhotoPickerOpen]=useState(false),[photoPickerVisible,setPhotoPickerVisible]=useState(false),[preparingPhotos,setPreparingPhotos]=useState(false);
   useEffect(()=>{setPhotoPickerOpen(false);},[props.closeAttachmentsKey]);
@@ -59,6 +67,12 @@ export const HelpComposer = forwardRef<HelpComposerHandle, Props & FocusSuspensi
   useEffect(()=>()=>props.onAttachmentVisibility?.(false),[props.onAttachmentVisibility]);
   const recorder = useAudioRecorder({ ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true });
   const [recording, setRecording] = useState(false); const [locked, setLocked] = useState(false); const [starting, setStarting] = useState(false); const [meter, setMeter] = useState<number[]>([]);
+  const [webVoiceWorking,setWebVoiceWorking]=useState(false);
+  const webVoiceSending=useRef(false),createdVoiceUrls=useRef(new Set<string>()),voiceWave=useRef<number[]>([]);
+  const webVoiceDraft=Platform.OS==='web'?props.files.find(file=>file.webVoiceRecording):undefined;
+  const compactWebVoice=Platform.OS==='web'&&(recording||starting||webVoiceWorking||Boolean(webVoiceDraft));
+  const webVoiceSendAction=Boolean(compactWebVoice&&(locked||webVoiceDraft));
+  const activeVoice=voiceActive||compactWebVoice;
   const recordState = useHelpRecorderState(recorder, recording);
   const life = useRef({ mounted: true, starting: false, recording: false, locked: false, ending: false, permissionPending: false, permissionInterrupted: false, appState: AppState.currentState ?? 'active', resumeActive: null as null | (() => void), release: null as null | 'send' | 'cancel' | 'stage' });
   const latest = useRef(props); latest.current = props; const pulse = useRef(new Animated.Value(1)).current;
@@ -87,7 +101,7 @@ export const HelpComposer = forwardRef<HelpComposerHandle, Props & FocusSuspensi
     if (!props.value) {
       setHeight(COMPOSER_LINE_HEIGHT); setContentHeight(COMPOSER_LINE_HEIGHT); setScrollY(0);
       if (Platform.OS === 'web' && input.current) (input.current as unknown as HTMLTextAreaElement).scrollTop = 0;
-      if (height !== COMPOSER_LINE_HEIGHT || contentHeight !== COMPOSER_LINE_HEIGHT) props.onResize();
+      if (height !== COMPOSER_LINE_HEIGHT || contentHeight !== COMPOSER_LINE_HEIGHT) props.onResize(48);
       return;
     }
     if (Platform.OS !== 'web') return;
@@ -103,14 +117,14 @@ export const HelpComposer = forwardRef<HelpComposerHandle, Props & FocusSuspensi
     const next = Math.min(COMPOSER_MAX_HEIGHT, measured);
     const offset = Math.min(Math.max(0, previousScroll), Math.max(0, measured - next));
     node.scrollTop = offset; setScrollY(offset); setContentHeight(measured);
-    if (height !== next) { setHeight(next); props.onResize(); }
+    if (height !== next) { setHeight(next); props.onResize(Math.max(48,next+24)); }
   }, [props.value]);
 
   const restorePhotoKeyboard=useRef(false);
   const attachmentLocked=photoPickerOpen||photoPickerVisible;
   const photoVisible=useRef(attachmentLocked);photoVisible.current=attachmentLocked;
   const focusedRequest=useRef<number|undefined>(undefined);
-  const focusSuspended=attachmentLocked||Boolean(props.focusSuspended)||props.screenActive===false||expanded||voiceActive||recording||starting;
+  const focusSuspended=attachmentLocked||Boolean(props.focusSuspended)||props.screenActive===false||expanded||activeVoice||recording||starting;
   // Sending is not an editing lock: disabling the native EditText transfers
   // focus to its dismiss target and closes the IME on every queued message.
   const inputEnabled=!focusSuspended&&props.navigationReady!==false&&!(props.busy&&props.mode!=='message')&&!props.disabled;
@@ -138,19 +152,28 @@ export const HelpComposer = forwardRef<HelpComposerHandle, Props & FocusSuspensi
     if(!focusSuspended)return;
     // An interrupted autofocus is consumed, not queued behind a modal. Only a
     // new explicit request (reply/edit/new chat) can focus after returning.
-    if(attachmentLocked||props.focusSuspended||expanded||voiceActive||recording||starting)focusedRequest.current=props.focusKey;
+    if(attachmentLocked||props.focusSuspended||expanded||activeVoice||recording||starting)focusedRequest.current=props.focusKey;
     restorePhotoKeyboard.current=false;restoreSelection.current=null;
     input.current?.blur();Keyboard.dismiss();
-  },[focusSuspended,attachmentLocked,props.focusSuspended,expanded,voiceActive,recording,starting,props.focusKey]);
+  },[focusSuspended,attachmentLocked,props.focusSuspended,expanded,activeVoice,recording,starting,props.focusKey]);
   useEffect(()=>{
     if(!props.focusKey||!inputEnabled||focusedRequest.current===props.focusKey)return;
-    focusedRequest.current=props.focusKey;
     return scheduleHelpInputFocus(()=>{
       if(!input.current)return null;
+      // Consume only a request that reaches its frame. StrictMode/refresh can
+      // cancel an effect before then; its replacement must still focus once.
+      focusedRequest.current=props.focusKey;
       return input.current;
     });
   },[props.focusKey,inputEnabled]);
-  useEffect(() => { if (recordState.isRecording) setMeter(values => [...values.slice(-27), Math.min(1, Math.max(.04, ((recordState.metering ?? -50) + 60) / 60))]); }, [recordState.durationMillis]);
+  useEffect(() => { if (recordState.isRecording) {const level=Math.min(1, Math.max(.04, ((recordState.metering ?? -50) + 60) / 60));if(Platform.OS==='web')voiceWave.current=[...voiceWave.current.slice(-749),level];setMeter(values => [...values.slice(-27),level]);} }, [recordState.durationMillis]);
+  useEffect(()=>{
+    // useHelpWebComposer has adopted rendered drafts by this passive effect.
+    for(const uri of createdVoiceUrls.current)if(props.files.some(file=>file.uri===uri)||!recording&&!starting&&!webVoiceWorking){createdVoiceUrls.current.delete(uri);releaseHelpWebAttachment(uri);}
+  },[props.files,recording,starting,webVoiceWorking]);
+  useEffect(()=>()=>{for(const uri of createdVoiceUrls.current)releaseHelpWebAttachment(uri);createdVoiceUrls.current.clear();},[]);
+  useEffect(()=>{if(Platform.OS==='web'&&props.screenActive===false)void finish('stage');},[props.screenActive]);
+  useEffect(()=>()=>{if(Platform.OS==='web')void finish('cancel');},[props.voiceDraftKey]);
   useEffect(() => { if (recording && recordState.durationMillis >= 60000) void finish('stage'); }, [recordState.durationMillis, recording]);
   useEffect(() => {
     life.current.mounted = true;
@@ -163,27 +186,57 @@ export const HelpComposer = forwardRef<HelpComposerHandle, Props & FocusSuspensi
     return () => {
       sub.remove(); const state = life.current; state.mounted = false; state.release = 'cancel';
       state.resumeActive?.(); state.resumeActive = null;
-      if (state.recording && !state.ending) void recorder.stop().catch(() => {});
+      if (state.recording && !state.ending) void recorder.stop().then(()=>{if(Platform.OS==='web'&&recorder.uri?.startsWith('blob:'))URL.revokeObjectURL(recorder.uri);}).catch(() => {});
       void setAudioModeAsync({ allowsRecording: false }).catch(() => {});
     };
   }, [recorder]);
-  useEffect(() => { if (!recording || reduced) { pulse.stopAnimation(); pulse.setValue(1); return; } const loop = Animated.loop(Animated.sequence([Animated.timing(pulse, { toValue: 1.1, duration: 550, useNativeDriver: true }), Animated.timing(pulse, { toValue: 1, duration: 550, useNativeDriver: true })])); loop.start(); return () => loop.stop(); }, [recording,reduced]);
+  useEffect(() => { if (!recording || reduced) { pulse.stopAnimation(); pulse.setValue(1); return; } const loop = Animated.loop(Animated.sequence([Animated.timing(pulse, { toValue: 1.1, duration: 550, useNativeDriver: Platform.OS!=='web' }), Animated.timing(pulse, { toValue: 1, duration: 550, useNativeDriver: Platform.OS!=='web' })])); loop.start(); return () => loop.stop(); }, [recording,reduced]);
+  async function sendWebVoice(file:HelpLocalFile,scope=latest.current.voiceDraftKey){
+    const current=latest.current;
+    if(webVoiceSending.current||!life.current.mounted||current.voiceDraftKey!==scope||current.busy||current.disabled||current.sendBlocked||current.screenActive===false)return;
+    webVoiceSending.current=true;setWebVoiceWorking(true);
+    const release=holdHelpWebAttachments([file]);
+    try{
+      const sent=await current.onSend(file,undefined,true);
+      if(sent!==false&&life.current.mounted&&latest.current.voiceDraftKey===scope)latest.current.onFiles(latest.current.files.filter(item=>item.uri!==file.uri));
+    }catch{if(life.current.mounted&&latest.current.voiceDraftKey===scope)latest.current.error('Не удалось отправить запись. Запись сохранена.');}
+    finally{release();webVoiceSending.current=false;if(life.current.mounted)setWebVoiceWorking(false);}
+  }
   async function finish(action: 'send' | 'cancel' | 'stage') {
     const state = life.current;
     if (state.starting) { if (state.release !== 'cancel') state.release = action; state.resumeActive?.(); state.resumeActive = null; return; }
     if (!state.recording || state.ending) return;
     state.ending = true;
+    const scope=latest.current.voiceDraftKey,web=Platform.OS==='web';
+    if(web&&state.mounted)setWebVoiceWorking(true);
+    let recordingUri:string|null=null;
     try {
       const duration = recorder.getStatus().durationMillis;
       await recorder.stop();
+      if(state.mounted&&state.appState==='active'&&action!=='send')helpHaptic(action==='cancel'?'recordCancel':'recordPause');
       const uri = recorder.uri;
-      if (uri && action !== 'cancel' && duration >= 350 && state.mounted) {
-        const web = Platform.OS === 'web'; const file: HelpLocalFile = { uri, name: `Голосовое-${Date.now()}.${web ? 'webm' : 'm4a'}`, mimeType: web ? 'audio/webm' : 'audio/mp4', durationMs:duration };
+      recordingUri=uri;
+      if (uri && action !== 'cancel' && duration >= 350 && state.mounted&&(!web||latest.current.voiceDraftKey===scope)) {
+        const file: HelpLocalFile = { uri, name: `Голосовое-${Date.now()}.${web ? 'webm' : 'm4a'}`, mimeType: web ? 'audio/webm' : 'audio/mp4', durationMs:duration };
+        if(web){
+          // Keep the actual Blob in the session draft, so reopening a chat can
+          // recreate a preview after the old composer's object URL is released.
+          const blob=await(await fetch(uri)).blob();
+          if(!state.mounted||latest.current.voiceDraftKey!==scope)return;
+          const error=helpAttachmentBatchError([blob],latest.current.files.length+(latest.current.existingFiles?.length??0));
+          if(error){latest.current.error(error);return;}
+          const mimeType=blob.type||'audio/webm',extension=mimeType.includes('mp4')?'m4a':mimeType.includes('ogg')?'ogg':'webm';
+          const selected={...createHelpWebAttachment(new File([blob],`Голосовое-${Date.now()}.${extension}`,{type:mimeType})),durationMs:duration,webVoiceRecording:true,voiceWave:[...voiceWave.current]};
+          createdVoiceUrls.current.add(selected.uri);
+          latest.current.onFiles([...latest.current.files,selected]);
+          if(action==='send')await sendWebVoice(selected,scope);
+          return;
+        }
         if (action === 'send') await latest.current.onSend(file);
         else latest.current.onFiles([...latest.current.files, file]);
       }
-    } catch { if (state.mounted) latest.current.error('Не удалось сохранить запись. Попробуйте ещё раз.'); }
-    finally { state.recording = false; state.ending = false; state.locked = false; state.release = null; if (state.mounted) { setRecording(false); setLocked(false); } void setAudioModeAsync({ allowsRecording: false }).catch(() => {}); }
+    } catch { if (state.mounted&&(!web||latest.current.voiceDraftKey===scope)) latest.current.error('Не удалось сохранить запись. Попробуйте ещё раз.'); }
+    finally {if(web&&recordingUri?.startsWith('blob:'))URL.revokeObjectURL(recordingUri);state.recording = false; state.ending = false; state.locked = false; state.release = null; if (state.mounted) { setRecording(false); setLocked(false);if(web)setWebVoiceWorking(false); } void setAudioModeAsync({ allowsRecording: false }).catch(() => {}); }
   }
   async function discardPreparedRecording() {
     if (Platform.OS !== 'web') { await recorder.stop(); return; }
@@ -198,7 +251,7 @@ export const HelpComposer = forwardRef<HelpComposerHandle, Props & FocusSuspensi
   }
   async function start(lock = false) {
     const state = life.current;
-    if (!state.mounted || state.starting || state.recording || state.ending || state.appState !== 'active' || latest.current.busy || latest.current.disabled || latest.current.onStopAssistant) return;
+    if (!state.mounted || state.starting || state.recording || state.ending || state.appState !== 'active' || latest.current.busy || latest.current.disabled || latest.current.onStopAssistant || (Platform.OS==='web'&&(latest.current.screenActive===false||latest.current.sendBlocked||latest.current.files.some(file=>file.webVoiceRecording)))) return;
     state.starting = true; state.release = null; state.locked = lock; state.permissionInterrupted = false; setStarting(true); Keyboard.dismiss();
     try {
       // On web, even getRecordingPermissionsAsync can display a permission prompt.
@@ -228,17 +281,18 @@ export const HelpComposer = forwardRef<HelpComposerHandle, Props & FocusSuspensi
         await discardPreparedRecording();
         return;
       }
-      recorder.record(); state.recording = true; setMeter([]); setRecording(true); setLocked(state.locked);
+      recorder.record(); state.recording = true; helpHaptic('recordStart');voiceWave.current=[];setMeter([]); setRecording(true); setLocked(state.locked);
     } catch { if (state.mounted) latest.current.error(Platform.OS === 'web' ? 'Запись требует HTTPS и разрешения браузера на микрофон.' : 'Не удалось включить микрофон.'); }
     finally { state.starting = false; state.permissionPending = false; state.resumeActive = null; if (state.mounted) setStarting(false); if (!state.recording) { state.locked = false; if (state.mounted) setLocked(false); void setAudioModeAsync({ allowsRecording: false }).catch(() => {}); } if (state.release && state.recording) void finish(state.release); }
   }
-  const gestures = useRef(PanResponder.create({ onStartShouldSetPanResponder: () => life.current.mounted && !latest.current.busy && !latest.current.disabled, onMoveShouldSetPanResponder: () => true, onPanResponderGrant: () => { void start(); }, onPanResponderMove: (_, g) => { if (!life.current.mounted || (!life.current.starting && !life.current.recording)) return; if (g.dy < -65) { life.current.locked = true; setLocked(true); } else if (g.dx < -75 && !life.current.locked) void finish('cancel'); }, onPanResponderRelease: () => { if (life.current.permissionPending) life.current.permissionInterrupted = true; else if (!life.current.locked) void finish('send'); }, onPanResponderTerminate: () => { if (life.current.permissionPending) life.current.permissionInterrupted = true; else if (!life.current.locked) void finish('cancel'); } })).current;
+  const gestures = useRef(PanResponder.create({ onStartShouldSetPanResponder: () => life.current.mounted && !latest.current.busy && !latest.current.disabled && !(Platform.OS==='web'&&(life.current.locked||latest.current.files.some(file=>file.webVoiceRecording))), onMoveShouldSetPanResponder: () => Platform.OS!=='web'||!life.current.locked&&!latest.current.files.some(file=>file.webVoiceRecording), onPanResponderGrant: () => { void start(Platform.OS==='web'&&Boolean(globalThis.window?.matchMedia?.('(hover: hover) and (pointer: fine)').matches)); }, onPanResponderMove: (_, g) => { if (!life.current.mounted || (!life.current.starting && !life.current.recording)) return; if (g.dy < -65) { if(!life.current.locked&&life.current.recording)helpHaptic('recordLock');life.current.locked = true; setLocked(true); } else if (g.dx < -75 && !life.current.locked) void finish('cancel'); }, onPanResponderRelease: () => { if (life.current.permissionPending) life.current.permissionInterrupted = true; else if (!life.current.locked) void finish('send'); }, onPanResponderTerminate: () => { if (life.current.permissionPending) life.current.permissionInterrupted = true; else if (!life.current.locked) void finish('cancel'); } })).current;
   function appendPicked(added:HelpLocalFile[]) {
     const current=latest.current;
-    if(!life.current.mounted||current.busy||current.disabled||!added.length)return;
-    if(current.files.length+added.length+(current.existingFiles?.length??0)>MAX_ATTACHMENTS){current.error('В одном сообщении можно прикрепить до 10 файлов.');return;}
-    if(added.some(file=>(file.size??file.file?.size??0)>MAX_ATTACHMENT_BYTES)){current.error('Размер каждого файла должен быть не больше 20 МБ.');return;}
+    if(!life.current.mounted||current.busy||current.disabled||!added.length)return false;
+    const error=helpAttachmentBatchError(added,current.files.length+(current.existingFiles?.length??0));
+    if(error){current.error(error);return false;}
     current.onFiles([...current.files,...added]);
+    return true;
   }
   async function pick(kind:'photos'|'files') {
     const current=latest.current;
@@ -281,41 +335,44 @@ export const HelpComposer = forwardRef<HelpComposerHandle, Props & FocusSuspensi
   }
   useEffect(() => helpDevActions('composer', { 'composer.focus': () => {if(inputEnabled)input.current?.focus();}, 'composer.text': value => { if(typeof value==='string')props.onChange(value); }, 'composer.photos':()=>{Keyboard.dismiss();setPhotoPickerOpen(true);} }));
   useEffect(() => {const timer=setTimeout(()=>helpDevState({composerHeight,inputTargetHeight:height,inputContentHeight:contentHeight,inputScrollY:scrollY,draftLength:props.value.length,fontSize:COMPOSER_FONT_SIZE,animationDuration:reduced ? 0 : 180}),100);return()=>clearTimeout(timer);},[composerHeight,height,contentHeight,scrollY,props.value.length,reduced]);
-  const hasText = Boolean(props.value.trim() || props.files.length || props.existingFiles?.length || props.questionActionLabel); const canSend = !props.sendBlocked && !props.disabled && !props.busy && !preparingPhotos && (props.mode === 'close' || props.editClosure || hasText) && (props.mode !== 'reopen' || Boolean(props.value.trim()));
+  const hasText = Boolean(props.value.trim() || props.files.length || props.existingFiles?.length || props.questionActionLabel); const canSend = !props.hideSendAction && !props.sendBlocked && !props.disabled && !props.busy && !preparingPhotos && (props.mode === 'close' || props.editClosure || hasText) && (props.mode !== 'reopen' || Boolean(props.value.trim()));
+  const web=useHelpWebComposer({files:props.files,existingCount:props.existingFiles?.length??0,enabled:inputEnabled&&!props.busy&&!props.sendBlocked,scope:props.voiceDraftKey,accept:appendPicked,replace:props.onFiles,error:props.error});
   function measureContent(rawHeight: number) {
     const measured = Math.max(COMPOSER_LINE_HEIGHT, rawHeight);
     const next = Math.min(COMPOSER_MAX_HEIGHT, measured);
     setContentHeight(measured);
     setScrollY(y => Math.min(Math.max(0, y), Math.max(0, measured - next)));
-    if (next !== height) { setHeight(next); props.onResize(); }
+    if (next !== height) { setHeight(next); props.onResize(Math.max(48,next+24)); }
   }
   const overflowing = contentHeight > height + 1;
-  const multiline=Boolean(props.value)&&((hasNativeHelpInput?visualLines>1:contentHeight>COMPOSER_LINE_HEIGHT+1)||props.value.includes('\n'));
-  // The input already animates its native height. Its surrounding action area
-  // must use the same clock instead of dropping its 88dp minimum to 48dp in a
-  // single frame when the last line/expanded-editor affordance disappears.
-  const rowMinimum=useAnimatedStyle(()=>({minHeight:withTiming(!voiceActive&&multiline?88:48,{duration:reduced?0:180,easing:UiEasing.out(UiEasing.cubic)})}),[voiceActive,multiline,reduced]);
+  // Two text lines need 68dp, not the 88dp required by two stacked controls.
+  // Reveal expand from three lines, when its 44dp target fits above send.
+  // The input remains the only owner of the row's animated height.
+  const canExpand=Boolean(props.value)&&((hasNativeHelpInput?visualLines>2:contentHeight>COMPOSER_LINE_HEIGHT*2+1)||props.value.split('\n').length>2);
   useEffect(()=>{if(expanded||!restoreSelection.current)return;if(!inputEnabled){restoreSelection.current=null;return;}const range=restoreSelection.current;restoreSelection.current=null;return scheduleHelpInputFocus(()=>{if(hasNativeHelpInput){void(input.current as HelpNativeInputHandle)?.restore(props.value,range);return null;}(input.current as TextInput)?.setNativeProps({selection:range});return input.current;});},[expanded,inputEnabled]);
   function closeEditor(range:HelpTextSelection){selection.current=range;restoreSelection.current=range;setExpanded(false);}
   const placeholder = props.inputHint || (props.mode === 'reopen' ? 'Что случилось снова?' : 'Сообщение…');
+  useLayoutEffect(()=>{
+    if(recording||starting||photoPickerOpen||photoPickerVisible||!props.questionPanel)setComposerHeight(measuredComposerHeight.current);
+  },[recording,starting,photoPickerOpen,photoPickerVisible,Boolean(props.questionPanel)]);
   const recordingBottom = props.recordingAreaHeight == null ? 125 : Math.max(composerHeight + 8, composerHeight + props.recordingAreaHeight / 2 - recordingCardHeight / 2);
-  return <View>
-    <View pointerEvents={photoPickerOpen||photoPickerVisible?'none':'auto'} accessibilityElementsHidden={photoPickerOpen||photoPickerVisible} importantForAccessibility={photoPickerOpen||photoPickerVisible?'no-hide-descendants':'auto'} ref={node=>helpDevRef('composer.surface',node)} testID="help-composer-surface" onLayout={e => setComposerHeight(e.nativeEvent.layout.height)} style={{ borderRadius: 24, backgroundColor: c.panel, borderWidth: 0, overflow: 'visible', opacity:photoPickerOpen||photoPickerVisible?0:1, height:photoPickerOpen||photoPickerVisible?composerHeight:undefined }}>
-    {attachmentMenu ? <HelpSheet title="Прикрепить" onClose={()=>setAttachmentMenu(false)}><View style={{gap:4}}>{([{kind:'photos',label:'Фотографии',icon:'images-outline'},{kind:'files',label:'Файлы',icon:'document-outline'}] as const).map(item=><Pressable key={item.kind} accessibilityRole="button" accessibilityLabel={`Выбрать ${item.label.toLocaleLowerCase('ru-RU')}`} onPress={()=>void pick(item.kind)} style={({pressed})=>({minHeight:52,flexDirection:'row',alignItems:'center',gap:14,paddingHorizontal:12,borderRadius:12,backgroundColor:pressed?c.soft:'transparent'})}><Ionicons name={item.icon} size={24} color={c.accentText}/><Text style={{fontSize:16,color:c.text}}>{item.label}</Text></Pressable>)}</View></HelpSheet> : null}
-    {recording || starting ? <View testID="help-recording-card" onLayout={e => setRecordingCardHeight(e.nativeEvent.layout.height)} style={{ position: 'absolute', bottom: recordingBottom, left: '12%', right: '12%', borderRadius: 24, paddingTop: 26, paddingHorizontal: 24, paddingBottom: 20, borderWidth: 1, borderColor: c.line, backgroundColor: c.elevated, alignItems: 'center', gap: 14 }}><Text style={{ color: c.text, fontWeight: '600' }}>{starting ? 'Включение микрофона…' : locked ? 'Запись закреплена' : 'Запись голоса'}</Text><View style={{ height: 64, flexDirection: 'row', alignItems: 'center', gap: 3 }}>{meter.map((value, i) => <View key={i} style={{ height: Math.max(4, value * 60), width: 4, borderRadius: 2, backgroundColor: c.accent }} />)}</View><Text accessibilityLiveRegion="polite" style={{ color: c.text, fontSize: 18, letterSpacing: .6, fontVariant: ['tabular-nums'] }}>{helpDuration(recordState.durationMillis / 1000)}</Text><Text style={{ color: c.muted, fontSize: 12, textAlign: 'center' }}>{locked ? 'До 1 минуты • остановите для прослушивания' : 'Вверх — закрепить · влево — отменить'}</Text>{locked ? <View style={{ flexDirection: 'row', gap: 14 }}><HelpIcon nativeTouch name="trash-outline" label="Отменить запись" onPress={() => void finish('cancel')} /><HelpIcon nativeTouch name="stop" label="Остановить и сохранить запись в черновик" onPress={() => void finish('stage')} /><HelpIcon nativeTouch name="arrow-up" label="Отправить запись" onPress={() => void finish('send')} /></View> : null}</View> : null}
-    {recording && !locked ? <View style={{ position: 'absolute', right: 4, bottom: 66, width: 40, height: 64, backgroundColor: c.elevated, borderWidth: 1, borderColor: c.line, borderRadius: 24, alignItems: 'center', justifyContent: 'center' }}><Ionicons name="chevron-up" size={14} color={c.accentText} /><HelpIcon nativeTouch name="lock-closed-outline" label="Проведите вверх, чтобы закрепить запись" size={19} style={{ width: 38, height: 32 }} /></View> : null}
+  return <View ref={web.root} testID="help-composer-dropzone">
+    <View pointerEvents={photoPickerOpen||photoPickerVisible?'none':'auto'} accessibilityElementsHidden={photoPickerOpen||photoPickerVisible} importantForAccessibility={photoPickerOpen||photoPickerVisible?'no-hide-descendants':'auto'} ref={node=>helpDevRef('composer.surface',node)} testID="help-composer-surface" onLayout={e => {const next=e.nativeEvent.layout.height;measuredComposerHeight.current=next;if(!props.questionPanel||recording||starting||photoPickerOpen||photoPickerVisible)setComposerHeight(next);}} style={{ borderRadius: 24, backgroundColor: c.panel, borderWidth: 0, overflow: 'visible', opacity:photoPickerOpen||photoPickerVisible?0:1, height:photoPickerOpen||photoPickerVisible?composerHeight:undefined }}>
+    {attachmentMenu ? <HelpSheet title="Прикрепить" onClose={()=>setAttachmentMenu(false)}><View style={{gap:4}}>{([{kind:'photos',label:'Фотографии',icon:'images-outline'},{kind:'files',label:'Файлы',icon:'document-outline'}] as const).map(item=><Pressable {...appWebControlProps('row')} key={item.kind} accessibilityRole="button" accessibilityLabel={`Выбрать ${item.label.toLocaleLowerCase('ru-RU')}`} onPress={()=>void pick(item.kind)} style={({pressed})=>({minHeight:52,flexDirection:'row',alignItems:'center',gap:14,paddingHorizontal:12,borderRadius:12,backgroundColor:pressed?c.soft:'transparent'})}><Ionicons {...appWebControlContentProps()} name={item.icon} size={24} color={c.accentText}/><Text {...appWebControlContentProps()} style={{fontSize:16,color:c.text}}>{item.label}</Text></Pressable>)}{Platform.OS==='web'&&web.finePointer?<Pressable {...appWebControlProps('row')} testID="help-send-key-setting" accessibilityRole="checkbox" accessibilityLabel="Отправлять по Enter" accessibilityState={{checked:web.sendMode==='enter'}} onPress={web.toggleSendMode} style={({pressed})=>({minHeight:64,flexDirection:'row',alignItems:'center',gap:14,paddingHorizontal:12,marginTop:8,borderTopWidth:1,borderColor:c.line,backgroundColor:pressed?c.soft:'transparent'})}><Ionicons {...appWebControlContentProps()} name={web.sendMode==='enter'?'checkbox-outline':'square-outline'} size={24} color={c.accentText}/><View style={{flex:1}}><Text {...appWebControlContentProps()} style={{fontSize:15,color:c.text}}>Отправлять по Enter</Text><Text style={{fontSize:12,color:c.muted,marginTop:3}}>{web.sendMode==='enter'?'Shift+Enter — новая строка':'Ctrl+Enter — отправка, Enter — новая строка'}</Text></View></Pressable>:null}</View></HelpSheet> : null}
+    {Platform.OS!=='web'&&(recording || starting) ? <View testID="help-recording-card" onLayout={e => setRecordingCardHeight(e.nativeEvent.layout.height)} style={{ position: 'absolute', bottom: recordingBottom, left: '12%', right: '12%', borderRadius: 24, paddingTop: 26, paddingHorizontal: 24, paddingBottom: 20, borderWidth: 1, borderColor: c.line, backgroundColor: c.elevated, alignItems: 'center', gap: 14 }}><Text style={{ color: c.text, fontWeight: '600' }}>{starting ? 'Включение микрофона…' : locked ? 'Запись закреплена' : 'Запись голоса'}</Text><View style={{ height: 64, flexDirection: 'row', alignItems: 'center', gap: 3 }}>{meter.map((value, i) => <View key={i} style={{ height: Math.max(4, value * 60), width: 4, borderRadius: 2, backgroundColor: c.accent }} />)}</View><Text accessibilityLiveRegion="polite" style={{ color: c.text, fontSize: 18, letterSpacing: .6, fontVariant: ['tabular-nums'] }}>{helpDuration(recordState.durationMillis / 1000)}</Text><Text style={{ color: c.muted, fontSize: 12, textAlign: 'center' }}>{locked ? 'До 1 минуты • остановите для прослушивания' : 'Вверх — закрепить · влево — отменить'}</Text>{locked ? <View style={{ flexDirection: 'row', gap: 14 }}><HelpIcon nativeTouch name="trash-outline" label="Отменить запись" onPress={() => void finish('cancel')} /><HelpIcon nativeTouch name="stop" label="Остановить и сохранить запись в черновик" onPress={() => void finish('stage')} /><HelpIcon nativeTouch name="arrow-up" label="Отправить запись" onPress={() => void finish('send')} /></View> : null}</View> : null}
+    {Platform.OS!=='web'&&recording && !locked ? <View style={{ position: 'absolute', right: 4, bottom: 66, width: 40, height: 64, backgroundColor: c.elevated, borderWidth: 1, borderColor: c.line, borderRadius: 24, alignItems: 'center', justifyContent: 'center' }}><Ionicons name="chevron-up" size={14} color={c.accentText} /><HelpIcon nativeTouch name="lock-closed-outline" label="Проведите вверх, чтобы закрепить запись" size={19} style={{ width: 38, height: 32 }} /></View> : null}
     {props.mode !== 'message' ? <View style={{ minHeight: 38, marginHorizontal: 4, paddingTop: 2, paddingBottom: 5, borderBottomWidth: 1, borderColor: c.line, flexDirection: 'row', alignItems: 'center', paddingLeft: 41 }}>
       {props.mode === 'close' || props.editClosure ? <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 3 }}>{[1, 2, 3, 4, 5].map(n => <HelpIcon nativeTouch key={n} name={props.rating >= n ? 'star' : 'star-outline'} label={`${n} из 5 звёзд`} color={props.rating >= n ? '#E5A52A' : c.muted} size={23} style={{ width: 30, height: 30 }} onPress={() => props.onRating(props.rating === n ? 0 : n)} />)}<Text style={{ color: c.muted, fontSize: 11, marginLeft: 4 }}>{props.rating}/5</Text></View> : <Text style={{ color: c.accentText, flex: 1, fontSize: 12 }}>{props.mode === 'reopen' ? 'Обращение откроется снова' : 'Редактирование сообщения'}</Text>}
       <HelpIcon nativeTouch name="close-outline" label="Отменить" onPress={props.onCancelMode} size={18} style={{ width: 30, height: 30 }} />
     </View> : null}
-    {!voiceActive&&props.quote ? <View testID="help-reply-preview" style={{flexDirection:'row',alignItems:'center',gap:8,minHeight:56,marginHorizontal:4,paddingHorizontal:6,paddingVertical:6,borderBottomWidth:1,borderColor:c.line}}>
+    {!activeVoice&&props.quote ? <View testID="help-reply-preview" style={{flexDirection:'row',alignItems:'center',gap:8,minHeight:56,marginHorizontal:4,paddingHorizontal:6,paddingVertical:6,borderBottomWidth:1,borderColor:c.line}}>
       <Pressable accessibilityRole="button" accessibilityLabel={`К сообщению ${props.quote.name}`} onPress={props.quote.onPress} style={{flex:1,minWidth:0,flexDirection:'row',alignItems:'center',gap:8}}>
         <Ionicons name="arrow-undo" size={22} color={c.accentText}/>{props.quote.thumbnail&&props.resolve?<HelpImage attachment={props.quote.thumbnail} resolve={props.resolve} style={{width:40,height:40,borderRadius:5}}/>:null}
         <View style={{flex:1,minWidth:0,borderLeftWidth:2,borderColor:c.accent,paddingLeft:8}}><Text numberOfLines={1} style={{color:c.accentText,fontWeight:'600',fontSize:12}}>{props.quote.name}</Text><Text numberOfLines={1} style={{color:c.muted,fontSize:12}}>{props.quote.text}</Text></View>
       </Pressable>
       <HelpIcon nativeTouch name="close-outline" label="Отменить ответ" onPress={props.onCancelQuote} size={20} style={{width:44,height:44}}/>
     </View>:null}
-    {!voiceActive && (props.files.length || props.existingFiles?.length) ? <ScrollView horizontal testID="help-attachment-drafts" style={{ marginLeft: 44, marginRight: 44, marginTop: 8 }} contentContainerStyle={{ gap: 8, alignItems:'center' }} keyboardShouldPersistTaps="always">
+    {!activeVoice && (props.files.length || props.existingFiles?.length) ? <ScrollView horizontal testID="help-attachment-drafts" style={{ marginLeft: 44, marginRight: 44, marginTop: 8 }} contentContainerStyle={{ gap: 8, alignItems:'center' }} keyboardShouldPersistTaps="always">
       {props.existingFiles?.map(file => file.kind==='IMAGE' ? <HelpDraftPhoto key={file.id} name={file.name} disabled={props.busy||props.disabled} onRemove={()=>props.onRemoveExisting?.(file.id)}>
         {props.resolve?<HelpImage attachment={file} resolve={props.resolve} style={{width:DRAFT_PHOTO_SIZE,height:DRAFT_PHOTO_SIZE,borderRadius:10}}/>:<View style={{width:DRAFT_PHOTO_SIZE,height:DRAFT_PHOTO_SIZE,borderRadius:10,backgroundColor:c.elevated,alignItems:'center',justifyContent:'center'}}><Ionicons name="image-outline" size={28} color={c.muted}/></View>}
       </HelpDraftPhoto> : <View key={file.id} style={{ flexDirection: 'row', alignItems: 'center', borderRadius: 12, backgroundColor: c.elevated, overflow:'hidden', minHeight:52, paddingLeft:10 }}><Text numberOfLines={1} style={{ color: c.text, maxWidth: 130, fontSize: 12 }}>{file.name}</Text><HelpIcon nativeTouch name="close" label={`Убрать ${file.name}`} size={16} style={{ width: 44, height: 52 }} disabled={props.busy||props.disabled} onPress={() => props.onRemoveExisting?.(file.id)} /></View>)}
@@ -323,24 +380,28 @@ export const HelpComposer = forwardRef<HelpComposerHandle, Props & FocusSuspensi
         <Image accessibilityLabel={`Фото ${index+1}: ${file.name}`} source={{uri:file.uri}} resizeMode="cover" style={{width:DRAFT_PHOTO_SIZE,height:DRAFT_PHOTO_SIZE,borderRadius:10}}/>
       </HelpDraftPhoto> : <View key={`${file.uri}-${index}`} style={{ flexDirection: 'row', alignItems: 'center', borderRadius: 12, backgroundColor: c.elevated, overflow:'hidden', minHeight:52, paddingLeft:10 }}><Ionicons name={file.mimeType?.startsWith('audio/') ? 'mic-outline' : 'document-outline'} color={c.accentText} size={18} /><Text numberOfLines={1} style={{ color: c.text, maxWidth: 130, marginLeft: 6, fontSize: 12 }}>{file.name}</Text><HelpIcon nativeTouch name="close" label={`Убрать ${file.name}`} size={16} style={{ width: 44, height: 52 }} disabled={props.busy||props.disabled} onPress={() => props.onFiles(props.files.filter((_, i) => i !== index))} /></View>)}
     </ScrollView> : null}
-    <Reanimated.View testID="help-composer-input-row" style={[{position:'relative'},rowMinimum]}>
+    {props.questionPanel}
+    {props.questionFooter}
+    <View testID="help-composer-input-row" style={{position:'relative',minHeight:48,borderTopWidth:props.questionActionLabel?1:0,borderTopColor:c.line}}>
+    {compactWebVoice?<HelpWebVoiceControls preparing={starting} locked={locked} working={webVoiceWorking||props.busy} duration={recordState.durationMillis} meter={meter} draft={webVoiceDraft} screenActive={props.screenActive} onCancel={()=>{if(webVoiceDraft){if(!webVoiceSending.current)props.onFiles(props.files.filter(file=>file.uri!==webVoiceDraft.uri));}else void finish('cancel');}} onStop={()=>void finish('stage')} onLock={()=>{life.current.locked=true;setLocked(true);}} error={props.error}/>:null}
     {/* Android EditText reports viewport size while its text Layout is invalid.
         Measure a noninteractive Text with identical font/width instead, so resize
         does not depend on (or feed back into) the animated parent's layout. */}
     {Platform.OS === 'android' && !hasNativeHelpInput ? <Text testID="help-composer-measure" textBreakStrategy="simple" pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" onTextLayout={event => { const last=event.nativeEvent.lines.at(-1); if(last)measureContent(props.value ? last.y+last.height : COMPOSER_LINE_HEIGHT); }} style={{position:'absolute',top:12,left:45,right:47,opacity:0,fontSize:COMPOSER_FONT_SIZE,lineHeight:COMPOSER_LINE_HEIGHT,includeFontPadding:false,padding:0}}>{props.value || '\u200b'}{props.value.endsWith('\n') ? '\u200b' : ''}</Text> : null}
-    {voiceActive ? null : hasNativeHelpInput ? <View testID="help-composer-entry"><HelpNativeInput ref={input as React.Ref<HelpNativeInputHandle>} value={props.value} onChange={props.onChange} onSelection={range=>{selection.current=range;}} onLines={setVisualLines} placeholder={placeholder} color={c.text} hintColor={c.muted} accentColor={c.accent} editable={inputEnabled} reducedMotion={reduced} onGeometry={(_,content)=>{setContentHeight(content);setHeight(Math.min(COMPOSER_MAX_HEIGHT,content));if(!photoPickerOpen&&!photoPickerVisible)props.onResize();}}/></View> : <Animated.View testID="help-composer-entry" style={{ height: entryHeight, minHeight: 46, paddingTop: 12, paddingBottom: bottomInset, paddingLeft: 45, paddingRight: 47, overflow: 'hidden', borderBottomLeftRadius: 23, borderBottomRightRadius: 23 }}><TextInput ref={node=>{input.current=node;helpDevRef('composer.input',node);}} accessibilityLabel="Сообщение" placeholder={Platform.OS === 'android' ? undefined : placeholder} placeholderTextColor={c.muted} value={props.value} onChangeText={props.onChange} onSelectionChange={e=>{selection.current=e.nativeEvent.selection;}} editable={inputEnabled} multiline textBreakStrategy="simple" textAlignVertical="top" underlineColorAndroid="transparent" scrollEnabled={overflowing} onContentSizeChange={e => { if (Platform.OS !== 'android') measureContent(e.nativeEvent.contentSize.height); }} onScroll={e => setScrollY(Math.max(0, e.nativeEvent.contentOffset.y))} style={{ color: c.text, fontSize: COMPOSER_FONT_SIZE, lineHeight: COMPOSER_LINE_HEIGHT, minHeight: COMPOSER_LINE_HEIGHT, height: inputHeight, padding: 0, borderWidth: 0, includeFontPadding: false, backgroundColor: 'transparent', ...(Platform.OS === 'web' ? { outlineStyle: 'none', outlineWidth: 0, boxShadow: 'none', scrollbarWidth: 'none' } as any : {}) }} onKeyPress={e => { const event = e.nativeEvent as any; if (Platform.OS === 'web' && event.key === 'Enter' && (event.ctrlKey || event.metaKey) && canSend) { e.preventDefault(); void props.onSend(); } }} />
+    {activeVoice ? null : hasNativeHelpInput ? <View testID="help-composer-entry"><HelpNativeInput ref={input as React.Ref<HelpNativeInputHandle>} value={props.value} onChange={props.onChange} onSelection={range=>{selection.current=range;}} onLines={setVisualLines} placeholder={placeholder} color={c.text} hintColor={c.muted} accentColor={c.accent} editable={inputEnabled} reducedMotion={reduced} onGeometry={(outer,content)=>{setContentHeight(content);setHeight(Math.min(COMPOSER_MAX_HEIGHT,content));if(!photoPickerOpen&&!photoPickerVisible)props.onResize(Math.max(48,outer));}}/></View> : <Animated.View testID="help-composer-entry" style={{ height: entryHeight, minHeight: 46, paddingTop: 12, paddingBottom: bottomInset, paddingLeft: 45, paddingRight: 47, overflow: 'hidden', borderBottomLeftRadius: 23, borderBottomRightRadius: 23 }}><TextInput ref={node=>{input.current=node;helpDevRef('composer.input',node);}} accessibilityLabel="Сообщение" placeholder={Platform.OS === 'android' ? undefined : placeholder} placeholderTextColor={c.muted} value={props.value} onChangeText={props.onChange} onSelectionChange={e=>{selection.current=e.nativeEvent.selection;}} editable={inputEnabled} multiline textBreakStrategy="simple" textAlignVertical="top" underlineColorAndroid="transparent" scrollEnabled={overflowing} onContentSizeChange={e => { if (Platform.OS !== 'android') measureContent(e.nativeEvent.contentSize.height); }} onScroll={event=>{const offset=helpInputScrollY(event);if(offset!==null)setScrollY(offset);}} style={{ color: c.text, fontSize: COMPOSER_FONT_SIZE, lineHeight: COMPOSER_LINE_HEIGHT, minHeight: COMPOSER_LINE_HEIGHT, height: inputHeight, padding: 0, borderWidth: 0, includeFontPadding: false, backgroundColor: 'transparent', ...(Platform.OS === 'web' ? { fontFamily:APP_WEB_FONT, outlineStyle: 'none', outlineWidth: 0, boxShadow: 'none', scrollbarWidth: 'none' } as any : {}) }} onKeyPress={e => { if (Platform.OS === 'web' && inputEnabled && canSend && shouldSendHelpWebKey(e.nativeEvent as any,web.sendMode,web.finePointer,web.composing.current)) { e.preventDefault(); void sendText(); } }} />
       {/* Android's native hint ignores the line-height span used for entered text. */}
       {Platform.OS === 'android' && !props.value ? <Text testID="help-composer-placeholder" pointerEvents="none" accessible={false} importantForAccessibility="no-hide-descendants" numberOfLines={1} style={{ position: 'absolute', left: 45, right: 47, top: 12, color: c.muted, fontSize: COMPOSER_FONT_SIZE, lineHeight: COMPOSER_LINE_HEIGHT, includeFontPadding: false }}>{placeholder}</Text> : null}
-      {overflowing && scrollY > 1 ? <LinearGradient testID="help-composer-fade-top" pointerEvents="none" colors={[c.panel + '80', c.panel + '00']} style={{ position: 'absolute', left: 45, right: 47, top: 12, height: 12 }} /> : null}
+      {overflowing ? <LinearGradient testID="help-composer-fade-top" pointerEvents="none" colors={[c.panel, c.panel + '00']} style={{ position: 'absolute', left: 45, right: 47, top: 12, height: 12, opacity:Math.min(1,scrollY/12) }} /> : null}
       {overflowing && scrollY + height < contentHeight - 1 ? <LinearGradient testID="help-composer-fade-bottom" pointerEvents="none" colors={[c.panel + '00', c.panel + '80']} style={{ position: 'absolute', left: 45, right: 47, bottom: 0, height: 12 }} /> : null}
     </Animated.View>}
-      {!voiceActive&&multiline?<HelpIcon nativeTouch name="resize-outline" label="Развернуть редактор сообщения" size={20} onPress={()=>{Keyboard.dismiss();setExpanded(true);}} style={{position:'absolute',top:0,right:0,width:44,height:44}}/>:null}
-      {!voiceActive?<HelpIcon nativeTouch name="attach-outline" label="Прикрепить файлы" disabled={props.navigationReady===false || props.busy || props.disabled || recording || starting} onPress={() => {if(Platform.OS==='web')setAttachmentMenu(true);else{Keyboard.dismiss();setPhotoPickerOpen(value=>!value);}}} color={c.muted} size={24} rotation={40} style={{ position: 'absolute', bottom: 4, left: 4, width: 36, height: 38 }} />:null}
-      {hasNativeHelpVoice&&props.mode==='message'&&!props.onStopAssistant?<HelpVoiceRecorder screenActive={props.screenActive} draftKey={props.voiceDraftKey??'composer'} visible={!hasText&&!photoPickerOpen} disabled={props.busy||Boolean(props.disabled)} onActive={setVoiceActive} onSend={voice=>props.onSend(voice,undefined,true)} error={props.error}/>:null}
-      {!voiceActive&&!(hasNativeHelpVoice&&props.mode==='message'&&!hasText&&!photoPickerOpen&&!props.onStopAssistant)? props.onStopAssistant && !hasText ? <HelpIcon nativeTouch name="stop" label="Остановить ответ ИИ" color="#FFF" size={20} style={{ position: 'absolute', right: 4, bottom: 4, width: 38, height: 38, borderRadius: 19, backgroundColor: c.accent }} onPress={props.onStopAssistant}/> : props.mode === 'message' && !hasText && !photoPickerOpen ? <Animated.View {...gestures.panHandlers} accessible accessibilityRole="button" accessibilityLabel="Удерживайте для записи голосового сообщения. Проведите вверх, чтобы закрепить запись" onAccessibilityTap={() => void start(true)} style={{ position: 'absolute', right: 4, bottom: 4, width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: recording && !locked ? '#DB5059' : c.accent, opacity: props.busy || props.disabled ? .4 : 1, transform: [{ scale: pulse }] }}>{starting ? <ActivityIndicator color="#FFF" size="small" /> : <Ionicons name={locked ? 'lock-closed' : 'mic'} size={22} color="#FFF" />}</Animated.View> : <HelpIcon nativeTouch name={props.mode === 'close' || props.mode === 'edit' ? 'checkmark' : 'arrow-up'} label={props.questionActionLabel || (props.mode === 'close' ? 'Закрыть обращение' : props.mode === 'edit' ? 'Сохранить изменения' : 'Отправить сообщение')} disabled={!canSend} color="#FFF" size={22} style={{ position: 'absolute', zIndex:3, right: 4, bottom: 4, width: 38, height: 38, borderRadius: 19, backgroundColor: c.accent }} onPress={() => void sendText()} />:null}
-    </Reanimated.View>
+      {!activeVoice&&canExpand?<HelpIcon nativeTouch name="resize-outline" label="Развернуть редактор сообщения" size={20} onPress={()=>{Keyboard.dismiss();setExpanded(true);}} style={{position:'absolute',top:0,right:0,width:44,height:44}}/>:null}
+      {!activeVoice?<HelpIcon nativeTouch name="attach-outline" label="Прикрепить файлы" disabled={props.navigationReady===false || props.busy || props.disabled || recording || starting} onPress={() => {helpHaptic('selection');if(Platform.OS==='web')setAttachmentMenu(true);else{Keyboard.dismiss();setPhotoPickerOpen(value=>!value);}}} color={c.muted} size={24} rotation={40} style={{ position: 'absolute', bottom: 5, left: 4, width: 36, height: 38 }} />:null}
+      {!props.hideSendAction&&hasNativeHelpVoice&&props.mode==='message'&&!props.onStopAssistant?<HelpVoiceRecorder screenActive={props.screenActive} draftKey={props.voiceDraftKey??'composer'} visible={!hasText&&!photoPickerOpen} disabled={props.busy||Boolean(props.disabled)} onActive={setVoiceActive} onSend={voice=>props.onSend(voice,undefined,true)} error={props.error}/>:null}
+      {!props.hideSendAction&&!voiceActive&&!(hasNativeHelpVoice&&props.mode==='message'&&!hasText&&!photoPickerOpen&&!props.onStopAssistant)? props.onStopAssistant && !hasText && !compactWebVoice ? <HelpIcon nativeTouch name="stop" label="Остановить ответ ИИ" color="#FFF" size={20} style={{ position: 'absolute', right: 5, bottom: 5, width: 38, height: 38, borderRadius: 19, backgroundColor: c.accent }} onPress={props.onStopAssistant}/> : props.mode === 'message' && (!hasText||compactWebVoice) && !photoPickerOpen ? <HelpComposerVoiceAction panHandlers={gestures.panHandlers} sendAction={webVoiceSendAction} canStart={!compactWebVoice} disabled={Boolean(props.busy||props.disabled||(webVoiceSendAction&&(starting||webVoiceWorking||props.sendBlocked)))} label={webVoiceSendAction?'Отправить голосовое сообщение':Platform.OS==='web'&&web.finePointer?'Записать голосовое сообщение':'Удерживайте для записи голосового сообщения. Проведите вверх, чтобы закрепить запись'} onStart={()=>void start(true)} onSend={()=>{if(webVoiceDraft)void sendWebVoice(webVoiceDraft);else void finish('send');}} style={{ position: 'absolute', right: compactWebVoice?-3:5, bottom: compactWebVoice?-9:5, width: compactWebVoice?64:38, height: compactWebVoice?64:38, borderRadius: compactWebVoice?32:19, alignItems: 'center', justifyContent: 'center', backgroundColor: recording && !locked ? '#DB5059' : c.accent, opacity: props.busy || props.disabled ? .4 : 1, transform: [{ scale: compactWebVoice&&locked?1:pulse }] }}>{starting||webVoiceWorking?<ActivityIndicator color="#FFF" size="small"/>:<Ionicons {...appWebControlContentProps()} name={webVoiceSendAction?'arrow-up':locked?'lock-closed':'mic'} size={compactWebVoice?32:22} color="#FFF"/>}</HelpComposerVoiceAction> : <HelpIcon nativeTouch name={props.mode === 'close' || props.mode === 'edit' ? 'checkmark' : 'arrow-up'} label={props.questionActionLabel || (props.mode === 'close' ? 'Закрыть обращение' : props.mode === 'edit' ? 'Сохранить изменения' : 'Отправить сообщение')} disabled={!canSend} color="#FFF" size={22} style={{ position: 'absolute', zIndex:3, right: 5, bottom: 5, width: 38, height: 38, borderRadius: 19, backgroundColor: c.accent }} onPress={() => void sendText()} />:null}
+    </View>
   </View>
-    {expanded?<HelpExpandedEditor value={props.value} onChange={props.onChange} selection={selection.current} onDone={closeEditor}/>:null}
+    {web.dragging?<View testID="help-composer-drop-hint" pointerEvents="none" style={{position:'absolute',inset:0,zIndex:10,borderRadius:24,borderWidth:2,borderStyle:'dashed',borderColor:c.accent,backgroundColor:c.panel,alignItems:'center',justifyContent:'center',gap:5,padding:12}}><Ionicons name="attach-outline" size={24} color={c.accentText}/><Text accessibilityLiveRegion="polite" style={{color:c.text,fontSize:14,textAlign:'center'}}>Отпустите файлы, чтобы прикрепить</Text></View>:null}
+    {expanded?<HelpExpandedEditor value={props.value} onChange={props.onChange} selection={selection.current} onDone={closeEditor} returnFocusRef={input}/>:null}
     {Platform.OS !== 'web' ? <HelpPhotoPicker blurTarget={props.blurTarget} open={photoPickerOpen} onVisibility={setPhotoPickerVisible} onClose={()=>setPhotoPickerOpen(false)} files={props.files} onFiles={props.onFiles} caption={props.value} onCaption={props.onChange} onSend={sendPhotos} onPreparing={setPreparingPhotos} onError={props.error} onDocuments={()=>{setPhotoPickerOpen(false);void pick('files');}} busy={props.busy||Boolean(props.disabled)} existingCount={props.existingFiles?.length??0}/> : null}
   </View>;
 });

@@ -53,10 +53,11 @@ test.each(['/admin','/(main)/admin/','/admin/users'])('web return from %s stays 
   expect(mockRouter.replace).not.toHaveBeenCalled();
 });
 
-test('ordinary web service-tab restore still works outside the admin return',async()=>{
+test('web Home opens the catalog rather than resuming an old service from profile',async()=>{
   jest.replaceProperty(Platform,'OS','web');mockPath='/profile';
   await act(async()=>{tree=Renderer.create(React.createElement(Navigation));});
   mockPath='/services';
   await act(async()=>tree!.update(React.createElement(Navigation)));
-  expect(mockRouter.replace).toHaveBeenCalledWith('/services/help');
+  expect(mockRouter.replace).not.toHaveBeenCalled();
+  expect(mockMemory.resolveLastServiceRoute).not.toHaveBeenCalled();
 });

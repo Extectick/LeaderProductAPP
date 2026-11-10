@@ -3,22 +3,25 @@ import TestRenderer,{act} from 'react-test-renderer';
 jest.mock('react-native',()=>({Platform:{OS:'android'},AppState:{currentState:'active',addEventListener:()=>({remove:()=>{}})}}));
 jest.mock('../context/AuthContext',()=>({AuthContext:require('react').createContext({profile:{id:5},isAuthenticated:true})}));
 jest.mock('../utils/config',()=>({API_BASE_URL:'https://committed.example.test'}));
-jest.mock('../src/shared/network/useServerStatus',()=>({useServerStatus:()=>({isReachable:true})}));
+let mockServerReachable=true;
+jest.mock('../src/shared/network/useServerStatus',()=>({useServerStatus:()=>({isReachable:mockServerReachable})}));
 let mockNotice:(notice:any)=>void;
 let mockOutboxChanged:()=>void;
 const mockPending:any[]=[];
+const mockSyncTicket=jest.fn(async()=>{});
 jest.mock('../src/features/help/helpAccountSync',()=>({acquireHelpAccount:(_id:number,notice:(value:any)=>void)=>{
   mockNotice=notice;
-  return {getSocket:()=>null,release:jest.fn(),refresh:async()=>{},syncTicket:async()=>{},setActiveTicket:jest.fn()};
+  return {getSocket:()=>null,isConnected:()=>false,recover:jest.fn(),release:jest.fn(),refresh:async()=>{},syncTicket:mockSyncTicket,setActiveTicket:jest.fn()};
 }}));
 jest.mock('@react-native-async-storage/async-storage',()=>{const values=new Map<string,string>();return{getItem:jest.fn(async(key:string)=>values.get(key)??null),setItem:jest.fn(async(key:string,value:string)=>{values.set(key,value);}),removeItem:jest.fn(async(key:string)=>{values.delete(key);}),clear:jest.fn(async()=>values.clear()),getAllKeys:jest.fn(async()=>[...values.keys()]),multiGet:jest.fn(async(keys:string[])=>keys.map(key=>[key,values.get(key)??null]))};});
 jest.mock('../src/features/help/helpHistoryDatabase',()=>require('../src/features/help/helpHistoryDatabase.web'));
-const mockApi={config:jest.fn(),list:jest.fn(),detail:jest.fn(),read:jest.fn()};
+const mockApi={config:jest.fn(),list:jest.fn(),detail:jest.fn(),read:jest.fn(),claim:jest.fn()};
 jest.mock('../src/features/help/helpApi',()=>({createHelpApi:()=>mockApi,HelpApiError:class extends Error{},loadHelpMedia:jest.fn(),uploadHelpFiles:jest.fn()}));
-jest.mock('../src/features/help/helpStorage',()=>({readHelpPending:async()=>mockPending,readLastCreatedOperation:async()=>null,subscribeHelpOutbox:(_id:number,changed:()=>void)=>{mockOutboxChanged=changed;return()=>{};},helpClientId:()=> 'committed-test',getHelpDraft:jest.fn(),getHelpDrafts:jest.fn(),setHelpDraft:jest.fn()}));
+jest.mock('../src/features/help/helpStorage',()=>({readHelpPending:async()=>mockPending,readLastCreatedOperation:async()=>null,subscribeHelpOutbox:(_id:number,changed:()=>void)=>{mockOutboxChanged=changed;return()=>{};},saveHelpPending:jest.fn(async()=>{}),helpClientId:()=> 'committed-test',getHelpDraft:jest.fn(),getHelpDrafts:jest.fn(),setHelpDraft:jest.fn()}));
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useHelpService} from '../src/features/help/useHelpService';
 import * as history from '../src/features/help/helpHistory';
+import * as outbox from '../src/features/help/helpOutbox';
 import {helpViewCache} from '../src/features/help/helpViewCache';
 import type {HelpMessage,HelpTicket} from '../src/features/help/helpApi';
 import type {HelpHistoryPage,HelpSyncResult} from '../src/features/help/helpHistoryTypes';
@@ -26,18 +29,94 @@ const msg=(sequence:number,text=`Message ${sequence}`)=>({id:70000+sequence,tick
 const ticket=(lastSequence=600)=>({id:7,title:'Support',status:'OPEN',ownerId:5,members:[],unreadCount:0,lastReadSequence:600,lastSequence,updatedAt:'2026-11-05T00:00:00Z'} as unknown as HelpTicket);
 const page:HelpHistoryPage={messages:Array.from({length:600},(_,i)=>msg(i+1)),nextCursor:null,olderCursor:null,newerCursor:null,hasOlder:false,hasNewer:false,lastReadSequence:600,firstUnreadSequence:null,lastSequence:600,eventCursor:10,snapshotCursor:10};
 let service:ReturnType<typeof useHelpService>,screen:TestRenderer.ReactTestRenderer|undefined;
-function Harness(){service=useHelpService(true);return null;}
+const renderedStates:{status:string|undefined;ids:number[];hasNewer:boolean}[]=[];
+function Harness(){service=useHelpService(true);renderedStates.push({status:service.selectedTicket?.status,ids:service.messages.map(message=>message.id),hasNewer:service.hasNewer});return null;}
 const tree=(userId=5)=>React.createElement(require('../context/AuthContext').AuthContext.Provider,{value:{profile:{id:userId},isAuthenticated:true}},React.createElement(Harness));
 async function committed(ids?:number[]){await act(async()=>{mockNotice({type:'ticket',ticketId:7,...(ids?{changedMessageIds:ids}:{})});});}
 async function persist(changes:Partial<HelpSyncResult>={}){await history.cacheHelpSync(5,7,{ticket:ticket(),events:[],messages:[],deletedMessageIds:[],nextCursor:20,eventCursor:20,snapshotCursor:20,hasMore:false,lastReadSequence:600,firstUnreadSequence:null,lastSequence:600,...changes});}
 beforeEach(async()=>{
-  jest.clearAllMocks();await AsyncStorage.clear();mockPending.length=0;
+  mockServerReachable=true;
+  jest.clearAllMocks();mockSyncTicket.mockReset().mockResolvedValue(undefined);await AsyncStorage.clear();mockPending.length=0;renderedStates.length=0;
   const cache=helpViewCache('https://committed.example.test:5:true');cache.lists.clear();cache.windows.clear();
   mockApi.config.mockResolvedValue({canManage:false});mockApi.list.mockResolvedValue({tickets:[],nextCursor:null});mockApi.detail.mockResolvedValue({ticket:ticket(),...page});mockApi.read.mockResolvedValue({});
   await act(async()=>{screen=TestRenderer.create(tree());});
   await act(async()=>{await service.openTicket(7);await service.refresh();});
 });
 afterEach(async()=>{if(screen)await act(async()=>screen!.unmount());screen=undefined;jest.restoreAllMocks();});
+
+test('acknowledged Help transport is independent of unrelated HTTP status and message-sync failure',async()=>{
+  mockServerReachable=false;
+  await act(async()=>{mockNotice({type:'connected',connected:true});mockNotice({type:'connection-state',state:{transport:'ready',sync:'idle'}});});
+  expect(service.connected).toBe(true);expect(service.connectionPhase).toBe('ready');expect(service.online).toBe(false);
+  await act(async()=>{mockNotice({type:'connection-state',state:{transport:'ready',sync:'syncing'}});});
+  expect(service.connected).toBe(true);expect(service.connectionPhase).toBe('syncing');
+  await act(async()=>{mockNotice({type:'error',error:new Error('Network request failed')});mockNotice({type:'connection-state',state:{transport:'ready',sync:'error'}});});
+  expect(service.connected).toBe(true);expect(service.connectionPhase).toBe('sync-error');
+  await act(async()=>{mockNotice({type:'healthy'});mockNotice({type:'connection-state',state:{transport:'ready',sync:'idle'}});});
+  expect(service.connectionPhase).toBe('ready');
+  await act(async()=>{mockNotice({type:'connected',connected:false});mockNotice({type:'connection-state',state:{transport:'paused',sync:'idle'}});});
+  expect(service.connected).toBe(false);expect(service.connectionPhase).toBe('paused');
+});
+
+async function unreadAnswer(){
+  const unread={...ticket(601),members:[{userId:5}],unreadCount:1};
+  await act(async()=>{await service.saveViewport({messageId:70600,sequence:600,offset:0,atLatest:true},7);});
+  await persist({ticket:unread,messages:[{...msg(601),kind:'TEXT'}],lastSequence:601,firstUnreadSequence:601});
+  await committed([70601]);
+  return unread;
+}
+
+test('visible answer acknowledgement persists and wins over delayed list and committed read snapshots',async()=>{
+  const unread=await unreadAnswer();
+  let resolveList!:(result:any)=>void;
+  mockApi.list.mockImplementationOnce(()=>new Promise(resolve=>{resolveList=resolve;}));
+  let list!:Promise<unknown>;await act(async()=>{list=service.loadTickets();});
+  await act(async()=>{await service.markVisibleRead(601);});
+  expect(mockApi.read).toHaveBeenLastCalledWith(7,601);
+  expect(await history.readCachedHelpRecord(5,7)).toMatchObject({lastReadSequence:601,firstUnreadSequence:null,ticket:{lastReadSequence:601,unreadCount:0}});
+  await act(async()=>{resolveList({tickets:[unread],nextCursor:null});await list;});
+  expect(service.tickets.find(row=>row.id===7)?.unreadCount).toBe(0);
+  await persist({ticket:unread,lastSequence:601,firstUnreadSequence:601,nextCursor:21,eventCursor:21,snapshotCursor:21});
+  await committed([]);
+  expect(service.selectedTicket).toMatchObject({lastReadSequence:601,unreadCount:0});
+  expect(service.tickets.find(row=>row.id===7)).toMatchObject({lastReadSequence:601,unreadCount:0});
+  expect(await history.readCachedHelpRecord(5,7)).toMatchObject({lastReadSequence:601,firstUnreadSequence:null,ticket:{unreadCount:0}});
+});
+
+test('progress does not read its future answer; a later genuinely unread answer survives an old cursor',async()=>{
+  const unread=await unreadAnswer();
+  await persist({ticket:{...unread,unreadCount:0},messages:[{...msg(601),kind:'ASSISTANT_PROGRESS'}],lastSequence:601,nextCursor:21,eventCursor:21,snapshotCursor:21});
+  await committed([70601]);
+  await act(async()=>{await service.markVisibleRead(601);});expect(mockApi.read).not.toHaveBeenCalled();
+  await persist({ticket:unread,messages:[{...msg(601),kind:'TEXT'}],lastSequence:601,nextCursor:22,eventCursor:22,snapshotCursor:22});
+  await committed([70601]);await act(async()=>{await service.markVisibleRead(601);});
+  expect(mockApi.read).toHaveBeenCalledTimes(1);
+  await persist({ticket:{...unread,lastSequence:602,unreadCount:1,updatedAt:'2026-11-05T00:01:00Z'},messages:[{...msg(602),kind:'TEXT'}],lastSequence:602,nextCursor:23,eventCursor:23,snapshotCursor:23,firstUnreadSequence:602});
+  await committed([70602]);
+  expect(service.selectedTicket).toMatchObject({lastReadSequence:601,unreadCount:1});
+  // A receipt for the older visible history cannot acknowledge the new answer.
+  await act(async()=>{await service.markVisibleRead(500);});expect(mockApi.read).toHaveBeenCalledTimes(1);
+  expect(service.selectedTicket?.unreadCount).toBe(1);
+});
+
+test('background web tab and failed requests leave unread state and durable cursor intact',async()=>{
+  await unreadAnswer();
+  const {Platform}=require('react-native'),platform=Platform.OS;
+  const previousDocument=Object.getOwnPropertyDescriptor(globalThis,'document');let visibilityState='hidden';
+  Platform.OS='web';Object.defineProperty(globalThis,'document',{configurable:true,value:{get visibilityState(){return visibilityState;}}});
+  try{
+    await act(async()=>{await service.markVisibleRead(601);});expect(mockApi.read).not.toHaveBeenCalled();
+    expect(service.selectedTicket?.unreadCount).toBe(1);
+    visibilityState='visible';mockApi.read.mockRejectedValueOnce(new Error('Receipt failed'));
+    await act(async()=>{await service.markVisibleRead(601);});
+    expect(await history.readCachedHelpRecord(5,7)).toMatchObject({lastReadSequence:600,ticket:{unreadCount:1}});
+    await act(async()=>{await service.markVisibleRead(601);});
+    expect(service.selectedTicket?.unreadCount).toBe(0);
+    expect(await history.readCachedHelpRecord(5,7)).toMatchObject({lastReadSequence:601,ticket:{unreadCount:0}});
+  }finally{
+    Platform.OS=platform;if(previousDocument)Object.defineProperty(globalThis,'document',previousDocument);else Reflect.deleteProperty(globalThis,'document');
+  }
+});
 
 test('stream progress reads one committed row and retains the other 599 objects; metadata-only reads no window',async()=>{
   const original=service.messages,key=service.navigationTarget?.key;
@@ -54,6 +133,23 @@ test('stream progress reads one committed row and retains the other 599 objects;
   expect(delta).toHaveBeenLastCalledWith(5,7,[]);expect(range).not.toHaveBeenCalled();
   expect(service.messages).toBe(after);expect(service.selectedTicket?.title).toBe('Updated metadata');
   expect(service.navigationTarget?.key).toBe(key);
+});
+
+test('lazy quote repair keeps previous sources, next-window precedence, forward references and ticket fences',async()=>{
+  const retainedQuote={id:99,text:'Server quote',author:null,attachments:[]};
+  await persist({messages:[
+    {...msg(597),replyToId:70100,replyTo:null},
+    {...msg(598),replyToId:70600,replyTo:null},
+    {...msg(599),replyToId:70100,replyTo:retainedQuote},
+    msg(600,'Updated source later in the next window'),
+    {...msg(595),ticketId:8},
+    {...msg(596),replyToId:70595,replyTo:null},
+  ]});
+  await committed([70595,70596,70597,70598,70599,70600]);
+  expect(service.messages.find(row=>row.id===70597)?.replyTo).toMatchObject({id:70100,text:'Message 100'});
+  expect(service.messages.find(row=>row.id===70598)?.replyTo).toMatchObject({id:70600,text:'Updated source later in the next window'});
+  expect(service.messages.find(row=>row.id===70599)?.replyTo).toEqual(retainedQuote);
+  expect(service.messages.find(row=>row.id===70596)?.replyTo).toBeNull();
 });
 
 test('committed deletions preserve the reading window and do not append a distant tail or delete a missing ID',async()=>{
@@ -164,4 +260,87 @@ test('leaving the tail during a full repair keeps the newer-message flag for the
   await act(async()=>{await service.saveViewport({messageId:70150,sequence:150,offset:-25,atLatest:false},7);release(rows);});
   expect(service.messages.at(-1)?.sequence).toBe(600);expect(service.hasNewer).toBe(true);
   expect(service.navigationTarget?.key).toBe(key);
+});
+
+test('quiet committed repair retains selected ticket identity while real metadata still updates',async()=>{
+  await persist();await committed();
+  const selected=service.selectedTicket,rows=service.messages,pending=service.pendingMessages;
+  await committed();
+  expect(service.selectedTicket).toBe(selected);expect(service.messages).toBe(rows);expect(service.pendingMessages).toBe(pending);
+  await persist({ticket:{...ticket(),title:'Updated title'}});await committed();
+  expect(service.selectedTicket).not.toBe(selected);expect(service.selectedTicket?.title).toBe('Updated title');
+});
+
+
+test('close receipt keeps the rating and preceding message visible without waiting for background sync',async()=>{
+  await act(async()=>{await service.saveViewport({messageId:70600,sequence:600,offset:0,atLatest:true},7);});
+  mockSyncTicket.mockImplementation(()=>new Promise(()=>{}));
+  const rating={...msg(601,'Спасибо'),kind:'CLOSURE',authorId:5,rating:5} as HelpMessage;
+  const response={ticket:{...ticket(601),status:'CLOSED' as const},...page,messages:[msg(599),msg(600),rating],lastSequence:601,snapshotCursor:20,eventCursor:20};
+  jest.spyOn(outbox,'dispatchHelpPending').mockResolvedValue(response);
+  const preceding=service.messages.at(-1);renderedStates.length=0;
+  await act(async()=>{await service.closeTicket(7,{text:'Спасибо',rating:5});});
+  expect(service.messages.at(-1)).toEqual(rating);
+  expect(service.messages.at(-2)).toBe(preceding);
+  expect(service.hasNewer).toBe(false);
+  const closed=renderedStates.filter(state=>state.status==='CLOSED');
+  expect(closed.length).toBeGreaterThan(0);
+  expect(closed.every(state=>state.ids.includes(70601)&&state.ids.includes(70600)&&!state.hasNewer)).toBe(true);
+});
+
+test('claim receipt renders its joined event immediately and stale committed metadata cannot roll it back',async()=>{
+  await act(async()=>{await service.saveViewport({messageId:70600,sequence:600,offset:0,atLatest:true},7);});
+  const old=await history.readCachedHelpRecord(5,7);
+  mockSyncTicket.mockImplementation(()=>new Promise(()=>{}));
+  const joined={...msg(601,'Иванов Иван подключился'),kind:'SYSTEM',itStatusChange:'JOINED'} as HelpMessage;
+  const claimed={...ticket(601),members:[{userId:9,role:'IT' as const,user:{id:9,name:'Иванов Иван',avatarUrl:null}}]};
+  mockApi.claim.mockResolvedValue({ticket:claimed,...page,messages:[msg(600),joined],lastSequence:601,eventCursor:20,snapshotCursor:20});
+  renderedStates.length=0;
+  await act(async()=>{await service.claimTicket(7);});
+  expect(service.messages.at(-1)).toEqual(joined);expect(renderedStates.every(state=>!state.hasNewer)).toBe(true);
+  const range=jest.spyOn(history,'readCachedHelpRange');
+  jest.spyOn(history,'readCachedHelpRecord').mockResolvedValueOnce(old);
+  await committed();
+  expect(range).not.toHaveBeenCalled();expect(service.messages.at(-1)).toEqual(joined);
+  expect(service.selectedTicket?.members[0].user.name).toBe('Иванов Иван');
+});
+
+test('a committed closure applies status and rating together after its async history read',async()=>{
+  await act(async()=>{await service.saveViewport({messageId:70600,sequence:600,offset:0,atLatest:true},7);});
+  const rating={...msg(601,'Готово'),kind:'CLOSURE',rating:4} as HelpMessage;
+  await persist({ticket:{...ticket(601),status:'CLOSED'},messages:[rating],lastSequence:601});
+  const rows=await history.readCachedHelpRange(5,7,1,601,1000);
+  let release!:(rows:HelpMessage[])=>void;
+  jest.spyOn(history,'readCachedHelpRange').mockImplementationOnce(()=>new Promise(resolve=>{release=resolve;}));
+  renderedStates.length=0;
+  await committed();
+  expect(service.selectedTicket?.status).toBe('OPEN');
+  expect(service.messages.at(-1)?.id).toBe(70600);
+  await act(async()=>{release(rows);});
+  expect(service.selectedTicket?.status).toBe('CLOSED');expect(service.messages.at(-1)).toEqual(rating);
+  expect(renderedStates.filter(state=>state.status==='CLOSED').every(state=>state.ids.includes(70600)&&state.ids.includes(70601))).toBe(true);
+});
+
+test.each([false,true])('mutation tail reconciliation preserves an older reading window or a missing range (%s)',async(gap)=>{
+  await act(async()=>{await service.saveViewport({messageId:gap?70600:70150,sequence:gap?600:150,offset:-12,atLatest:gap},7);});
+  mockSyncTicket.mockImplementation(()=>new Promise(()=>{}));
+  const last=gap?800:601;
+  mockApi.claim.mockResolvedValue({ticket:ticket(last),...page,messages:gap?[msg(800)]:[msg(600),msg(601)],lastSequence:last,eventCursor:20,snapshotCursor:20});
+  const original=service.messages,key=service.navigationTarget?.key;
+  await act(async()=>{await service.claimTicket(7);});
+  expect(service.messages).toBe(original);expect(service.hasNewer).toBe(true);expect(service.navigationTarget?.key).toBe(key);
+});
+
+test('a delayed claim response cannot replace newer committed state or remove its messages',async()=>{
+  await act(async()=>{await service.saveViewport({messageId:70600,sequence:600,offset:0,atLatest:true},7);});
+  mockSyncTicket.mockImplementation(()=>new Promise(()=>{}));
+  let release!:(detail:any)=>void,pending!:Promise<unknown>;
+  mockApi.claim.mockImplementationOnce(()=>new Promise(resolve=>{release=resolve;}));
+  await act(async()=>{pending=service.claimTicket(7);});
+  await persist({ticket:{...ticket(602),title:'Newer state'},messages:[msg(601),msg(602)],lastSequence:602,nextCursor:21,eventCursor:21,snapshotCursor:21});
+  await committed();
+  expect(service.messages.at(-1)?.id).toBe(70602);
+  await act(async()=>{release({ticket:ticket(601),...page,messages:[msg(600),msg(601)],lastSequence:601,eventCursor:20,snapshotCursor:20});await pending;});
+  expect(service.messages.at(-1)?.id).toBe(70602);expect(service.selectedTicket?.title).toBe('Newer state');
+  expect(service.hasNewer).toBe(false);
 });

@@ -22,10 +22,10 @@ export class StockRequestError extends Error { constructor(public status: number
     ? status === 400 ? 'Обновите историю: потяните список вниз.' : 'Не удалось загрузить историю из 1С. Потяните вниз для повторной загрузки.'
     : 'Не удалось обновить остатки. Повторите попытку.');
 } }
-export async function stockRequest<T>(path: string, query: StockQuery & { offset?: number; cursor?: string }, signal: AbortSignal): Promise<T> {
+export async function stockRequest<T>(path: string, query: StockQuery & { offset?: number; cursor?: string }, signal: AbortSignal, expectedUserId?:number): Promise<T> {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== '') params.set(key, String(value));
-  const response = await apiClient<void, T>(`/stock-balances/${path}?${params}`, { signal, networkRetryCount: 0 });
+  const response = await apiClient<void, T>(`/stock-balances/${path}?${params}`, { signal, networkRetryCount: 0,...(expectedUserId?{expectedUserId}:{}) });
   if (!response.ok || !response.data) throw new StockRequestError(response.status ?? 0, path.endsWith('/movements'));
   return response.data;
 }

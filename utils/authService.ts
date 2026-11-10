@@ -30,9 +30,7 @@ export async function login(email: string, password: string) {
     body: { email, password, ...devicePayload },
     skipAuth: true,
   });
-  console.log('res:', res);
   const data = throwIfError(res);
-  // console.log('После авторизации : '+data.accessToken)
   await saveTokens(data.accessToken, data.refreshToken, data.profile, data.deviceSessionId);
   await resetTrackingUploadBackoff();
   void flushTrackingQueue('[tracking-login]');

@@ -10,17 +10,20 @@ function schedule(){if(timer!==undefined||!ticks.size)return;timer=setTimeout(()
 function subscribeTick(tick:(now:number)=>void){ticks.add(tick);schedule();return()=>{ticks.delete(tick);if(!ticks.size&&timer!==undefined){clearTimeout(timer);timer=undefined;}};}
 const preferences=new Set<()=>void>();let reader=false,generation=0,readerRevision=0;
 const foreground=()=>AppState.currentState==='active'&&(Platform.OS!=='web'||typeof document==='undefined'||document.visibilityState!=='hidden');
-const preferenceSnapshot=()=>foreground()&&!reader;
+// React Native Web's isScreenReaderEnabled is a constant-true stub, not
+// browser assistive-technology detection. Web honors real reduced-motion and
+// visibility preferences instead; native retains the screen-reader guard.
+const preferenceSnapshot=()=>foreground()&&(Platform.OS==='web'||!reader);
 function subscribePreferences(listener:()=>void){
  preferences.add(listener);
  if(preferences.size===1){
   const current=++generation,revision=readerRevision;
-  preferenceCleanup=()=>{app.remove();screenReader.remove();if(Platform.OS==='web'&&typeof document!=='undefined')document.removeEventListener('visibilitychange',publish);};
+  preferenceCleanup=()=>{app?.remove();screenReader?.remove();if(Platform.OS==='web'&&typeof document!=='undefined')document.removeEventListener('visibilitychange',publish);};
   const publish=()=>preferences.forEach(notify=>notify());
   const app=AppState.addEventListener('change',publish);
-  const screenReader=AccessibilityInfo.addEventListener('screenReaderChanged',value=>{readerRevision++;reader=value;publish();});
+  const screenReader=Platform.OS!=='web'?AccessibilityInfo.addEventListener('screenReaderChanged',value=>{readerRevision++;reader=value;publish();}):undefined;
   if(Platform.OS==='web'&&typeof document!=='undefined')document.addEventListener('visibilitychange',publish);
-  void Promise.resolve(AccessibilityInfo.isScreenReaderEnabled()).then(value=>{if(current===generation&&revision===readerRevision){reader=value;publish();}}).catch(()=>{});
+  if(Platform.OS!=='web')void Promise.resolve(AccessibilityInfo.isScreenReaderEnabled()).then(value=>{if(current===generation&&revision===readerRevision){reader=value;publish();}}).catch(()=>{});
  }
  return()=>{preferences.delete(listener);if(!preferences.size){generation++;preferenceCleanup?.();preferenceCleanup=undefined;}};
 }

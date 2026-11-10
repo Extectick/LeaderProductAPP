@@ -14,8 +14,8 @@ import { entityIdentity, loadEntityCard, validateEntityCardData } from '../src/f
 import { EntityCardContent } from '../src/features/entityCards/entityRegistry';
 
 const request = httpRequest as jest.Mock;
-const product: EntityTarget = {v:1, source:'onec', baseKey:'torg2026', metaType:'Catalogs', name:'Номенклатура', guid:'11111111-1111-4111-8111-111111111111'};
-const order: EntityTarget = {v:1, source:'onec', baseKey:'torg2026', metaType:'Documents', name:'ЗаказКлиента', guid:'22222222-2222-4222-8222-222222222222'};
+const product: EntityTarget = {v:1, source:'onec', baseKey:'torg2026', metaType:'Catalogs', name:'ТестовыйСправочник', guid:'11111111-1111-4111-8111-111111111111'};
+const order: EntityTarget = {v:1, source:'onec', baseKey:'torg2026', metaType:'Documents', name:'ТестовыйДокумент', guid:'22222222-2222-4222-8222-222222222222'};
 const user: EntityTarget = {v:1, source:'app',kind:'user',id:'121'};
 const card = (target=product): EntityCardData => ({target,view:target.source==='onec'&&target.metaType==='Documents'?'client-order':'product',title:'Тестовый товар',fields:[{key:'posted',label:'Проведён',value:false},{key:'quantity',label:'Количество',value:0}],tables:[],truncated:false});
 const response = (data: unknown) => ({ok:true,status:200,data});

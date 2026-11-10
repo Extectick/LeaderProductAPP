@@ -1,4 +1,4 @@
-import { helpAlbumLayout, helpImageAspectRatio, type HelpAlbumLayout } from '../src/features/help/helpAlbumLayout';
+import { helpAlbumLayout, helpImageAspectRatio, helpMediaPreviewBounds, type HelpAlbumLayout } from '../src/features/help/helpAlbumLayout';
 
 const dimensions = (ratios: number[]) => ratios.map(ratio => ({ width: ratio * 1000, height: 1000 }));
 function geometry(layout: HelpAlbumLayout, count: number, maxWidth: number) {
@@ -69,6 +69,50 @@ test('bad legacy metadata and extreme aspect ratios cannot produce NaN, overlap 
 });
 test('single photos preserve the complete aspect ratio within the height limit', () => {
   const portrait = helpAlbumLayout(dimensions([.5]), 310);
-  expect(portrait).toMatchObject({ width: 175, height: 350 });
+  expect(portrait.width / portrait.height).toBeCloseTo(.5);
+  expect(portrait.height).toBeGreaterThan(500);
+  expect(portrait.height).toBeLessThanOrEqual(helpMediaPreviewBounds(310).maxHeight);
   expect(helpAlbumLayout(dimensions([2]), 310)).toMatchObject({ width: 310, height: 155 });
+});
+
+
+test('a portrait screenshot grows with actual column width across phone and desktop while remaining uncropped', () => {
+  const screenshot = [{width: 1080, height: 2400}];
+  const phone = helpMediaPreviewBounds(310), desktop = helpMediaPreviewBounds(760);
+  const small = helpAlbumLayout(screenshot, phone.width, 2, phone.maxHeight);
+  const large = helpAlbumLayout(screenshot, desktop.width, 2, desktop.maxHeight);
+  expect(phone.width).toBe(310); expect(desktop.width).toBeLessThanOrEqual(640);
+  for (const layout of [small, large]) {
+    expect(layout.width / layout.height).toBeCloseTo(1080 / 2400);
+    expect(layout.height).toBeLessThanOrEqual(760);
+    geometry(layout, 1, desktop.width);
+  }
+  expect(small.width).toBeGreaterThan(220);
+  expect(large.width).toBeGreaterThan(330);
+  expect(large.height).toBeGreaterThan(small.height);
+});
+test('preview bounds follow a narrow chat pane even when its host is a large desktop', () => {
+  const narrow = helpMediaPreviewBounds(240), wide = helpMediaPreviewBounds(1100);
+  expect(narrow.width).toBe(240); expect(wide.width).toBe(640);
+  for (const bounds of [narrow, wide]) {
+    for (const ratio of [.45, 1, 1.8, 4]) {
+      const layout = helpAlbumLayout(dimensions([ratio]), bounds.width, 2, bounds.maxHeight);
+      expect(layout.width).toBeLessThanOrEqual(bounds.width);
+      expect(layout.height).toBeLessThanOrEqual(bounds.maxHeight);
+      expect(layout.width / layout.height).toBeCloseTo(ratio);
+    }
+  }
+});
+test('invalid bounds stay finite, and an explicit tighter image limit never changes proportions', () => {
+  for (const width of [0, -50, NaN, Infinity]) {
+    const bounds = helpMediaPreviewBounds(width);
+    expect(bounds.width).toBe(1); expect(Number.isFinite(bounds.maxHeight)).toBe(true);
+  }
+  const constrained = helpAlbumLayout(dimensions([.5]), 620, 2, 440);
+  expect(constrained).toMatchObject({width: 220, height: 440});
+  for (const height of [0, -1, NaN, Infinity, 100000]) {
+    const bounded = helpAlbumLayout(dimensions([.5]), 620, 2, height);
+    expect(bounded.height).toBeGreaterThan(0); expect(bounded.height).toBeLessThanOrEqual(760);
+    expect(bounded.width / bounded.height).toBeCloseTo(.5);
+  }
 });

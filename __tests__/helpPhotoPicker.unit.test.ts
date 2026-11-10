@@ -1,8 +1,9 @@
 import React from 'react';
 import TestRenderer, {act} from 'react-test-renderer';
-import {AppState, Animated, Dimensions, Keyboard, PanResponder, StyleSheet, TextInput} from 'react-native';
+import {AppState, Animated, Dimensions, Keyboard, PanResponder, Platform, StyleSheet, TextInput} from 'react-native';
 
 const mockPermission=jest.fn(),mockPage=jest.fn(),mockPrepare=jest.fn(),mockDiscard=jest.fn(),mockPreviewUri=jest.fn();
+const mockThumbnailRender=jest.fn(),mockThumbnailLoad=jest.fn();
 const mockPullTiming=jest.fn(),mockPullSpring=jest.fn();
 let mockStaticAnimatedStyle=false,mockReducedMotion=true;
 let mockTopInset=0;
@@ -33,7 +34,7 @@ jest.mock('../src/features/help/helpPhotoLibrary',()=>({
   getHelpPhotoPreviewUri:(...args:unknown[])=>mockPreviewUri(...args),presentHelpPhotoPermissions:jest.fn(),
 }));
 jest.mock('../src/features/help/components/HelpPrimitives',()=>({HelpBlurSurface:'HelpBlurSurface'}));
-jest.mock('expo-image',()=>({Image:'ExpoImage'}));
+jest.mock('expo-image',()=>({Image:Object.assign((props:any)=>{mockThumbnailRender(props);return require('react').createElement('ExpoImage',props);},{loadAsync:(...args:unknown[])=>mockThumbnailLoad(...args)})}));
 jest.mock('expo-blur',()=>({BlurTargetView:require('react-native').View}));
 jest.mock('@expo/vector-icons',()=>({Ionicons:'Ionicons'}));
 jest.mock('react-native-safe-area-context',()=>({useSafeAreaInsets:()=>({top:mockTopInset,bottom:0,left:0,right:0})}));
@@ -85,6 +86,7 @@ const onFiles=()=>props.onFiles as jest.Mock;
 beforeEach(()=>{
   mockStaticAnimatedStyle=false;mockReducedMotion=true;mockTopInset=0;
   jest.clearAllMocks();
+  mockThumbnailLoad.mockReset().mockImplementation(async(uri:string)=>({uri,release:jest.fn()}));
   mockPullTiming.mockImplementation((value,_options,callback)=>{callback?.(true);return value;});
   mockPullSpring.mockImplementation((value,_options,callback)=>{callback?.(true);return value;});
   jest.spyOn(Animated as any,'attachNativeEvent').mockReturnValue({detach:jest.fn()});
@@ -219,6 +221,27 @@ describe('gallery pull',()=>{
   const surface=()=>screen!.root.findAllByProps({testID:'help-photo-pull-surface'})[0];
   const grid=()=>screen!.root.findAllByProps({testID:'help-photo-grid'})[0];
   async function startPull(){const state=manager();await act(async()=>{gesture().handlers.onTouchesDown(touch(),state);gesture().handlers.onTouchesMove(touch(50,70),state);gesture().handlers.onStart();});return state;}
+  test.each(['finish','resize'])('custom grid drag and its UI-thread inertia hold thumbnail decoding until %s',async completion=>{
+    jest.useFakeTimers();mockReducedMotion=false;
+    try{
+      await render();await act(async()=>grid().props.onContentSizeChange(390,2400));
+      const state=manager();
+      await act(async()=>{gesture().handlers.onTouchesDown(touch(),state);gesture().handlers.onTouchesMove(touch(50,30),state);gesture().handlers.onStart();gesture().handlers.onUpdate({translationY:-800});});
+      await act(async()=>jest.advanceTimersByTimeAsync(500));expect(mockThumbnailLoad).not.toHaveBeenCalled();
+      await act(async()=>gesture().handlers.onEnd({velocityY:-1000},true));
+      const decay=require('react-native-reanimated').withDecay as jest.Mock;
+      expect(decay).toHaveBeenCalled();
+      await act(async()=>jest.advanceTimersByTimeAsync(500));expect(mockThumbnailLoad).not.toHaveBeenCalled();
+      await act(async()=>{
+        if(completion==='finish')decay.mock.calls.at(-1)[1](true);
+        else{
+          const resize=screen!.root.findAllByType('GestureDetector' as any).find(node=>node.props.gesture.config.withTestId==='help-photo-resize')!.props.gesture.handlers;
+          resize.onStart();resize.onEnd({translationY:0,velocityY:0},true);
+        }
+      });
+      await act(async()=>jest.advanceTimersByTimeAsync(250));expect(mockThumbnailLoad).toHaveBeenCalled();
+    }finally{jest.useRealTimers();}
+  });
   test('one vertical handler owns both the full grid and panel, including edge transfer',async()=>{
     await render();expect(gesture('native').config.requireExternalGestureToFail).toBe(gesture());expect(gesture().config.manualActivation).toBe(true);
     const resize=screen!.root.findAllByType('GestureDetector' as any).find(node=>node.props.gesture.config.withTestId==='help-photo-resize')!.props.gesture.handlers;
@@ -515,4 +538,73 @@ test('scrolling attachments passes the opaque animated ref straight to scrollTo'
  expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({current:expect.anything()}),0,120,false);
  (scrollTo as jest.Mock).mockClear();
  update(0,null);expect(scrollTo).not.toHaveBeenCalled();
+});
+
+test('photo paging starts ahead of the visible end and suppresses duplicate in-flight loads',async()=>{
+ mockPage.mockResolvedValueOnce({photos,hasMore:true});
+ await render();const grid=()=>screen!.root.findAllByProps({testID:'help-photo-grid'})[0];
+ const next=deferred<{photos:HelpLibraryPhoto[];hasMore:boolean}>();mockPage.mockReturnValueOnce(next.promise);
+ await act(async()=>{grid().props.onContentSizeChange(390,1000);grid().props.onEndReached();});
+ expect(mockPage).toHaveBeenCalledTimes(2);
+ await act(async()=>next.resolve({photos:[photos[0],{...photos[1],id:'new-photo'}],hasMore:false}));
+ expect(grid().props.data.filter((item:any)=>item?.id===photos[0].id)).toHaveLength(1);
+ expect(grid().props.data.some((item:any)=>item?.id==='new-photo')).toBe(true);
+ const first=grid().props.getItemLayout(null,0),later=grid().props.getItemLayout(null,100);
+ expect(later.offset-first.offset).toBeCloseTo(first.length*100);
+ await act(async()=>grid().props.onEndReached());expect(mockPage).toHaveBeenCalledTimes(2);
+});
+
+test('local Android tiles decode bounded thumbnails asynchronously and unchanged tiles skip caption and selection rerenders',async()=>{
+ const originalPlatform=Platform.OS;Object.defineProperty(Platform,'OS',{value:'android',configurable:true});jest.useFakeTimers();
+ try{
+  await render();expect(screen!.root.findAllByType('ExpoImage' as any)).toHaveLength(0);expect(mockThumbnailLoad).not.toHaveBeenCalled();
+  await act(async()=>jest.advanceTimersByTimeAsync(250));expect(mockPreviewUri).not.toHaveBeenCalled();
+  expect(mockThumbnailLoad).toHaveBeenCalledWith(photos[0].uri,{maxWidth:expect.any(Number),maxHeight:expect.any(Number)});
+  expect(mockThumbnailLoad.mock.calls.every(([,options])=>options.maxWidth<=512&&options.maxHeight<=512)).toBe(true);
+  const images=screen!.root.findAllByType('ExpoImage' as any);
+  expect(images).toHaveLength(3);
+  const source=images[0].props.source,style=images[0].props.style;
+  expect(images[0].props).toMatchObject({source:{uri:photos[0].uri},cachePolicy:'disk',allowDownscaling:true,enforceEarlyResizing:true,transition:0,recyclingKey:`${photos[0].id}:${photos[0].uri}`});
+  expect(style.width).toBe(style.height);expect(style.width).toBeGreaterThan(0);
+  mockThumbnailRender.mockClear();await update({caption:'Новая подпись'});
+  expect(mockThumbnailRender).not.toHaveBeenCalled();
+  expect(screen!.root.findAllByType('ExpoImage' as any)[0].props.source).toBe(source);
+  expect(screen!.root.findAllByType('ExpoImage' as any)[0].props.style).toBe(style);
+  await press('Выбрать фотографию 1');
+  expect(mockThumbnailRender).toHaveBeenCalled();
+  expect(mockThumbnailRender.mock.calls.every(([props])=>props.source.uri===photos[0].uri)).toBe(true);
+  expect(screen!.root.findAllByType('ExpoImage' as any)[1].props.source.uri).toBe(photos[1].uri);
+ }finally{jest.useRealTimers();Object.defineProperty(Platform,'OS',{value:originalPlatform,configurable:true});}
+});
+test('iOS thumbnails retain their no-cloud gate and ignore a late URI after unmount',async()=>{
+ const originalPlatform=Platform.OS;Object.defineProperty(Platform,'OS',{value:'ios',configurable:true});jest.useFakeTimers();
+ const pending=deferred<string|null>();mockPreviewUri.mockImplementation((photo:HelpLibraryPhoto)=>photo.id===photos[0].id?pending.promise:Promise.resolve(null));
+ try{
+  await render();await act(async()=>jest.advanceTimersByTimeAsync(250));expect(mockPreviewUri).toHaveBeenCalledWith(photos[0]);
+  expect(screen!.root.findAllByType('ExpoImage' as any)).toHaveLength(0);
+  await update({open:false});await act(async()=>screen!.unmount());screen=undefined;
+  await act(async()=>pending.resolve(photos[0].uri));
+  expect(mockThumbnailRender).not.toHaveBeenCalled();
+ }finally{jest.useRealTimers();Object.defineProperty(Platform,'OS',{value:originalPlatform,configurable:true});}
+});
+
+
+test('scrolling keeps gray placeholders and resumes only visible thumbnails after settling',async()=>{
+ jest.useFakeTimers();
+ try{
+  await render();const grid=()=>screen!.root.findAllByProps({testID:'help-photo-grid'})[0];
+  await act(async()=>grid().props.onScroll.handlers.onBeginDrag());
+  await act(async()=>grid().props.onViewableItemsChanged({viewableItems:[{index:3}]}));
+  await act(async()=>jest.advanceTimersByTimeAsync(500));
+  expect(mockThumbnailLoad).not.toHaveBeenCalled();
+  expect(screen!.root.findAllByType('ExpoImage' as any)).toHaveLength(0);
+  expect(screen!.root.findAllByProps({testID:`help-photo-placeholder-${photos[2].id}`}).length).toBeGreaterThan(0);
+  await act(async()=>grid().props.onScroll.handlers.onEndDrag());
+  await act(async()=>grid().props.onScroll.handlers.onMomentumBegin());
+  await act(async()=>jest.advanceTimersByTimeAsync(500));expect(mockThumbnailLoad).not.toHaveBeenCalled();
+  await act(async()=>grid().props.onScroll.handlers.onMomentumEnd());
+  await act(async()=>jest.advanceTimersByTimeAsync(250));
+  expect(mockThumbnailLoad).toHaveBeenCalledTimes(1);expect(mockThumbnailLoad.mock.calls[0][0]).toBe(photos[2].uri);
+  expect(screen!.root.findAllByType('ExpoImage' as any)).toHaveLength(1);
+ }finally{jest.useRealTimers();}
 });

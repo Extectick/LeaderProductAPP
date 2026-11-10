@@ -26,3 +26,9 @@ test('stale screen cleanup does not clear a newer activity publication',()=>{
 
 import {matchingPendingCreate} from '../src/features/help/helpPendingCreate';
 test('a persisted create blocks resubmitting the same draft but permits a different problem',()=>{const item={create:true,input:{text:'Printer',sourceTicketId:7},key:'same'};expect(matchingPendingCreate([item],' Printer ',7)).toBe(item);expect(matchingPendingCreate([item],'Other problem',7)).toBeUndefined();expect(matchingPendingCreate([item],'Printer',8)).toBeUndefined();});
+
+test('push preserves only a known bounded Help event type',()=>{
+  expect(parseHelpPush({type:'HELP_MESSAGE',ticketId:7,eventType:'IT_REQUESTED'})).toMatchObject({eventType:'IT_REQUESTED'});
+  expect(parseHelpPush({type:'HELP_MESSAGE',ticketId:7,eventType:'TICKET_CLOSED'})).toMatchObject({eventType:'TICKET_CLOSED'});
+  expect(parseHelpPush({type:'HELP_MESSAGE',ticketId:7,eventType:'arbitrary'.repeat(1000)})).not.toHaveProperty('eventType');
+});

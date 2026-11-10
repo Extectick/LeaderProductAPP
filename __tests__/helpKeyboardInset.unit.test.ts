@@ -5,6 +5,29 @@ const mockDismiss=jest.fn();
 const mockListeners = new Map<string, (event?: any) => void>();
 jest.mock('react-native', () => ({Platform:{OS:'android'}, Keyboard:{isVisible:()=>mockKeyboardVisible,dismiss:()=>mockDismiss(),metrics:()=>undefined,addListener:(name:string,callback:any)=>{mockListeners.set(name,callback);return {remove:()=>mockListeners.delete(name)};}}}));
 import {helpKeyboardOverlap, useHelpKeyboardInset} from '../src/features/help/useHelpKeyboardInset';
+import {Platform} from 'react-native';
+
+test('web viewport moves the dock for a keyboard, ignores pinch zoom and removes listeners', async () => {
+  const oldWindow=global.window, oldPlatform=Platform.OS;
+  const listeners=new Map<string,()=>void>();
+  const viewport={height:500,offsetTop:0,scale:1,addEventListener:(event:string,callback:()=>void)=>listeners.set(event,callback),removeEventListener:(event:string)=>listeners.delete(event)};
+  const remove=jest.fn();
+  (global as any).window={innerHeight:800,visualViewport:viewport,addEventListener:jest.fn(),removeEventListener:remove};
+  Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});
+  const parent:any={current:{measureInWindow:(callback:any)=>callback(0,0,390,800)}};
+  const changed=jest.fn();
+  function Harness(){useHelpKeyboardInset(parent,true,changed);return null;}
+  let tree!:TestRenderer.ReactTestRenderer;
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(Harness));});
+    expect(changed).toHaveBeenLastCalledWith(300);
+    viewport.offsetTop=20;listeners.get('scroll')!();expect(changed).toHaveBeenLastCalledWith(280);
+    viewport.scale=2;listeners.get('resize')!();expect(changed).toHaveBeenLastCalledWith(0);
+    viewport.scale=1;viewport.height=800;viewport.offsetTop=0;listeners.get('resize')!();expect(changed).toHaveBeenLastCalledWith(0);
+    await act(async()=>tree.unmount());
+    expect(listeners.size).toBe(0);expect(remove).toHaveBeenCalledWith('resize',expect.any(Function));
+  } finally { (global as any).window=oldWindow;Object.defineProperty(Platform,'OS',{configurable:true,value:oldPlatform}); }
+});
 
 test('keyboard overlap supports overlay, resized and hidden windows', () => {
   expect(helpKeyboardOverlap(800,500)).toBe(300);

@@ -14,7 +14,7 @@ describe('Help dock controls surface',()=>{
   test('native sibling covers the scene and keeps control hit regions inside both parent bounds',async()=>{
     await render(true,0);
     const surface=tree.root.findByProps({testID:'help-dock-controls'});
-    expect(StyleSheet.flatten(surface.props.style)).toEqual({position:'absolute',top:0,left:0,right:0,bottom:0});
+    expect(StyleSheet.flatten(surface.props.style)).toEqual({position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:1});
     expect(surface.props.nativeID).toBe('controls-1');expect(surface.props.collapsable).toBe(false);
     expect(surface.props.pointerEvents).toBe('box-none');
     expect(StyleSheet.flatten(surface.findByProps({testID:'controls-child'}).props.style)).toMatchObject({bottom:76});

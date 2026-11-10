@@ -1,3 +1,6 @@
+import {ResponsiveHtmlPreview} from './ResponsiveHtmlPreview';
+import {ResponsivePreviewShell} from './ResponsivePreviewShell';
+import WebInteractionStyles from '../../components/ui/WebInteractionStyles';
 import {DurableHelpProbe} from './durableProbe';
 import ServicesPreview from './ServicesPreview';
 import {AppThemeSurface} from '../../components/Navigation/AppThemeSurface';
@@ -94,7 +97,7 @@ function Preview() {
     nodes.forEach(node => { node.style.height = 'auto'; node.style.overflow = 'visible'; node.style.minHeight = '100%'; });
     return () => previous.forEach(({ node, height, overflow, minHeight }) => { node.style.height = height; node.style.overflow = overflow; node.style.minHeight = minHeight; });
   }, [fixedHeight]);
-  useEffect(() => { if (Platform.OS !== 'web') { void setTheme('dark'); return; } const requested = params.get('theme'); if (requested === 'light' || requested === 'dark') void setTheme(requested); const w = Number(params.get('width')); if (w >= 280 && w <= 600) setWidth(w); if (params.get('composer') === 'long') setValue(Array.from({ length: 10 }, (_, i) => `${i + 1}. Проверка длинного текста в поле ввода.`).join('\n')); }, []);
+  useEffect(() => { if (Platform.OS !== 'web') { void setTheme('dark'); return; } const requested = params.get('theme'); if (requested === 'light' || requested === 'dark') void setTheme(requested); const w = Number(params.get('width')); if (w >= 280 && w <= 2560) setWidth(w); if (params.get('composer') === 'long') setValue(Array.from({ length: 10 }, (_, i) => `${i + 1}. Проверка длинного текста в поле ввода.`).join('\n')); }, []);
   // No browser toolbar or fake insets on native: use the full real screen,
   // OS keyboard, safe area, PanResponder gestures and expo-audio recorder.
   if (Platform.OS !== 'web') return <AppThemeSurface routeKey={fullScreen??undefined}><View testID="help-qa-surface" style={{ flex: 1, width: windowSize.width, backgroundColor: c.background }}>{fullScreen === 'services' ? <ServicesPreview/> : <HelpScreen />}</View></AppThemeSurface>;
@@ -104,8 +107,8 @@ function Preview() {
       <Text style={{ color: c.muted, fontSize: 11 }}>{notice}</Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5 }}>{button(theme === 'dark' ? 'Светлая' : 'Тёмная', () => void setTheme(theme === 'dark' ? 'light' : 'dark'))}{[320, 390, 430].map(w => button(`${w}px`, () => setWidth(w)))}{button('Длинный ввод', () => setValue(Array.from({ length: 10 }, (_, i) => `${i + 1}. Проверка длинного текста в поле ввода.`).join('\n')))}{button('Очистить ввод', () => setValue(''))}{button('Закрытие', () => setMode('close'))}{button('Повторное открытие', () => setMode('reopen'))}{button('Обычный ввод', () => setMode('message'))}</View>
     </View>
-    <View testID="help-qa-surface" style={{ width, ...(fixedHeight ? { height: fixedHeight, minHeight: fixedHeight, flexGrow: 0, flexShrink: 0 } : { maxWidth: '100%' as const, flex: 1, minHeight: 0, borderLeftWidth: 1, borderRightWidth: 1, borderColor: c.line }) }}>
-      {fullScreen ? <SafeAreaInsetsContext.Provider value={safeInsets}>{fullScreen === 'services' ? <ServicesPreview/> : <HelpScreen />}</SafeAreaInsetsContext.Provider> : <>
+    <WebInteractionStyles/><View testID="help-qa-surface" style={{ width:params.get('width')==='auto'?'100%':width, ...(fixedHeight ? { height: fixedHeight, minHeight: fixedHeight, flexGrow: 0, flexShrink: 0 } : { maxWidth: '100%' as const, flex: 1, minHeight: 0, borderLeftWidth: 1, borderRightWidth: 1, borderColor: c.line }) }}>
+      {fullScreen ? <SafeAreaInsetsContext.Provider value={safeInsets}>{(fullScreen==='html'||fullScreen==='html-card')?<ResponsiveHtmlPreview compactMode={fullScreen==='html-card'}/>:params.get('shell')==='1'?<ResponsivePreviewShell>{fullScreen === 'services' ? <ServicesPreview/> : <HelpScreen />}</ResponsivePreviewShell>:fullScreen === 'services' ? <ServicesPreview/> : <HelpScreen />}</SafeAreaInsetsContext.Provider> : <>
       <View style={{ flexDirection: 'row', alignItems: 'center', padding: 8, gap: 8, borderBottomWidth: 1, borderColor: c.line, backgroundColor: c.headerSurface }}><HelpIcon name="arrow-back" label="Назад — QA" onPress={() => setNotice('QA: каталог не подключён')} /><View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: c.text, fontWeight: '600', fontSize: 16 }}>Не открывается заказ</Text><Text style={{ color: c.muted, fontSize: 11 }}>#1042 · 23.10.2026, 10:40 · QA</Text></View><HelpIcon name="ellipsis-horizontal" label="Действия — QA" onPress={() => setMode('close')} /></View>
       <ScrollView testID="help-qa-messages" keyboardShouldPersistTaps="handled" style={{ flex: 1 }} contentContainerStyle={{ paddingTop: 10, paddingBottom: 16 }}>
         <Text style={{ color: c.muted, textAlign: 'center', fontSize: 11, marginBottom: 12 }}>Сегодня</Text>
