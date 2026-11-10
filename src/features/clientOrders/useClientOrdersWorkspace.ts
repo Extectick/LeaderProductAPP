@@ -3497,6 +3497,11 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     if (appliedDraftEditVersion !== draftEditVersionRef.current) return null;
     if (readOnly || foregroundSaveRef.current || (Platform.OS === 'web' && deviceDraftSyncingRef.current)) return null;
     if (options?.reason === 'autosave' && failedAutosaveVersionRef.current === draftEditVersionRef.current) return null;
+    if (activeOfflineUserRef.current !== offlineUserId) return null;
+    if (options?.serverOnly && !getServerStatus().isReachable) {
+      setError('Для создания ссылки нужно подключение к серверу. Изменения сохранены на устройстве.');
+      return null;
+    }
     const deviceEntry = findDeviceDraftEntry(draft.guid, draft.clientOrderId);
     if (options?.serverOnly && deviceEntry?.intent === 'SUBMIT') {
       setError('Заказ уже поставлен в очередь. Завершите отправку или снимите его с очереди перед созданием ссылки.');
@@ -3567,7 +3572,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
           ) + 1
         : 0;
       const updateTargetGuid = deviceEntry?.serverGuid
-        ?? (draft.guid && !isDeviceDraftGuid(draft.guid) && !deviceEntry ? draft.guid : null);
+        ?? (draft.guid && !isDeviceDraftGuid(draft.guid) ? draft.guid : null);
       const initialRevision = updateTargetGuid === deviceEntry?.serverGuid
         ? deviceEntry.serverRevision ?? draft.revision
         : draft.revision;
@@ -3621,6 +3626,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       // Local save/queue is complete after SQLite commits. Never reopen the
       // editor here: that reloads prices/defaults and normalizes partial input.
       if (localOnly || !getServerStatus().isReachable) {
+        if (options?.serverOnly) throw new Error('Соединение с сервером прервано. Черновик сохранён на устройстве, ссылка не создана.');
         const localOrder = stagedDeviceOrder ?? await saveDraftOnDevice(payload, null, {
           intent, clientRevision: clientRevision || Math.max(1, draft.clientRevision + 1),
         });
@@ -3658,6 +3664,17 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         order = await saveToApi(initialRevision);
       }
 
+      if (activeOfflineUserRef.current !== offlineUserId) return null;
+      if (options?.serverOnly) {
+        const confirmed = order && order.origin !== 'device' && !!order.guid && !isDeviceDraftGuid(order.guid)
+          && order.createdByUser?.id === Number(offlineUserId)
+          && (clientOrderId && !clientOrderId.startsWith('legacy-server:')
+            ? isReconciledOrderOperation(order, { clientOrderId, clientRevision, intent: 'SAVE' })
+              && (!updateTargetGuid || order.guid === updateTargetGuid)
+            : legacyOrderMatches({ guid: updateTargetGuid || order.guid, userId: Number(offlineUserId), payload }, order));
+        if (!confirmed) throw new Error('Сервер не подтвердил актуальную версию заказа. Локальная копия сохранена, ссылка не создана.');
+      }
+
       if (draftEditVersionRef.current !== editVersion || selectedGuidRef.current !== selectedAtStart) {
         await replaceDeviceDraftEntries(deviceDraftEntriesRef.current.filter(entry =>
           !(entry.clientOrderId === clientOrderId && entry.clientRevision === clientRevision)));
@@ -3670,6 +3687,16 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         draft.guid || stagedDeviceOrder?.guid,
         clientRevision || undefined
       );
+      if (activeOfflineUserRef.current !== offlineUserId) return null;
+      // A different mounted workspace may have persisted a newer revision while
+      // the conditional SQLite removal was in flight. Do not publish its predecessor.
+      if (options?.serverOnly && clientOrderId) {
+        const persisted = await readStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId);
+        if (activeOfflineUserRef.current !== offlineUserId
+          || persisted.some(entry => entry.clientOrderId === clientOrderId)) return null;
+      }
+      if (options?.serverOnly && (draftEditVersionRef.current !== editVersion
+        || selectedGuidRef.current !== selectedAtStart || findDeviceDraftEntry(draft.guid || stagedDeviceOrder?.guid, clientOrderId))) return null;
       const savedDeliveryAddressGuid = order.deliveryAddress?.guid ?? null;
       const requestedDeliveryAddressGuid = payload.deliveryAddressGuid ?? null;
       const selectedDeliveryAddressForSave =
@@ -3702,7 +3729,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       if (!autosave) addMonitoringBreadcrumb(intent === 'SUBMIT' ? 'order.submit_accepted' : 'order.save_completed');
       return order;
     } catch (e: any) {
-      if (payload && isNetworkUnavailableError(e)) {
+      if (activeOfflineUserRef.current !== offlineUserId) return null;
+      if (!options?.serverOnly && payload && isNetworkUnavailableError(e)) {
         try {
           let localOrder = stagedDeviceOrder ?? await saveDraftOnDevice(payload, null, { intent: options?.intent ?? 'SAVE' });
           if (options?.intent === 'SUBMIT') {
@@ -3776,6 +3804,93 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     deviceDraftsStorageKey,
     offlineUserId,
   ]);
+
+
+  /** Publish only a server-confirmed SAVE of the exact document chosen for sharing. */
+  const prepareOrderForSharing = React.useCallback(async (guid?: string): Promise<ClientOrder | null> => {
+    const fail = (message: string): never => { throw new Error(message); };
+    if (guid !== undefined && !guid.trim()) return fail('Не выбран заказ для создания ссылки.');
+    if (activeOfflineUserRef.current !== offlineUserId || offlineUserId === 'anonymous') {
+      return fail('Пользователь изменён. Откройте список заказов заново.');
+    }
+    if (!deviceDraftsHydrated) return fail('Дождитесь загрузки черновиков перед созданием ссылки.');
+    if (!getServerStatus().isReachable) return fail('Для создания ссылки нужно подключение к серверу.');
+    if (mutationLocked || loadingDetail || foregroundSaveRef.current || deviceDraftSyncingRef.current
+      || submitActionInFlightRef.current) return fail('Дождитесь завершения текущей операции с заказом.');
+    const targetGuid = guid ?? selectedGuidRef.current ?? draft.guid;
+    const entry = findDeviceDraftEntry(targetGuid, guid === undefined ? draft.clientOrderId : undefined);
+    if (entry?.intent === 'SUBMIT') return fail('Заказ уже поставлен в очередь. Дождитесь завершения отправки перед созданием ссылки.');
+    const isEditorTarget = guid === undefined || targetGuid === selectedGuidRef.current
+      || !!entry && (entry.order.guid === selectedGuidRef.current || entry.serverGuid === selectedGuidRef.current);
+    const userIsCurrent = () => activeOfflineUserRef.current === offlineUserId;
+    if (isEditorTarget) {
+      if (appliedDraftEditVersion !== draftEditVersionRef.current || selectedGuid !== selectedGuidRef.current) {
+        return fail('Заказ изменён. Повторите создание ссылки.');
+      }
+      if (entry || dirtyRef.current || !selectedOrder?.guid || selectedOrder.origin === 'device'
+        || isDeviceDraftGuid(selectedOrder.guid)) {
+        const editVersion = draftEditVersionRef.current;
+        const saved = await saveDraft({ reason: 'manual', intent: 'SAVE', serverOnly: true });
+        if (!userIsCurrent() || draftEditVersionRef.current !== editVersion) return null;
+        return saved?.origin !== 'device' ? saved : null;
+      }
+      return selectedOrder;
+    }
+    if (!targetGuid || isDeviceDraftGuid(targetGuid) && !entry) return fail('Не найден локальный черновик. Откройте заказ заново.');
+    if (!entry) {
+      const listed = apiOrdersRef.current.find(order => order.guid === targetGuid);
+      if (listed?.origin === 'device') return fail('Не удалось прочитать локальные изменения. Откройте заказ заново.');
+      return listed ?? { guid: targetGuid } as ClientOrder;
+    }
+
+    // A list action must never save the unrelated editor. Use the durable full
+    // payload and its existing revision, so retries after a lost ACK are idempotent.
+    const selectedAtStart = selectedGuidRef.current;
+    const editVersion = draftEditVersionRef.current;
+    const isCurrent = () => {
+      const current = findDeviceDraftEntry(entry.order.guid, entry.clientOrderId);
+      return userIsCurrent() && selectedGuidRef.current === selectedAtStart
+        && draftEditVersionRef.current === editVersion && !!current && isSameOrderOperation(current, entry);
+    };
+    foregroundSaveRef.current = true;
+    setSaving(true);
+    try {
+      let saved: ClientOrder;
+      if (entry.clientOrderId.startsWith('legacy-server:')) {
+        if (!entry.serverGuid) return fail('Не найден исходный серверный заказ. Откройте черновик.');
+        saved = await runLegacyOrderOperation({ guid: entry.serverGuid, revision: entry.serverRevision ?? entry.order.revision,
+          userId: Number(offlineUserId), intent: 'SAVE', payload: entry.payload }, {
+          read: getClientOrder, update: updateClientOrder,
+          submit: () => { throw new Error('Создание ссылки не разрешает отправку в 1С.'); },
+          checkpoint: async () => {}, isCurrent,
+        });
+      } else {
+        saved = await putClientOrderByClientId(entry.clientOrderId, entry.payload,
+          { clientRevision: entry.clientRevision, intent: 'SAVE' });
+      }
+      if (!isCurrent()) return fail('Заказ или пользователь изменён. Повторите создание ссылки.');
+      const expectedGuid = entry.serverGuid ?? (!isDeviceDraftGuid(entry.order.guid) ? entry.order.guid : null);
+      const confirmed = saved && saved.origin !== 'device' && !!saved.guid && !isDeviceDraftGuid(saved.guid)
+        && saved.createdByUser?.id === Number(offlineUserId)
+        && (!expectedGuid || saved.guid === expectedGuid)
+        && (entry.clientOrderId.startsWith('legacy-server:')
+          ? legacyOrderMatches({ guid: entry.serverGuid!, userId: Number(offlineUserId), payload: entry.payload }, saved)
+          : isReconciledOrderOperation(saved, entry));
+      if (!confirmed) return fail('Сервер не подтвердил актуальную версию заказа. Локальная копия сохранена, ссылка не создана.');
+      await removeDeviceDraftEntry(entry.order.guid, entry.clientRevision);
+      const persisted = userIsCurrent() ? await readStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId) : [];
+      if (!userIsCurrent() || persisted.some(current => current.clientOrderId === entry.clientOrderId)
+        || selectedGuidRef.current !== selectedAtStart || draftEditVersionRef.current !== editVersion
+        || findDeviceDraftEntry(entry.order.guid, entry.clientOrderId)) return null;
+      applySavedOrderToList(saved);
+      return saved;
+    } finally {
+      foregroundSaveRef.current = false;
+      setSaving(false);
+    }
+  }, [appliedDraftEditVersion, applySavedOrderToList, deviceDraftsHydrated, deviceDraftsStorageKey, draft.clientOrderId, draft.guid,
+    findDeviceDraftEntry, loadingDetail, mutationLocked, offlineUserId, removeDeviceDraftEntry, saveDraft,
+    selectedGuid, selectedOrder]);
 
   React.useEffect(() => {
     if (!dirty || readOnly || saving || submitting) return undefined;
@@ -4909,6 +5024,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     refreshing,
     refreshAll,
     saveDraft,
+    prepareOrderForSharing,
     confirmDiscardIfNeeded,
     submitOrder,
     submitOrderFromList,

@@ -365,7 +365,16 @@ describe('useClientOrdersWorkspace', () => {
     });
     await flush();
     await act(async () => { await jest.advanceTimersByTimeAsync(0); });
-    return { get current() { return current; }, renderer };
+    return { get current() { return current; }, renderer,
+      async switchUser(id: number) {
+        await act(async () => {
+          renderer.update(React.createElement(AuthContext.Provider, {
+            value: { isLoading: false, isAuthenticated: true, profile: { id },
+              setAuthenticated: jest.fn(), setProfile: jest.fn(), signOut: jest.fn() } as any,
+          }, React.createElement(Harness)));
+        });
+      },
+    };
   }
 
   it('shows a new cancellation refusal once without putting it on the document or list', async () => {
@@ -1110,10 +1119,229 @@ describe('useClientOrdersWorkspace', () => {
     const harness = await ordersListWorkspace(1, 'editor');
     try {
       await act(async () => { await harness.current.selectOrder(entry.order.guid); });
-      jest.mocked(putClientOrderByClientId).mockResolvedValue({ ...entry.order, guid: 'api-shared', origin: 'app', localDraft: undefined } as any);
+      jest.mocked(putClientOrderByClientId).mockImplementation(async (_id, _payload, operation) => ({ ...entry.order,
+        guid: 'api-shared', origin: 'local', localDraft: undefined, createdByUser: { id: 1 }, clientRevision: operation.clientRevision } as any));
       await act(async () => { await harness.current.saveDraft({ reason: 'manual', intent: 'SAVE', serverOnly: true }); });
       expect(putClientOrderByClientId).toHaveBeenCalledWith('share-draft', expect.any(Object), expect.objectContaining({ intent: 'SAVE' }));
       expect(records.size).toBe(0);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  function shareEntry() {
+    const entry = localEntry('share-existing');
+    entry.order.guid = 'existing-server-guid';
+    entry.serverGuid = 'existing-server-guid' as any;
+    entry.serverRevision = 1 as any;
+    entry.clientRevision = 41;
+    entry.order.clientRevision = 41;
+    entry.order.localDraft.clientRevision = 41;
+    entry.order.localDraft.guid = entry.order.guid;
+    entry.order.localDraft.items = Array.from({ length: 30 }, (_, index) => ({
+      ...entry.order.localDraft.items[0], key: `line-${index}`, lineGuid: `line-${index}`, productGuid: `product-${index}`,
+    }));
+    entry.payload = buildLocalDraftPayload(entry.order.localDraft);
+    return entry;
+  }
+
+  function confirmShare(entry: ReturnType<typeof localEntry>, revision = entry.clientRevision) {
+    return { ...entry.order, origin: 'local', localDraft: undefined, clientRevision: revision,
+      createdByUser: { id: 1 }, items: entry.payload.items.map(line => ({ ...line, product: { guid: line.productGuid } })) } as any;
+  }
+
+  it('publishes all locally saved edits under an ordinary server GUID even when the editor is clean', async () => {
+    const entry = shareEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      expect(harness.current.dirty).toBe(false);
+      expect(harness.current.selectedOrder?.origin).toBe('device');
+      jest.mocked(putClientOrderByClientId).mockImplementation(async (_id, _payload, operation) => confirmShare(entry, operation.clientRevision));
+      await act(async () => { expect(await harness.current.prepareOrderForSharing()).toMatchObject({ guid: entry.order.guid, origin: 'local' }); });
+      expect(putClientOrderByClientId).toHaveBeenCalledWith(entry.clientOrderId,
+        expect.objectContaining({ items: expect.arrayContaining(entry.payload.items) }), { clientRevision: 42, intent: 'SAVE' });
+      expect(jest.mocked(putClientOrderByClientId).mock.calls[0][1].items).toHaveLength(30);
+      expect(records.size).toBe(0);
+      expect(submitClientOrder).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('shares the requested list draft with its complete persisted payload without opening or saving another editor', async () => {
+    const entry = shareEntry(); const other = localEntry('unrelated-editor');
+    const records = memoryDraftStore([entry, other]);
+    const harness = await ordersListWorkspace();
+    try {
+      await act(async () => { await harness.current.selectOrder(other.order.guid); });
+      await act(async () => { harness.current.patchDraft({ comment: 'Unrelated unsaved input' }); });
+      const before = harness.current.draft;
+      jest.mocked(putClientOrderByClientId).mockResolvedValue(confirmShare(entry));
+      await act(async () => { expect(await harness.current.prepareOrderForSharing(entry.order.guid)).toMatchObject({ guid: entry.order.guid }); });
+      expect(putClientOrderByClientId).toHaveBeenCalledWith(entry.clientOrderId, entry.payload, { clientRevision: 41, intent: 'SAVE' });
+      expect(harness.current.selectedGuid).toBe(other.order.guid);
+      expect(harness.current.draft).toEqual(before);
+      expect(records.has(entry.clientOrderId)).toBe(false);
+      expect(records.has(other.clientOrderId)).toBe(true);
+      expect(getClientOrder).not.toHaveBeenCalled(); expect(submitClientOrder).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it.each([
+    ['old revision', { clientRevision: 40 }], ['wrong identity', { clientOrderId: 'another-client' }],
+    ['wrong account', { createdByUser: { id: 2 } }], ['wrong GUID', { guid: 'another-server-guid' }],
+    ['local fallback', { origin: 'device' }],
+  ])('does not consume the local list draft on %s acknowledgement', async (_label, patch) => {
+    const entry = shareEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace();
+    try {
+      jest.mocked(putClientOrderByClientId).mockResolvedValue({ ...confirmShare(entry), ...patch });
+      await act(async () => { await expect(harness.current.prepareOrderForSharing(entry.order.guid)).rejects.toThrow('Сервер не подтвердил'); });
+      expect(records.get(entry.clientOrderId)).toEqual(entry);
+      expect(submitClientOrder).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('keeps a list SAVE for an idempotent retry after a lost response', async () => {
+    const entry = shareEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace();
+    try {
+      jest.mocked(putClientOrderByClientId).mockRejectedValueOnce(new Error('Network request failed'))
+        .mockResolvedValueOnce(confirmShare(entry));
+      await act(async () => { await expect(harness.current.prepareOrderForSharing(entry.order.guid)).rejects.toThrow(); });
+      expect(records.get(entry.clientOrderId)).toEqual(entry);
+      await act(async () => { expect(await harness.current.prepareOrderForSharing(entry.order.guid)).not.toBeNull(); });
+      expect(jest.mocked(putClientOrderByClientId).mock.calls.map(call => call[2])).toEqual([
+        { clientRevision: 41, intent: 'SAVE' }, { clientRevision: 41, intent: 'SAVE' },
+      ]);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('blocks a second share and preserves a newer durable list revision when the older save finishes', async () => {
+    const entry = shareEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace();
+    let finish!: (order: any) => void;
+    let pending!: Promise<any>;
+    try {
+      jest.mocked(putClientOrderByClientId).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+      await act(async () => { pending = harness.current.prepareOrderForSharing(entry.order.guid); });
+      await act(async () => { await expect(harness.current.prepareOrderForSharing(entry.order.guid)).rejects.toThrow('Дождитесь'); });
+      const newer = { ...entry, clientRevision: 42, payload: { ...entry.payload, comment: 'newer durable edit' } };
+      // Another editor commits before this request's conditional SQLite delete,
+      // but its change notification has not reached this mounted list yet.
+      records.set(entry.clientOrderId, newer);
+      await act(async () => { finish(confirmShare(entry)); expect(await pending).toBeNull(); });
+      expect(records.get(entry.clientOrderId)).toEqual(newer);
+      expect(putClientOrderByClientId).toHaveBeenCalledTimes(1);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('ignores a list acknowledgement after switching accounts and keeps the first account draft', async () => {
+    const entry = shareEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace();
+    let finish!: (order: any) => void;
+    let pending!: Promise<any>;
+    try {
+      jest.mocked(putClientOrderByClientId).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+      await act(async () => { pending = harness.current.prepareOrderForSharing(entry.order.guid); });
+      await harness.switchUser(2);
+      await act(async () => { finish(confirmShare(entry)); await expect(pending).rejects.toThrow('пользователь изменён'); });
+      expect(records.get(entry.clientOrderId)).toEqual(entry);
+      expect(harness.current.selectedGuid).toBeNull();
+      expect(harness.current.saving).toBe(false);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('preserves input typed in the editor during sharing and does not return the older server version', async () => {
+    const entry = shareEntry(); memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace(1, 'editor');
+    let finish!: (order: any) => void;
+    let pending!: Promise<any>;
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      jest.mocked(putClientOrderByClientId).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+      await act(async () => { pending = harness.current.prepareOrderForSharing(); });
+      await act(async () => { harness.current.patchDraft({ comment: 'typed while sharing' }); });
+      await act(async () => { finish(confirmShare(entry, 42)); expect(await pending).toBeNull(); });
+      expect(harness.current.draft.comment).toBe('typed while sharing');
+      expect(harness.current.dirty).toBe(true);
+      expect(submitClientOrder).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('does not treat a serverOnly editor timeout as a successful local save', async () => {
+    const entry = shareEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      jest.mocked(putClientOrderByClientId).mockRejectedValue(new Error('Network request failed'));
+      await act(async () => { expect(await harness.current.prepareOrderForSharing()).toBeNull(); });
+      expect(records.get(entry.clientOrderId).payload.items).toHaveLength(30);
+      expect(records.get(entry.clientOrderId).intent).toBe('SAVE');
+      expect(harness.current.error).toBeTruthy();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('keeps the staged editor SAVE when the API acknowledges an older client revision', async () => {
+    const entry = shareEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      jest.mocked(putClientOrderByClientId).mockResolvedValue(confirmShare(entry, 41));
+      await act(async () => { expect(await harness.current.prepareOrderForSharing()).toBeNull(); });
+      expect(records.get(entry.clientOrderId).clientRevision).toBe(42);
+      expect(records.get(entry.clientOrderId).payload.items).toHaveLength(30);
+      expect(harness.current.error).toContain('Сервер не подтвердил');
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('does not report a successful share when connectivity disappears during durable staging', async () => {
+    const entry = shareEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      const write = jest.mocked(applyOfflineDraftChanges).getMockImplementation()!;
+      jest.mocked(applyOfflineDraftChanges).mockImplementation(async (...args) => {
+        const result = await write(...args);
+        setServerUnavailable('Network request failed');
+        return result;
+      });
+      await act(async () => { expect(await harness.current.prepareOrderForSharing()).toBeNull(); });
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+      expect(records.get(entry.clientOrderId).payload.items).toHaveLength(30);
+      expect(harness.current.error).toContain('ссылка не создана');
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('rejects empty, offline and queued list targets without saving any document', async () => {
+    const entry = localEntry('share-pending', 'READY_TO_SEND'); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace();
+    try {
+      await act(async () => { await expect(harness.current.prepareOrderForSharing('')).rejects.toThrow('Не выбран'); });
+      await act(async () => { await expect(harness.current.prepareOrderForSharing(entry.order.guid)).rejects.toThrow('очеред'); });
+      await act(async () => { setServerUnavailable('Network request failed'); });
+      await act(async () => { await expect(harness.current.prepareOrderForSharing('server-guid')).rejects.toThrow('подключение'); });
+      expect(records.get(entry.clientOrderId)).toEqual(entry);
+      expect(putClientOrderByClientId).not.toHaveBeenCalled(); expect(submitClientOrder).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('leaves the editor and server untouched when sharing a clean server list entry', async () => {
+    const harness = await ordersListWorkspace();
+    try {
+      const before = harness.current.draft;
+      await act(async () => { expect(await harness.current.prepareOrderForSharing('clean-server-guid')).toMatchObject({ guid: 'clean-server-guid' }); });
+      expect(harness.current.draft).toEqual(before);
+      expect(harness.current.selectedGuid).toBeNull();
+      expect(getClientOrder).not.toHaveBeenCalled(); expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('recovers an already saved legacy list payload without issuing a new save or submit', async () => {
+    const { entry, saved } = legacyFixture('ON_DEVICE'); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace();
+    try {
+      jest.mocked(getClientOrder).mockResolvedValue(saved);
+      await act(async () => { expect(await harness.current.prepareOrderForSharing(entry.order.guid)).toEqual(saved); });
+      expect(records.size).toBe(0);
+      expect(updateClientOrder).not.toHaveBeenCalled(); expect(submitClientOrder).not.toHaveBeenCalled();
     } finally { await act(async () => harness.renderer.unmount()); }
   });
 
