@@ -68,3 +68,15 @@ test('selection changes do not restart motion and a recycled old callback cannot
  await update({messageId:8});await act(async()=>toggle());expect(props.onToggle).not.toHaveBeenCalled();
  await act(async()=>node('help-message-selection-toggle').props.onPress());expect(props.onToggle).toHaveBeenCalledWith(8);
 });
+
+test('incoming text keeps the same available width through selection and exit, including wide attachments',async()=>{
+ await render();
+ const geometry=()=>StyleSheet.flatten(node('help-message-selection-long-press').props.style);
+ const contentGeometry=()=>StyleSheet.flatten(node('help-message-selection-content').props.style);
+ expect(geometry()).toMatchObject({width:'100%',paddingRight:36});
+ expect(contentGeometry().maxWidth).toBeUndefined();
+ const before=geometry();
+ await update({active:true});expect(geometry()).toEqual(before);expect(contentGeometry().maxWidth).toBeUndefined();
+ await update({active:false});expect(geometry()).toEqual(before);
+ await update({incoming:false});expect(geometry().paddingRight).toBeUndefined();
+});

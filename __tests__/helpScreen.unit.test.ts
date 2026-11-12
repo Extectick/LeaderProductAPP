@@ -1388,7 +1388,7 @@ describe('Help screen integration with service boundary', () => {
     await act(async () => button('Отправить ответы').props.onPress());
     expect(mockService.sendMessage).toHaveBeenCalledWith(7, { text: 'Какая ОС?\nОтвет: Windows 11', attachmentIds: [], replyToId: 32 });
   });
-  test.each([null,32])('restored questionnaire answers share the AI row and retain original actions (reply=%s)',async replyToId=>{
+  test.each([null,32])('restored questionnaire answers keep independent stable selection rows and retain original actions (reply=%s)',async replyToId=>{
     await openWithMessage();
     const base=mockService.messages[0];
     const question={...base,id:32,sequence:2,authorId:0,authorRole:'SYSTEM',kind:'TEXT',assistantRun:{runId:'restored-question',status:'completed',questions:[{id:'os',header:'Система',question:'Какая ОС?',multiSelect:false,options:[]}]}};
@@ -1399,10 +1399,12 @@ describe('Help screen integration with service boundary', () => {
     expect(mockTimelineProps.messages).toEqual([question,answer]);
     expect(mockTimelineProps.questionExchanges.get(32).message).toBe(answer);
     expect(assistant.props.questionState).toBe('answered');
-    expect(assistant.props.questionReply.props.message).toBe(answer);
-    expect(assistant.props.questionReply.props.questionExchange.answers[0].answer).toBe('Windows 11');
-    expect(screen.root.findAllByType('HelpMessageBubble' as any)).toHaveLength(0);
-    await act(async()=>assistant.props.questionReply.props.onReply());
+    const answerRow=screen.root.findByType('HelpMessageBubble' as any);
+    expect(answerRow.props.message).toBe(answer);
+    expect(answerRow.props.questionExchange.answers[0].answer).toBe('Windows 11');
+    await act(async()=>answerRow.props.onMenu());
+    expect(screen.root.findByType('HelpMessageBubble' as any)).toBe(answerRow);
+    await act(async()=>button('Ответить на выбранное сообщение').props.onPress());
     expect(composer().props.quote.text).toBe(answer.text);
     // Editing out the questionnaire grammar must reveal the original record.
     mockService.messages=[question,{...answer,text:'Другое сообщение',editedAt:new Date().toISOString()}];
@@ -1430,10 +1432,11 @@ describe('Help screen integration with service boundary', () => {
     mockService.messages=[question,answer];
     await act(async()=>screen.update(React.createElement(HelpScreen)));
     expect(mockTimelineProps.pendingQuestionExchanges.size).toBe(0);
-    expect(assistant().props.questionReply.props.message).toBe(answer);
-    expect(assistant().props.questionReply.type).toBe(pendingType);
-    expect(assistant().props.questionReply.props.resolve).toBe(pendingResolver);
-    expect(assistant().props.questionReply.props.delivery).toBeUndefined();
+    const committed=screen.root.findByType('HelpMessageBubble' as any);
+    expect(committed.props.message).toBe(answer);
+    expect(committed.type).toBe(pendingType);
+    expect(committed.props.resolve).toBe(pendingResolver);
+    expect(committed.props.delivery).toBeUndefined();
     expect(mockTimelineProps.pendingMessages).toEqual([]);
   });
   test('AI IT button opens confirmation; cancelling leaves the ticket with AI and double confirmation sends once', async () => {
