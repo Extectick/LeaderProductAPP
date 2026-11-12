@@ -133,6 +133,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     "./plugins/with-traccar-kotlin-compat",
     "expo-updates",
     "expo-asset",
+    "expo-sqlite",
     "expo-image",
     ["expo-camera", { cameraPermission: "Разрешите доступ к камере, чтобы отправлять фотографии в обращениях.", recordAudioAndroid: false, barcodeScannerEnabled: false }],
     ["expo-media-library", { photosPermission: "Разрешите доступ к фотографиям, чтобы прикреплять их к обращениям.", savePhotosPermission: "Разрешите сохранять фотографии.", granularPermissions: ["photo"] }],
