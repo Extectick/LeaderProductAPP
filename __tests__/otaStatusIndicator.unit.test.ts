@@ -164,6 +164,20 @@ function findPressables(renderer: TestRenderer.ReactTestRenderer) {
   return renderer.root.findAll((node) => String(node.type) === 'Pressable');
 }
 
+const mountedRenderers = new Set<TestRenderer.ReactTestRenderer>();
+function createRenderer(...args: Parameters<typeof TestRenderer.create>) {
+  const renderer = TestRenderer.create(...args);
+  mountedRenderers.add(renderer);
+  return renderer;
+}
+afterEach(async () => {
+  await act(async () => {
+    for (const renderer of mountedRenderers) renderer.unmount();
+    mountedRenderers.clear();
+  });
+  jest.useRealTimers();
+});
+
 describe('OTA status indicator', () => {
   beforeEach(() => {
     resetMocks();
@@ -175,7 +189,7 @@ describe('OTA status indicator', () => {
     mockCheckForUpdateAsync.mockResolvedValue({ isAvailable: false }).mockImplementationOnce(() => new Promise(resolve => { complete=resolve; }));
     let renderer!: TestRenderer.ReactTestRenderer;
     try {
-      await act(async () => { renderer = TestRenderer.create(React.createElement(OtaUpdateStatusProvider, { enabled: true })); });
+      await act(async () => { renderer = createRenderer(React.createElement(OtaUpdateStatusProvider, { enabled: true })); });
       await act(async () => { await jest.advanceTimersByTimeAsync(30_000); });
       expect(mockCheckForUpdateAsync).toHaveBeenCalledTimes(1);
       await act(async () => { complete({isAvailable:false}); });
@@ -200,7 +214,7 @@ describe('OTA status indicator', () => {
     }
 
     await act(async () => {
-      TestRenderer.create(
+      createRenderer(
         React.createElement(OtaUpdateStatusProvider, { enabled: true }, React.createElement(Harness))
       );
     });
@@ -241,7 +255,7 @@ describe('OTA status indicator', () => {
 
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
-      renderer = TestRenderer.create(
+      renderer = createRenderer(
         React.createElement(OtaUpdateStatusProvider, { enabled: true }, React.createElement(Harness))
       );
     });
@@ -270,7 +284,7 @@ describe('OTA status indicator', () => {
 
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
-      renderer = TestRenderer.create(
+      renderer = createRenderer(
         React.createElement(OtaUpdateStatusProvider, { enabled: true }, React.createElement(Harness))
       );
     });
@@ -313,7 +327,7 @@ describe('OTA status indicator', () => {
 
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
-      renderer = TestRenderer.create(
+      renderer = createRenderer(
         React.createElement(OtaUpdateStatusProvider, { enabled: true }, React.createElement(Harness))
       );
     });
@@ -354,7 +368,7 @@ describe('OTA status indicator', () => {
 
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
-      renderer = TestRenderer.create(
+      renderer = createRenderer(
         React.createElement(OtaUpdateStatusProvider, { enabled: true }, React.createElement(Harness))
       );
     });
@@ -383,7 +397,7 @@ describe('OTA status indicator', () => {
 
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
-      renderer = TestRenderer.create(
+      renderer = createRenderer(
         React.createElement(OtaUpdateStatusProvider, { enabled: true }, React.createElement(Harness))
       );
     });
@@ -399,7 +413,7 @@ describe('OTA status indicator', () => {
     function Harness() { status = useOtaUpdateStatus(); return null; }
     let renderer!: TestRenderer.ReactTestRenderer;
     await act(async () => {
-      renderer = TestRenderer.create(React.createElement(OtaUpdateStatusProvider, { enabled: true }, React.createElement(Harness)));
+      renderer = createRenderer(React.createElement(OtaUpdateStatusProvider, { enabled: true }, React.createElement(Harness)));
     });
     await act(async () => { await status.requestCheck('manual'); });
     expect(mockCheckForUpdateAsync).not.toHaveBeenCalled();
@@ -418,7 +432,7 @@ describe('OTA status indicator', () => {
     function Harness() { status = useOtaUpdateStatus(); return null; }
     let renderer!: TestRenderer.ReactTestRenderer;
     const tree = () => React.createElement(OtaUpdateStatusProvider, { enabled: true }, React.createElement(Harness));
-    await act(async () => { renderer = TestRenderer.create(tree()); });
+    await act(async () => { renderer = createRenderer(tree()); });
     expect(status.phase).toBe('downloading');
     expect(status.progress).toBe(0.37);
     mockUpdatesState = { ...mockUpdatesState, isDownloading: false, isUpdatePending: true, downloadedUpdate: { updateId: 'next-update' } };
@@ -433,7 +447,7 @@ describe('OTA status indicator', () => {
 
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
-      renderer = TestRenderer.create(
+      renderer = createRenderer(
         React.createElement(OtaUpdateStatusProvider, { enabled: true }, React.createElement(ServicesCatalogStatusAction, { loadServices }))
       );
     });
@@ -468,7 +482,7 @@ describe('OTA status indicator', () => {
 
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
-      renderer = TestRenderer.create(
+      renderer = createRenderer(
         React.createElement(
           OtaUpdateStatusProvider,
           { enabled: true },
@@ -513,7 +527,7 @@ describe('OTA status indicator', () => {
 
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
-      renderer = TestRenderer.create(
+      renderer = createRenderer(
         React.createElement(
           OtaUpdateStatusProvider,
           { enabled: true },
@@ -549,7 +563,7 @@ describe('OTA status indicator', () => {
     mockCheckForUpdateAsync.mockResolvedValue({ isAvailable: false, isRollBackToEmbedded: false });
 
     await act(async () => {
-      TestRenderer.create(
+      createRenderer(
         React.createElement(OtaUpdateStatusProvider, { enabled: true }, React.createElement(React.Fragment))
       );
     });
@@ -576,7 +590,7 @@ describe('OTA status indicator', () => {
     }
 
     await act(async () => {
-      TestRenderer.create(
+      createRenderer(
         React.createElement(OtaUpdateStatusProvider, { enabled: true }, React.createElement(Harness))
       );
     });

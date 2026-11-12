@@ -1,4 +1,4 @@
-import type { HelpAssistantRun, HelpAssistantScenario } from '../../src/features/help/helpAssistant';
+import type { HelpAssistantQuestion, HelpAssistantRun, HelpAssistantScenario } from '../../src/features/help/helpAssistant';
 import type { HelpMessage } from '../../src/features/help/helpApi';
 
 /** Preserve history/sequence IDs, but retire progress belonging to an older input. */
@@ -25,6 +25,15 @@ function answerFor(text: string, scenario: HelpAssistantScenario) {
   return 'Предлагаю сначала уточнить, на каком шаге возникает проблема:\n\n1. Проверьте подключение к сети.\n2. Повторите действие и запишите текст ошибки.\n3. Пришлите номер заказа или снимок экрана, если они относятся к проблеме.\n\nЭто поможет выбрать следующий шаг или передать обращение специалисту IT.';
 }
 
+/** Real bounded question contract; only this isolated fixture supplies the data. */
+export const fixtureAssistantQuestions: HelpAssistantQuestion[] = [
+  { id: 'step', header: 'Когда', question: 'На каком шаге появляется ошибка?', multiSelect: false,
+    options: [{ label: 'При входе', description: 'Сразу после ввода логина и пароля' }, { label: 'При открытии документа' }, { label: 'При печати' }] },
+  { id: 'checks', header: 'Проверки', question: 'Что вы уже попробовали?', multiSelect: true,
+    options: [{ label: 'Повторный вход' }, { label: 'Другой документ' }, { label: 'Перезапуск приложения' }] },
+  { id: 'details', header: 'Ошибка', question: 'Какой текст ошибки вы видите на экране?', multiSelect: false, options: [] },
+];
+
 type Job = { run: HelpAssistantRun; text: string; answer: string; timer?: ReturnType<typeof setTimeout>; emit: (run: HelpAssistantRun, text: string) => void };
 /** One cancellable timer per ticket; replaced runs cannot publish late events. */
 export class FixtureAssistant {
@@ -42,7 +51,7 @@ export class FixtureAssistant {
       job.run = { ...job.run, eventId: job.run.eventId + 1, updatedAt: Date.now(), activityVersion:1,
         phase:job.run.step===0?'queued':job.run.step===1?'knowledge':job.run.step===2?'analysis':'answer',
         metrics:{startedAt:job.run.startedAt,elapsedMs:Date.now()-job.run.startedAt},
-        ...(scenario==='question'&&job.run.status==='completed'?{suggestions:['После входа','При открытии документа','При печати']}:{}),
+        ...(scenario==='question'&&job.run.status==='completed'?{questions:fixtureAssistantQuestions}:{}),
         activities:job.run.step===0?[]:[{id:'knowledge',kind:'knowledge',label:job.run.step===1?'Ищу инструкции компании':'Проверены доступные инструкции',status:job.run.step===1&&active?'running':'completed'},
           ...(job.run.step>=2?[{id:'analysis',kind:'analysis' as const,label:'Кратко об анализе',status:active?'running' as const:'completed' as const,text:'Сначала уточню, на каком шаге возникла проблема, и предложу безопасную проверку. Если её недостаточно, подключим специалиста IT.'}]:[])],
       };

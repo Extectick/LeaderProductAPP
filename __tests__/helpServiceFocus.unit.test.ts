@@ -3,11 +3,15 @@ import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 
 jest.mock('react-native',()=>({Platform:{OS:'android'},AppState:{currentState:'active',addEventListener:jest.fn(()=>({remove:jest.fn()}))}}));
+jest.mock('expo-application',()=>({applicationId:'com.leaderproduct.app',nativeApplicationVersion:'0.1.46',nativeBuildVersion:'45'}));
+jest.mock('expo-updates',()=>({channel:'dev',runtimeVersion:'0.1.46'}));
+jest.mock('expo-constants',()=>({__esModule:true,default:{expoConfig:{scheme:'leaderproduct',version:'0.1.46'}}}));
 jest.mock('../context/AuthContext',()=>({AuthContext:require('react').createContext({profile:{id:5},isAuthenticated:true})}));
 jest.mock('../utils/config',()=>({API_BASE_URL:'https://dev.example.test'}));
 jest.mock('../src/shared/network/useServerStatus',()=>({useServerStatus:()=>({isReachable:true})}));
 jest.mock('../src/features/help/helpSocket',()=>({createHelpSocket:()=>({disconnect:jest.fn(),getSocket:()=>({emit:jest.fn()})})}));
-jest.mock('../src/features/help/helpAccountSync',()=>({acquireHelpAccount:()=>({getSocket:()=>null,release:jest.fn(),refresh:jest.fn(async()=>{}),syncTicket:jest.fn(async()=>{})})}));
+const mockAccountRefresh=jest.fn(async()=>{});
+jest.mock('../src/features/help/helpAccountSync',()=>({acquireHelpAccount:()=>({getSocket:()=>null,isConnected:()=>false,recover:jest.fn(),release:jest.fn(),refresh:mockAccountRefresh,syncTicket:jest.fn(async()=>{})})}));
 jest.mock('../src/features/help/helpOutbox',()=>({dispatchHelpPending:jest.fn()}));
 jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevEvent:jest.fn()}));
 const mockApi={config:jest.fn(),list:jest.fn(),detail:jest.fn(),read:jest.fn(),sync:jest.fn(),messages:jest.fn(),search:jest.fn(),react:jest.fn()};
@@ -21,6 +25,7 @@ jest.mock('../src/features/help/helpHistory',()=>({
 }));
 import { useHelpService } from '../src/features/help/useHelpService';
 import { helpViewCache } from '../src/features/help/helpViewCache';
+import {helpOriginTracker} from '../src/features/help/helpClientContext';
 
 const detail={ticket:{id:7,status:'OPEN',members:[{userId:5,role:'OWNER'}],unreadCount:1},messages:[{id:1,ticketId:7,sequence:1}],lastReadSequence:0,firstUnreadSequence:1,lastSequence:1,eventCursor:1};
 let service:ReturnType<typeof useHelpService>;
@@ -33,6 +38,7 @@ describe('Help accepted sends and history replay',()=>{
   const outbox=require('../src/features/help/helpOutbox');
   const accepted={...detail,messages:[{id:100,ticketId:7,sequence:100,clientMessageId:'qa-send'}],lastSequence:100,hasOlder:true,hasNewer:false};
   beforeEach(()=>{
+    mockAccountRefresh.mockReset().mockResolvedValue(undefined);
     const cache=helpViewCache('https://dev.example.test:5:true');cache.lists.clear();cache.windows.clear();
     mockApi.config.mockResolvedValue({canManage:false});mockApi.list.mockResolvedValue({tickets:[],nextCursor:null});
     mockApi.detail.mockResolvedValue(detail);
@@ -44,6 +50,14 @@ describe('Help accepted sends and history replay',()=>{
   });
   afterEach(async()=>{if(screen)await act(async()=>screen.unmount());history.readCachedHelpTicket.mockReset().mockResolvedValue(null);history.readCachedHelpRange.mockReset().mockResolvedValue(detail.messages);storage.readHelpPending.mockReset().mockResolvedValue([]);});
   async function open(){await act(async()=>{screen=TestRenderer.create(React.createElement(Harness,{focused:true}));});await act(async()=>{await service.openTicket(7);});}
+  test('returning to Help catches a failed refresh without discarding the reading window',async()=>{
+    await open();const messages=service.messages;
+    await act(async()=>{screen.update(React.createElement(Harness,{focused:false}));});
+    mockAccountRefresh.mockRejectedValueOnce(new Error('Network request failed'));
+    await act(async()=>{screen.update(React.createElement(Harness,{focused:true}));});
+    expect(mockAccountRefresh).toHaveBeenCalledTimes(1);
+    expect(service.error).toBeNull();expect(service.messages).toBe(messages);expect(service.selectedTicket?.id).toBe(7);
+  });
   test('creation notifies the composer only after its durable write and before delivery completes',async()=>{
     await open();await act(async()=>service.clearSelection());
     let saved!:()=>void,delivered!:(value:any)=>void;
@@ -63,6 +77,20 @@ describe('Help accepted sends and history replay',()=>{
     const queued=jest.fn();
     await act(async()=>{await expect(service.createTicket({text:'QA retained draft'},queued)).rejects.toThrow('Outbox write failed');});
     expect(queued).not.toHaveBeenCalled();expect(outbox.dispatchHelpPending).not.toHaveBeenCalled();
+  });
+  test('a logical send captures its source page before asynchronous storage and navigation can change it',async()=>{
+    await open();await act(async()=>service.clearSelection());
+    outbox.dispatchHelpPending.mockResolvedValue(accepted);
+    const scope='https://dev.example.test:5';helpOriginTracker.observe('','home',undefined);helpOriginTracker.observe(scope,'orders/[id]',undefined);
+    let release!:(value:any[])=>void;
+    storage.readHelpPending.mockImplementationOnce(()=>new Promise<any[]>(resolve=>{release=resolve;}));
+    let request!:ReturnType<typeof service.createTicket>;
+    await act(async()=>{request=service.createTicket({text:'QA context snapshot'});});
+    helpOriginTracker.observe(scope,'profile',undefined);
+    await act(async()=>{release([]);await request;});
+    const item=outbox.dispatchHelpPending.mock.calls.find(([,item]:any[])=>item.input.text==='QA context snapshot')[1];
+    expect(item.input.clientContext).toMatchObject({v:1,app:{platform:'android'},origin:{screen:'orders/[id]',state:'current'}});
+    expect(helpOriginTracker.read(scope)?.screen).toBe('profile');
   });
   test('accepted text replaces an older window with its server-confirmed tail',async()=>{
     await open();let done!:(value:any)=>void;outbox.dispatchHelpPending.mockReturnValue(new Promise(resolve=>{done=resolve;}));

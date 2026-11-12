@@ -31,4 +31,16 @@ describe('native dock controls ABI compatibility',()=>{
     if(version)expect(props.reducedMotion).toBe(version!==3);
     else expect(props).not.toHaveProperty('reducedMotion');
   });
+  test.each([false,true])('registers the empty hint only when the native IME owner supports it (%s)',async(capable)=>{
+    mockNativeModule={imeInsetsVersion:5,tailMotionVersion:3,...(capable?{emptyHintMotionVersion:1}:{})};
+    let Component!:React.ComponentType<any>;
+    jest.isolateModules(()=>{const module=require('../src/features/help/components/HelpNativeChatLayout');Component=module.HelpNativeChatLayout;expect(module.hasNativeEmptyHintMotion).toBe(capable);});
+    await act(async()=>{tree=TestRenderer.create(React.createElement(Component,{scrollId:'scroll',dockId:'dock',emptyHintId:'hint'}));});
+    const native=()=>tree!.root.findByType('NativeChatLayout' as any).props;
+    if(capable)expect(native().emptyHintId).toBe('hint');
+    else expect(native()).not.toHaveProperty('emptyHintId');
+    await act(async()=>tree!.update(React.createElement(Component,{scrollId:'scroll',dockId:'dock'})));
+    if(capable)expect(native().emptyHintId).toBe('');
+    else expect(native()).not.toHaveProperty('emptyHintId');
+  });
 });

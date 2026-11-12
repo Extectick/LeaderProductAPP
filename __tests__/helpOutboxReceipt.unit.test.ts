@@ -24,6 +24,18 @@ test('failed requests retain retry data and never paint a delivered receipt',asy
   expect(mockSave).toHaveBeenLastCalledWith(1,expect.objectContaining({key:'offline',status:'queued',attempts:1}));
 });
 
+test('offline replay retains the original diagnostic and page snapshot with the same logical message',async()=>{
+ const context={v:1 as const,app:{platform:'android',version:'0.1.46.19'},origin:{screen:'orders/[id]',capturedAt:'2026-11-05T10:00:00.000Z',state:'previous' as const}};
+ const item={...operation('client-context-retry'),input:{...operation('client-context-retry').input,clientContext:context}};
+ mockSend.mockRejectedValueOnce(new Error('offline'));
+ await expect(dispatchHelpPending(1,item)).rejects.toThrow('offline');
+ const retained=mockSave.mock.calls.at(-1)![1];
+ expect(retained.input.clientContext).toEqual(context);
+ mockSend.mockResolvedValue({ticket:{id:17},messages:[]});
+ await dispatchHelpPending(1,retained);
+ expect(mockSend.mock.calls).toEqual([[17,expect.objectContaining({clientMessageId:item.key,clientContext:context})],[17,expect.objectContaining({clientMessageId:item.key,clientContext:context})]]);
+});
+
 test('UI observer failure cannot interrupt durable confirmation or trigger retry',async()=>{
   mockSend.mockResolvedValue({ticket:{id:17},messages:[]});
   await dispatchHelpPending(1,operation('observer'),()=>{throw Error('unmounted view');});

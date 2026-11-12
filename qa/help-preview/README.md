@@ -4,6 +4,75 @@ This isolated Expo project imports the **real** HelpMessageBubble, HelpComposer,
 HelpMedia and ThemeProvider. It never imports AuthContext, useHelpService, the
 production app entry, API or notification/socket bridges. All messages and
 actions stay in the local fixture cache on this device. No accounts, credentials or API calls are used.
+The opt-in real-hook regression mode below uses a separate entry and memory-only adapters.
+
+## Cold-route regression with the real service hook
+
+Set `HELP_QA_REAL_SERVICE=1` **only for this QA Metro project**. This switches off
+the `useHelpService` fixture alias. `HelpScreen`, `useHelpService`, `helpApi`, the
+history implementation, Timeline and Entry are real. Auth, API transport and
+account sync are local synthetic adapters; AsyncStorage is replaced with a new
+in-memory map on every page load. Existing credentials, drafts and queues are
+never read, changed or cleared. Unsupported API operations fail locally.
+
+```sh
+. /home/extectick/LeaderProduct/.dev-runtime/env.sh
+cd /home/extectick/LeaderProduct/LeaderProductAPP/qa/help-preview
+HELP_QA_REAL_SERVICE=1 EXPO_OFFLINE=1 BROWSER=none ../../node_modules/.bin/expo start --web --host localhost --port 8125 --clear
+```
+
+Choose an unused QA port; do not restart main Metro or another QA session.
+This mode is browser-only. Omit the environment variable to retain the normal
+visual fixture, including its existing persistence and controls.
+
+Open `/services/help?ticketId=6`, hard-refresh, then repeat with `77` at 1280px
+and 390px viewport widths. The route must show its four synthetic messages,
+not stay at “Открываем обращение”. `/services/help` opens the list; choosing
+6, 74, 77 or 1042 then exercises ordinary list navigation. No `screen` or `width`
+query parameters are needed. The root has `data-testid="help-qa-real-service"`;
+message text is `QA #6 · Сообщение …` (or the chosen ticket number).
+
+The existing dev probe includes a transport/account audit without message data:
+
+```js
+const snapshot = await __LEADER_HELP_DEV__.snapshot({
+  geometry: false,
+  probes: ['qa.realService'],
+});
+snapshot.native['qa.realService']; // mode, syntheticOnly, request paths/status, account counts
+```
+
+Before the route-effect fix, the hook's mount effect cancels the selection that
+the screen initiated in its layout effect. This mode deliberately does not add
+delays, seed a warm cache or wrap the real hook to hide that ordering.
+
+## HTML card reload regression
+
+Use `HELP_QA_HTML=1` instead of `HELP_QA_REAL_SERVICE=1` with the same launch
+command and a free QA port. This entry renders the actual `HelpHtmlMessage`,
+Markdown and iframe surface. Its synthetic profile artifact has `height:128px`;
+artifact loading takes 700 ms and the separate authenticated entity image step
+takes 1300 ms. Both steps are local promises, without HTTP or credentials.
+Override them with `?artifactDelay=700&imageDelay=1300` (0–10000 ms).
+
+1. Hard-refresh at 390px and 1280px widths. Inspect the cold placeholder, then
+   the height after artifact parsing while the entity image is still pending.
+2. Wait for the image, then press **Перемонтировать строку** several times. This
+   changes the real message's React key; the scoped cache provider remains above
+   it. **Скрыть строку / Показать строку** also fully unmounts/remounts the row.
+3. Inspect request counts and the bounded DOM geometry/placeholder log:
+
+```js
+await __LEADER_HELP_DEV__.act('fixture.html.remount');
+const snapshot = await __LEADER_HELP_DEV__.snapshot({geometry:false,probes:['qa.html']});
+snapshot.native['qa.html'];
+```
+
+The probe reports artifact/image started/completed/aborted counts and samples of
+the actual compact container's height, iframe count and loading indicators.
+It does not replace the message or surface with a test drawing. The initial
+height is deliberately absent from attachment metadata so the cold fallback is
+tested honestly. Refresh starts a new in-memory cache and synthetic account.
 
 From this directory, with the parent's existing node_modules (no installation):
 
@@ -14,6 +83,12 @@ npm start
 
 Default URL: http://localhost:8100/?theme=dark&width=390
 
+Responsive checks use `width=auto`, then resize the browser to 390, 900 and
+1440 px. Add `shell=1` to `screen=services` or `screen=chat` to include the actual
+WebSidebar with fixture routing/access. `screen=html&width=auto` opens a local
+HTML sample in the real viewer, including expand/collapse, resize and Escape.
+These routes are QA entry points only, never production application routes.
+
 - `?theme=light&width=320` tests compact/light layout.
 - `?theme=dark&width=390&composer=long` starts with an overflowing composer.
 - `?theme=dark&width=390&screen=list` renders the real **HelpScreen** list.
@@ -22,6 +97,9 @@ Default URL: http://localhost:8100/?theme=dark&width=390
   Metro aliases only HelpScreen's service hook/router imports to in-memory QA
   fixtures. Production resolution and auth remain unchanged. List/archive/chat
   transitions and local actions work, but this does not test the real service.
+- `?theme=light&width=360&height=800&screen=chat&ticketId=1043&questions=1`
+  opens the current three-question panel immediately. This demo uses memory only;
+  it neither loads nor overwrites saved fixture conversations or drafts.
 - Exact prototype snapshot: `?screen=list&theme=dark&width=393&height=852&insetTop=54&insetBottom=34`.
   `height` fixes the surface height without flex shrinking; insets are supplied
   only to the real screen's QA context. Capture a **full-page** screenshot and
@@ -168,6 +246,14 @@ Windows emulator use the LAN Metro binding with
 `REACT_NATIVE_PACKAGER_HOSTNAME=127.0.0.1` and `adb reverse tcp:8100 tcp:8100`.
 
 - `fixture.history=600`, `fixture.history.jump=202`: paged deterministic history.
+- `fixture.history.mixed`: 57 synthetic messages on one day, grouped short replies,
+  completed AI replies, closure/system rows, local images and audio. Changes only
+  the selected fixture ticket (1042 by default); keeps drafts. Use normal Back/Open
+  to capture scene remounts; `fixture.history.reopen` reloads only the service window.
+- `fixture.it.waiting=true` in an open chat: waiting-for-IT dock with the
+  “Продолжить с AI” capsule. `fixture.latency=1500` exposes its busy state;
+  `fixture.offline=true` keeps the capsule after a simulated failed return.
+  The fixture action and return operate only on synthetic local chat state.
 - `timeline.date`: jump to the first message of the visible local date.
 - `fixture.unread`, `fixture.incoming`, `fixture.offline`/`fixture.online`:
   unread/opening, tail-follow and reconnect cases.
@@ -192,9 +278,17 @@ and a streamed test answer. No model or backend is contacted. Follow-up messages
 in these newly created tickets start another run; existing IT fixtures retain
 their original behavior.
 
+On Android the isolated QA entry starts new local tickets in the clarification
+scenario for question-motion checks. Web keeps the normal-answer default. Existing
+saved QA conversations are retained; this default does not affect the application.
+
 The chat ellipsis menu (also available on the empty new-ticket screen) selects
 the scenario for the next message: normal answer, slow analysis, clarification,
-or error. While processing, the empty composer shows Stop; entering text switches
+or error.
+The clarification scenario uses the current structured three-question contract:
+single choice, multiple choice, then free text in the existing composer. It shows
+the real question panel, editable review and final send, with local data only.
+While processing, the empty composer shows Stop; entering text switches
 to Send so the user can submit a correction. Corrections keep the task ID and
 previous input context, retire old progress, and place updated progress below
 the new user message. Superseded empty progress rows are hidden. Stopping shows

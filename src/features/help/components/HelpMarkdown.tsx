@@ -2,10 +2,10 @@ import React, { memo, useMemo } from 'react';
 import { Alert, Linking, Platform, ScrollView, Text, View } from 'react-native';
 import {helpMarkdownParser as markdown} from '../helpMarkdownModel';
 import { useHelpTheme } from '../helpTheme';
-import {parseEntityLink} from '@/src/shared/entityLinks';
+import {classifyAppLink,openAppLink} from '@/src/shared/appLinks';
 import {useEntityCards} from '@/src/features/entityCards/EntityCardContext';
-import {parseHelpHtmlLink} from '../helpHtml';
 import {useHelpHtml} from './HelpHtmlContext';
+import {helpChatDestination} from '../helpChatLink';
 
 // Native text/layout only: no WebView, HTML execution or remote image requests.
 type Token = ReturnType<typeof markdown.parse>[number];
@@ -20,10 +20,8 @@ function tree(tokens: Token[]): Node[] {
   }
   return root;
 }
-function safeLink(url: string) { return /^(?:https?:\/\/|mailto:)/i.test(url); }
-async function openLink(url: string) {
-  if (!safeLink(url)) return;
-  try { await Linking.openURL(url); } catch { Alert.alert('Не удалось открыть ссылку'); }
+async function openSystemLink(url: string) {
+ try { await Linking.openURL(url); } catch { Alert.alert('Не удалось открыть ссылку'); }
 }
 
 /** Shared by saved, live and legacy AI answers; partial Markdown is valid while streaming. */
@@ -31,7 +29,7 @@ export const HelpMarkdown = memo(function HelpMarkdown({ text }: { text: string 
   const c = useHelpTheme(), nodes = useMemo(() => tree(markdown.parse(text, {})), [text]);
   const entities=useEntityCards(),html=useHelpHtml();
   const mono = Platform.OS === 'ios' ? 'Menlo' : 'monospace';
-  const body = { color: c.text, fontSize: 15, lineHeight: 22, includeFontPadding: false };
+  const body = { color: c.text, fontSize: 15, lineHeight: 24, includeFontPadding: false };
   function inline(items: Node[]): React.ReactNode[] {
     return items.map(({ token: t, children }, key) => {
       const content = () => inline(children);
@@ -44,14 +42,22 @@ export const HelpMarkdown = memo(function HelpMarkdown({ text }: { text: string 
         case 'code_inline': return <Text key={key} style={{ fontFamily: mono, backgroundColor: c.elevated }}>{t.content}</Text>;
         case 'link_open': {
           const url = String(t.attrGet('href') || '');
-          const artifactId=parseHelpHtmlLink(url);
-          if(artifactId)return html?.canOpen(artifactId)?<Text key={key} accessibilityRole="link" accessibilityHint="Открыть HTML-пример в приложении" onPress={()=>html.open(artifactId)} style={{color:c.accentText,textDecorationLine:'underline'}}>{content()}</Text>:<Text key={key}>{content()}</Text>;
-          const target=parseEntityLink(url);
-          if(target){
-            const label=(items:Node[]):string=>items.map(item=>item.children.length?label(item.children):item.token.content).join('');
-            return <Text key={key} accessibilityRole="link" accessibilityHint="Открыть карточку в приложении" onPress={()=>{if(!entities.openEntity(target,label(children)))Alert.alert('Карточка недоступна',entities.status==='authentication-required'?'Для просмотра войдите в приложение.':entities.status==='blocked'?'Учётная запись заблокирована.':'Не удалось подключить просмотр карточек. Полностью перезагрузите приложение; в development client используйте Reload.');}} style={{color:c.accentText,textDecorationLine:'underline'}}>{content()}</Text>;
-          }
-          return safeLink(url) ? <Text key={key} accessibilityRole="link" accessibilityHint="Открыть ссылку" onPress={() => void openLink(url)} style={{ color: c.accentText, textDecorationLine: 'underline' }}>{content()}</Text> : <Text key={key}>{content()}</Text>;
+          const mailDraft=/^leaderproduct:\/\/mail\/draft\/([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.exec(url);
+          if(mailDraft)return <Text key={key} accessibilityRole="link" accessibilityHint="Проверить письмо перед отправкой" onPress={()=>{const {router}=require('expo-router') as typeof import('expo-router');router.navigate({pathname:'/services/help/mail' as any,params:{draftId:mailDraft[1]}});}} style={{color:c.accentText,textDecorationLine:'underline'}}>{content()}</Text>;
+          const destination=classifyAppLink(url);
+          if(!destination||destination.kind==='html'&&!html?.canOpen(destination.id))return <Text key={key}>{content()}</Text>;
+          const label=(items:Node[]):string=>items.map(item=>item.children.length?label(item.children):item.token.content).join('');
+          const hint=destination.kind==='chat'?'Открыть чат в приложении':(destination.kind==='html'||destination.kind==='help-destination')?'Открыть HTML-пример в приложении':destination.kind==='entity'?'Открыть карточку в приложении':destination.kind==='web'?'Открыть сайт в приложении':'Открыть ссылку';
+          return <Text key={key} accessibilityRole="link" accessibilityHint={hint} onPress={()=>{
+            const opened=openAppLink(url,{
+              openEntity:entities.openEntity,openWeb:entities.openWeb,
+              canOpenHtml:html?.canOpen,openHtml:html?.open,
+              openHelpDestination:destination=>{const {router}=require('expo-router') as typeof import('expo-router');router.navigate({pathname:'/services/help',params:{ticketId:String(destination.ticketId),messageId:destination.messageId===undefined?undefined:String(destination.messageId),htmlId:destination.htmlId,eventId:undefined}});},
+              openChat:ticketId=>{const {router}=require('expo-router') as typeof import('expo-router');router.navigate(helpChatDestination(ticketId));},
+              openSystem:target=>void openSystemLink(target),
+            },label(children));
+            if(!opened)Alert.alert(destination.kind==='web'?'Просмотр сайта недоступен':'Карточка недоступна',entities.status==='authentication-required'?'Для просмотра войдите в приложение.':entities.status==='blocked'?'Учётная запись заблокирована.':'Не удалось подключить просмотр. Полностью перезагрузите приложение; в development client используйте Reload.');
+          }} style={{color:c.accentText,textDecorationLine:'underline'}}>{content()}</Text>;
         }
         case 'image': return <Text key={key}>{t.content || 'Изображение'}</Text>;
         default: return children.length ? <Text key={key}>{content()}</Text> : t.content;
@@ -62,7 +68,7 @@ export const HelpMarkdown = memo(function HelpMarkdown({ text }: { text: string 
     return items.map(({ token: t, children }, key) => {
       switch (t.type) {
         case 'inline': return <Text key={key} selectable style={body}>{inline(children)}</Text>;
-        case 'paragraph_open': return <Text key={key} selectable style={{ ...body, marginVertical: tight ? 0 : 3 }}>{children.map(n => inline(n.children))}</Text>;
+        case 'paragraph_open': return <Text key={key} selectable style={{ ...body, marginVertical: tight ? 0 : 5 }}>{children.map(n => inline(n.children))}</Text>;
         case 'heading_open': {
           const level = Number(t.tag.slice(1));
           return <Text key={key} selectable accessibilityRole="header" style={{ ...body, fontSize: Math.max(16, 24 - level * 2), lineHeight: Math.max(24, 30 - level * 2), fontWeight: '700', marginTop: 8, marginBottom: 4 }}>{children.map(n => inline(n.children))}</Text>;

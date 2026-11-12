@@ -1,4 +1,5 @@
 import { AppState, Platform } from 'react-native';
+import { withDeadline } from '@/src/shared/network/withDeadline';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {subscribePushRegistrationChanges} from '@/utils/pushRegistrationEvents';
 import type { Socket } from 'socket.io-client';
@@ -11,6 +12,7 @@ import { helpHistoryScope } from './helpHistory';
 import { readAccountValue, writeAccountChanges, readHistoryRecord, listHistoryRecords, listHistoryTicketIds, removeHistoryTicket, maintainHelpHistory,resetHelpDownloadedState } from './helpHistoryDatabase';
 import { readHelpPending, helpClientId } from './helpStorage';
 import { dispatchHelpPending } from './helpOutbox';
+import type {HelpConnectionSnapshot,HelpTransportPhase} from './helpConnectionState';
 export type HelpAccountNotice = {
     type: 'event';
     event: HelpEvent;
@@ -30,7 +32,7 @@ export type HelpAccountNotice = {
     error: unknown;
 } | {
     type: 'outbox';
-} | {type:'healthy';};
+} | {type:'healthy';} | {type:'connection-state';state:HelpConnectionSnapshot};
 type Listener = (notice: HelpAccountNotice) => void;
 type Account = ReturnType<typeof createAccount>;
 const accounts = new Map<string, Account>();
@@ -39,6 +41,12 @@ function foreground() { return Platform.OS === 'web' ? typeof document !== 'unde
 function createAccount(userId: number) {
     const api = createHelpApi(userId), scope = helpHistoryScope(userId), listeners = new Set<Listener>(), sessionId = helpClientId();
     let alive = true, refs = 0, replay: Promise<void> | null = null, again = false, deviceId = '', pushToken: string | null = null, maintenanceAt = 0, ticketId: number | null = null, active = foreground();
+    let subscribedSocket: Socket | null = null, observedSocket: Socket | null = null;
+    let cancelProbe: (() => void) | null = null, recoveryTimer: ReturnType<typeof setTimeout> | null = null;
+    let probeSubscription: ((quick?:boolean) => void) | null = null, lastRecoveryAt = -Infinity, lastWakeAt = -Infinity;
+    let visible=foreground();
+    let recoveryReplayRequested=false;
+    let connectionState:HelpConnectionSnapshot={transport:visible?'connecting':'paused',sync:'idle'};
     const liveEvents = new Set<number>();
     const jobs = new Map<number, Promise<HelpHistoryChange[]>>();
     const emit = (notice: HelpAccountNotice) => { if (alive)
@@ -48,15 +56,21 @@ function createAccount(userId: number) {
             }
             catch { /* One observer cannot break persistence. */ }
         } };
+    const updateConnection=(next:Partial<HelpConnectionSnapshot>)=>{
+        if(!alive)return;
+        const value={...connectionState,...next};
+        if(value.transport===connectionState.transport&&value.sync===connectionState.sync)return;
+        connectionState=value;emit({type:'connection-state',state:value});
+    };
     const valid = () => alive;
     let presenceTail:Promise<boolean>=Promise.resolve(false);
     const persistPresence=()=>{
         const work=presenceTail.catch(()=>false).then(async()=>{
-            try{pushToken=await AsyncStorage.getItem('pushToken');}catch{}
+            try{pushToken=await withDeadline(AsyncStorage.getItem('pushToken'),5000);}catch{}
             const socket=connection.getSocket();if(!alive||!socket?.connected)return false;
             return new Promise<boolean>(resolve=>{
                 const timer=setTimeout(()=>resolve(false),1000);
-                socket.emit('help:presence',{sessionId,deviceId:deviceId||sessionId,pushToken:pushToken??undefined,active:active&&foreground(),ticketId:active&&foreground()?ticketId:null},(reply:{ok?:boolean})=>{clearTimeout(timer);resolve(Boolean(reply?.ok));});
+                socket.emit('help:presence',{sessionId,deviceId:deviceId||sessionId,pushToken:pushToken??undefined,active:active&&foreground(),ticketId:active&&foreground()?ticketId:null},(reply:{ok?:boolean})=>{clearTimeout(timer);resolve(Boolean(alive && connection.getSocket() === socket && socket.connected && reply?.ok));});
             });
         });presenceTail=work;return work;
     };
@@ -138,6 +152,9 @@ function createAccount(userId: number) {
             again = true;
             return replay;
         }
+        updateConnection({sync:'syncing'});
+        recoveryReplayRequested=false;
+        let failed=false;
         const work = (async () => {
             do {
                 again = false;
@@ -207,20 +224,94 @@ function createAccount(userId: number) {
         replay = work;
         try {
             await work;
+            updateConnection({sync:'idle'});
+        }
+        catch(error) {
+            failed=true;
+            updateConnection({sync:'error'});
+            throw error;
         }
         finally {
             if (replay === work)
                 replay = null;
+            // A foreground wake may have joined a request started before sleep.
+            // If that request fails, service the wake only after all previous
+            // work settled; never overlap persistence or reset durable cursors.
+            const retry=failed&&recoveryReplayRequested;
+            recoveryReplayRequested=false;
+            if(retry&&alive&&foreground())safelyRefresh();
         }
     }
     const safelyRefresh = () => { void refresh().catch(error => emit({ type: 'error', error })); };
+    const setSubscribed = (socket: Socket | null, phase:HelpTransportPhase=foreground()?'connecting':'paused') => {
+        const wasConnected = subscribedSocket !== null;
+        subscribedSocket = socket;
+        if (wasConnected !== (socket !== null)) emit({ type: 'connected', connected: socket !== null });
+        updateConnection({transport:socket?'ready':phase});
+    };
+    // This requests recovery from the socket owner; it does not create a second
+    // reconnect loop. Throttle rejected ACKs and repeated user taps alike.
+    const replaceUnresponsiveSocket = () => {
+        if (!alive || !foreground() || recoveryTimer) return;
+        cancelProbe?.(); setSubscribed(null,'offline');
+        const delay = Math.max(0, 5000 - (Date.now() - lastRecoveryAt));
+        recoveryTimer = setTimeout(() => {
+            recoveryTimer = null;
+            if (!alive || !foreground()) return;
+            lastRecoveryAt = Date.now();
+            connection.recover?.({reason:'subscription',replaceConnected:true});
+            safelyRefresh();
+        }, delay);
+    };
+    const wake=(reason:'manual'|'foreground'|'online')=>{
+        if(!alive||!foreground()||Date.now()-lastWakeAt<500)return;
+        lastWakeAt=Date.now();
+        // This accelerates a disconnected transport/auth retry. Only a failed
+        // application ACK below may replace an already connected transport.
+        connection.recover?.({reason});
+        if(connection.getSocket()?.connected)probeSubscription?.(true);
+        else updateConnection({transport:'connecting'});
+        if(replay)recoveryReplayRequested=true;
+        safelyRefresh();
+    };
+    const recover=()=>wake('manual');
     const connection = createHelpSocket(userId, socket => {
-        socket.on('connect', () => { socket.emit('help:subscribe', {}, (ack: {
-            ok?: boolean;
-        }) => { if (!ack?.ok)
-            return; persistPresence(); safelyRefresh(); }); emit({ type: 'connected', connected: true }); });
-        socket.on('disconnect', () => emit({ type: 'connected', connected: false }));
-        socket.on('help:event', (event: HelpEvent) => { if (!Number.isSafeInteger(event?.id) || !Number.isSafeInteger(event?.ticketId))
+        cancelProbe?.();
+        observedSocket = socket;
+        setSubscribed(null);
+        const current = () => alive && observedSocket === socket && connection.getSocket() === socket;
+        probeSubscription = (quick=false) => {
+            if (!current() || !socket.connected || !foreground() || cancelProbe) return;
+            if(quick)updateConnection({transport:'checking'});
+            let pending = true;
+            const cancel = () => {
+                pending = false; clearTimeout(timer);
+                if (cancelProbe === cancel) cancelProbe = null;
+            };
+            const finish = (ok: boolean) => {
+                if (!pending) return;
+                cancel();
+                if (!current() || !socket.connected) return;
+                if (!ok) { replaceUnresponsiveSocket(); return; }
+                const first = subscribedSocket !== socket;
+                if (recoveryTimer) clearTimeout(recoveryTimer);
+                recoveryTimer = null;
+                setSubscribed(socket);
+                if (first) { void persistPresence(); safelyRefresh(); }
+            };
+            const timer = setTimeout(() => finish(false), quick?3000:5000);
+            cancelProbe = cancel;
+            try { socket.emit('help:subscribe', {}, (ack: { ok?: boolean }) => finish(ack?.ok === true)); }
+            catch { finish(false); }
+        };
+        socket.on('connect', () => { if (current()) probeSubscription?.(); });
+        socket.on('disconnect', () => {
+            // The token owner may detach its old connection before disconnect().
+            // Observed identity still distinguishes it from a replaced socket.
+            if (!alive || observedSocket !== socket) return;
+            cancelProbe?.(); setSubscribed(null);
+        });
+        socket.on('help:event', (event: HelpEvent) => { if (!current() || !Number.isSafeInteger(event?.id) || !Number.isSafeInteger(event?.ticketId))
             return; liveEvents.add(event.id); if (liveEvents.size > 1000)
             liveEvents.delete(liveEvents.values().next().value!); safelyRefresh(); });
     });
@@ -229,20 +320,39 @@ function createAccount(userId: number) {
         await AsyncStorage.setItem('help:device-id:v1', deviceId); persistPresence(); }).catch(error => emit({ type: 'error', error }));
     const stopPushRegistrationObserver=subscribePushRegistrationChanges(()=>{void persistPresence().catch(error=>emit({type:'error',error}));});
     void persistPresence();
-    const state = AppState.addEventListener('change', () => { persistPresence(); if (foreground())
-        safelyRefresh(); });
-    const heartbeat = setInterval(() => { persistPresence(); if (foreground())
-        safelyRefresh(); }, 15000);
+    const visibilityChanged=()=>{
+        const next=foreground();
+        if(next===visible)return;
+        visible=next;
+        void persistPresence();
+        if (visible) wake('foreground');
+        else {
+            lastWakeAt=-Infinity;cancelProbe?.(); setSubscribed(null,'paused');
+            if (recoveryTimer) clearTimeout(recoveryTimer);
+            recoveryTimer = null;
+        }
+    };
+    const state = AppState.addEventListener('change', visibilityChanged);
+    const online=()=>wake('online'),focus=()=>{visibilityChanged();wake('foreground');};
+    if(Platform.OS==='web'&&typeof document!=='undefined'&&typeof window!=='undefined'){
+        document.addEventListener('visibilitychange',visibilityChanged);
+        window.addEventListener('online',online);window.addEventListener('focus',focus);
+    }
+    const heartbeat = setInterval(() => { if (foreground()) { void persistPresence(); probeSubscription?.(); safelyRefresh(); } }, 15000);
     const outboxTimer = setInterval(() => { if (foreground())
         void flushOutbox().catch(error => emit({ type: 'error', error })); }, 5000);
     safelyRefresh();
-    return { sessionId, listeners, getSocket: () => connection.getSocket(), refresh, syncTicket: async (id: number) => { await syncTicket(id); }, presence: (value: {
+    return { sessionId, listeners, getConnectionState:()=>connectionState, getSocket: () => connection.getSocket(), isConnected: () => Boolean(alive && subscribedSocket && subscribedSocket === connection.getSocket() && subscribedSocket.connected), recover, refresh, syncTicket: async (id: number) => { await syncTicket(id); }, presence: (value: {
             active: boolean;
             ticketId: number | null;
         }) => { active = value.active; ticketId = value.ticketId; persistPresence(); },
         acknowledge: (eventId: number, kind: 'chat' | 'banner') => { void persistPresence().then(ok=>{if(ok&&alive)connection.getSocket()?.emit('help:notification-ack',{eventId,sessionId,kind});}); },
         retain: () => { refs++; }, release: () => { if (--refs > 0)
-            return; alive = false; stopPushRegistrationObserver(); connection.disconnect(); state.remove(); clearInterval(heartbeat); clearInterval(outboxTimer); accounts.delete(keyFor(userId)); } };
+            return; alive = false; cancelProbe?.(); if (recoveryTimer) clearTimeout(recoveryTimer); subscribedSocket = null; observedSocket = null; stopPushRegistrationObserver(); connection.disconnect(); state.remove();
+            if(Platform.OS==='web'&&typeof document!=='undefined'&&typeof window!=='undefined'){
+                document.removeEventListener('visibilitychange',visibilityChanged);window.removeEventListener('online',online);window.removeEventListener('focus',focus);
+            }
+            clearInterval(heartbeat); clearInterval(outboxTimer); accounts.delete(keyFor(userId)); } };
 }
 export function acquireHelpAccount(userId:number,listener:Listener){
     let account=accounts.get(keyFor(userId));
@@ -253,9 +363,10 @@ export function acquireHelpAccount(userId:number,listener:Listener){
     // Defer delivery so callbacks may safely reference the returned lease.
     void Promise.resolve().then(()=>{
         if(released||!current.listeners.has(listener))return;
-        try{listener({type:'connected',connected:Boolean(current.getSocket()?.connected)});}catch{/* Isolate observers like live delivery does. */}
+        try{listener({type:'connected',connected:current.isConnected()});}catch{/* Isolate observers like live delivery does. */}
+        if(!released&&current.listeners.has(listener))try{listener({type:'connection-state',state:current.getConnectionState()});}catch{/* Isolate observers. */}
     });
-    return {sessionId:current.sessionId,getSocket:current.getSocket,refresh:current.refresh,syncTicket:current.syncTicket,release:()=>{
+    return {sessionId:current.sessionId,getSocket:current.getSocket,isConnected:current.isConnected,getConnectionState:current.getConnectionState,recover:current.recover,refresh:current.refresh,syncTicket:current.syncTicket,release:()=>{
         if(released)return;released=true;current.listeners.delete(listener);current.release();
     }};
 }

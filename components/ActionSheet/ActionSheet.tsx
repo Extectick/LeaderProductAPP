@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import {
   BackHandler,
@@ -7,6 +7,7 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import Animated, {
@@ -19,20 +20,28 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ActionSheetProps } from './types';
-
-const isWeb = Platform.OS === 'web';
+import {APP_LAYOUT} from '@/src/shared/layout/appLayout';
+import {useAppSurfaceTheme} from '../ui/appSurfaceTokens';
+import {APP_WEB_FONT,appWebControlProps,appWebControlContentProps} from '../ui/appWebInteraction';
+import {AppDesktopDialog} from '../ui/AppDesktopDialog';
 
 const SPRING = { mass: 0.5, damping: 18, stiffness: 220 };
 const BACKDROP_IN = 220;
 const BACKDROP_OUT = 160;
 
 const ActionSheet: React.FC<ActionSheetProps> = ({ visible, buttons, onClose }) => {
+  const isWeb=Platform.OS==='web';
   const insets = useSafeAreaInsets();
+  const {width}=useWindowDimensions(),c=useAppSurfaceTheme();
+  const desktopWeb=isWeb&&width>APP_LAYOUT.compactMax;
+  const closing=useRef(false);
+  useEffect(()=>{if(visible)closing.current=false;},[visible]);
   const progress = useSharedValue(0);
   const translateY = useSharedValue(0);
   const sheetHeight = useSharedValue(420);
 
   useEffect(() => {
+    if(desktopWeb)return;
     if (visible) {
       translateY.value = sheetHeight.value;
       progress.value = withTiming(1, { duration: BACKDROP_IN });
@@ -41,9 +50,12 @@ const ActionSheet: React.FC<ActionSheetProps> = ({ visible, buttons, onClose }) 
       progress.value = withTiming(0, { duration: BACKDROP_OUT });
       translateY.value = withTiming(sheetHeight.value, { duration: 220 });
     }
-  }, [visible, progress, sheetHeight, translateY]);
+  }, [visible, desktopWeb, progress, sheetHeight, translateY]);
 
-  const closeSheet = useCallback(() => onClose?.(), [onClose]);
+  const closeSheet = useCallback(() => {
+    if(!visible||closing.current)return;
+    closing.current=true;onClose();
+  }, [visible,onClose]);
 
   // Пан-жест только на native
   const pan = !isWeb
@@ -133,6 +145,14 @@ const ActionSheet: React.FC<ActionSheetProps> = ({ visible, buttons, onClose }) 
 
   if (!visible) return null;
 
+  if(desktopWeb)return <AppDesktopDialog title="Действия" onClose={closeSheet} maxWidth={480} testID="action-sheet-dialog" contentStyle={{gap:8}}
+    footer={<Pressable {...appWebControlProps('subtle')} accessibilityRole="button" accessibilityLabel="Отмена" onPress={closeSheet} style={({pressed})=>({minHeight:48,borderRadius:12,backgroundColor:pressed?c.soft:c.panel,alignItems:'center',justifyContent:'center',paddingHorizontal:16})}><Text {...appWebControlContentProps()} style={{color:c.accentText,fontSize:15,fontWeight:'500',fontFamily:APP_WEB_FONT}}>Отмена</Text></Pressable>}>
+    {buttons.map((button,index)=><Pressable {...appWebControlProps('row')} key={`${button.title}-${index}`} accessibilityRole="button" accessibilityLabel={button.title} onPress={()=>{if(closing.current)return;button.onPress();closeSheet();}} style={({pressed})=>({minHeight:48,flexDirection:'row',alignItems:'center',gap:12,borderRadius:12,paddingHorizontal:16,paddingVertical:12,backgroundColor:pressed?c.soft:c.panel})}>
+      {button.icon?<Ionicons {...(button.destructive?{}:appWebControlContentProps())} name={button.icon} size={21} color={button.destructive?c.danger:c.accentText}/>:null}
+      <Text {...(button.destructive?{}:appWebControlContentProps())} style={{flex:1,color:button.destructive?c.danger:c.text,fontSize:16,lineHeight:22,fontFamily:APP_WEB_FONT}}>{button.title}</Text>
+    </Pressable>)}
+  </AppDesktopDialog>;
+
   const SheetBody = ({ children }: any) =>
     isWeb ? <View>{children}</View> : <GestureDetector gesture={pan!}>{children}</GestureDetector>;
 
@@ -168,7 +188,7 @@ const ActionSheet: React.FC<ActionSheetProps> = ({ visible, buttons, onClose }) 
           ))}
 
           <Animated.View entering={FadeInDown.delay(40 + buttons.length * 30)}>
-            <ButtonItem title="Отмена" cancel onPress={closeSheet} />
+            <ButtonItem title="Отмена" cancel />
           </Animated.View>
         </Animated.View>
       </SheetBody>

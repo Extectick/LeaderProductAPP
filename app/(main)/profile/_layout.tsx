@@ -5,8 +5,10 @@ import { Appbar } from 'react-native-paper';
 import { useReducedMotion } from 'react-native-reanimated';
 import { ProfileDataProvider } from '@/src/features/profile/model/ProfileDataContext';
 import { isProfileSection, profileSections } from '@/src/features/profile/lib/presentation';
+import { useAppSurfaceTheme } from '@/components/ui/appSurfaceTokens';
 
 export default function ProfileLayout() {
+  const surface = useAppSurfaceTheme();
   const router = useRouter();
   const pathname = usePathname();
   const reduceMotion = useReducedMotion();
@@ -26,10 +28,10 @@ export default function ProfileLayout() {
     animation: reduceMotion ? 'none' : 'slide_from_right',
     header: ({ route }) => {
       const section = (route.params as { section?: string } | undefined)?.section;
-      return <Appbar.Header mode="small" elevated={false} style={{ backgroundColor: '#F8FAFC' }}>
-        <Appbar.BackAction onPress={goBack} color="#566982" accessibilityLabel="Назад" />
+      return <Appbar.Header mode="small" elevated={false} style={{ backgroundColor: section === 'onec' ? surface.background : '#F8FAFC' }}>
+        <Appbar.BackAction onPress={goBack} color={section === 'onec' ? surface.muted : '#566982'} accessibilityLabel="Назад" />
         <Appbar.Content title={isProfileSection(section) ? profileSections[section] : 'Профиль'}
-          titleStyle={{ color: '#0F172A', fontSize: route.name === 'index' ? 22 : 20, fontWeight: '700' }} />
+          titleStyle={{ color: section === 'onec' ? surface.text : '#0F172A', fontSize: route.name === 'index' ? 22 : 20, fontWeight: '700' }} />
       </Appbar.Header>;
     },
   }} /></ProfileDataProvider>;

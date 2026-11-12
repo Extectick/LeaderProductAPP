@@ -1,3 +1,6 @@
+jest.mock('@/context/AuthContext', () => ({AuthContext:require('react').createContext(null)}));
+jest.mock('expo-image', () => ({Image: 'Image'}));
+jest.mock('@/src/shared/avatar/useAvatarSource', () => ({useAvatarSource: ({uri}: {uri: string|null}) => ({source: uri ? {uri,cacheKey:uri} : null, refresh: async()=>false})}));
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 jest.mock('react-native', () => ({ View: 'View', Pressable: 'Pressable', Text: 'Text', StyleSheet: { create: (value: unknown) => value } }));

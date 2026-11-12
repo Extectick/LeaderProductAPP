@@ -34,13 +34,26 @@ export const ScreenBlurTarget = forwardRef<View, ViewProps>(function ScreenBlurT
   return <BlurTargetView {...props} ref={own} onLayout={event => { if (focused) bind(own.current); onLayout?.(event); }}>{children}</BlurTargetView>;
 });
 
-/** A transparent fade at the content edge; never paint an opaque loading plate. */
-export function AppEdgeBlur({ target, edge = 'top', backgroundColor, dark, testID = 'app-edge-blur', intensity = APP_EDGE_BLUR.intensity, featherSize }: {
+/** Portals own their visible lifetime independently from the retained route below. */
+export const AppBlurActivityContext = createContext<boolean | undefined>(undefined);
+type AppEdgeBlurProps = {
   target?: Target; edge?: 'top' | 'bottom'; backgroundColor?: string; dark?: boolean; testID?: string; intensity?: number; featherSize?: number;
-}) {
+};
+
+/** Keep navigation hooks outside the portal-owned rendering path. */
+export function AppEdgeBlur(props: AppEdgeBlurProps) {
+  const active = useContext(AppBlurActivityContext);
+  return active === undefined ? <RouteFocusedEdgeBlur {...props}/> : <EdgeBlurSurface {...props} active={active}/>;
+}
+function RouteFocusedEdgeBlur(props: AppEdgeBlurProps) {
+  const focused = useIsFocused();
+  return <EdgeBlurSurface {...props} active={focused}/>;
+}
+
+/** A transparent fade at the content edge; never paint an opaque loading plate. */
+function EdgeBlurSurface({ target, edge = 'top', backgroundColor, dark, testID = 'app-edge-blur', intensity = APP_EDGE_BLUR.intensity, featherSize, active: focused }: AppEdgeBlurProps & {active: boolean}) {
   const { theme } = useTheme();
   const appBackground = useThemeColor({}, 'background');
-  const focused = useIsFocused();
   const [surfaceHeight, setSurfaceHeight] = useState(0);
   const [boundTarget, setBoundTarget] = useState<Target>();
   useLayoutEffect(() => {

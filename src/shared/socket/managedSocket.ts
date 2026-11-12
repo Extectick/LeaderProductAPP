@@ -1,161 +1,167 @@
 import { io, type Socket } from 'socket.io-client';
 import { AppState, Platform } from 'react-native';
+import { withDeadline } from '@/src/shared/network/withDeadline';
 
 type ManagedSocketOptions = {
   url: string;
   loggerPrefix: string;
-  getAccessToken: () => Promise<string | null>;
-  refreshAccessToken: () => Promise<string | null>;
+  getAccessToken: (signal?: AbortSignal) => Promise<string | null>;
+  refreshAccessToken: (signal?: AbortSignal) => Promise<string | null>;
   onSocketReady: (socket: Socket) => void;
   reconnectDelayMs?: number;
+};
+
+export type ManagedSocketRecovery = {
+  reason?: 'manual' | 'foreground' | 'online' | 'subscription';
+  /** Only a failed application-level probe may replace a connected transport. */
+  replaceConnected?: boolean;
 };
 
 export type ManagedSocketConnection = {
   disconnect: () => void;
   getSocket: () => Socket | null;
+  /** Coalesced recovery; never creates a second concurrent transport. */
+  recover?: (options?: ManagedSocketRecovery) => void;
 };
 
-const DEFAULT_RECONNECT_DELAY_MS = 1200;
+const CONNECT_TIMEOUT_MS = 8_000;
+const TOKEN_TIMEOUT_MS = 15_000;
+const MAX_RETRY_MS = 30_000;
 
-function socketDebugEnabled() {
-  return process.env.EXPO_PUBLIC_SOCKET_DEBUG === 'true';
-}
-
+/** One owner for transport retries, foreground recovery and stale async work. */
 export function createManagedSocketConnection(options: ManagedSocketOptions): ManagedSocketConnection {
-  const reconnectDelayMs = options.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS;
-  let active = true;
+  let alive = true;
+  let generation = 0;
   let socket: Socket | null = null;
+  let connecting = false;
+  let failures = 0;
+  let refreshRequired = false;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
-  let authRetrying = false;
-  let loggedError = false;
-  let focusCleanup: (() => void) | null = null;
-  let focused = true;
-  let lastSentFocused: boolean | null = null;
+  let connectTimer: ReturnType<typeof setTimeout> | null = null;
+  let attemptController: AbortController | null = null;
+  let unbindSocket: (() => void) | null = null;
+  const baseDelay = options.reconnectDelayMs ?? 1200;
+  const foreground = () => Platform.OS === 'web'
+    ? typeof document === 'undefined' || document.visibilityState !== 'hidden'
+    : AppState.currentState === 'active';
+  let visible = foreground();
+  const focused = () => foreground() && (Platform.OS !== 'web' || typeof document === 'undefined'
+    || typeof document.hasFocus !== 'function' || document.hasFocus());
 
-  const clearRetry = () => {
-    if (retryTimer) {
-      clearTimeout(retryTimer);
-      retryTimer = null;
-    }
-  };
-
-  const scheduleReconnect = () => {
-    clearRetry();
-    retryTimer = setTimeout(() => {
-      void connect();
-    }, reconnectDelayMs);
-  };
-
-  const resolveFocusedState = () => {
-    if (Platform.OS === 'web') {
-      if (typeof document === 'undefined') return true;
-      const isVisible = document.visibilityState === 'visible';
-      const hasFocus = typeof document.hasFocus === 'function' ? document.hasFocus() : true;
-      return isVisible && hasFocus;
-    }
-    return AppState.currentState === 'active';
-  };
-
-  const emitPresenceFocus = (force = false) => {
-    if (!socket?.connected) return;
-    if (!force && lastSentFocused === focused) return;
-    socket.emit('presence:focus', { focused });
-    lastSentFocused = focused;
-  };
-
-  const updateFocusedState = (nextFocused: boolean) => {
-    if (focused === nextFocused) return;
-    focused = nextFocused;
-    lastSentFocused = null;
-    emitPresenceFocus();
-  };
-
-  const bindFocusTracking = () => {
-    if (focusCleanup) return;
-    focused = resolveFocusedState();
-    if (Platform.OS === 'web') {
-      if (typeof window === 'undefined' || typeof document === 'undefined') {
-        focusCleanup = () => {};
-        return;
-      }
-      const sync = () => updateFocusedState(resolveFocusedState());
-      window.addEventListener('focus', sync);
-      window.addEventListener('blur', sync);
-      document.addEventListener('visibilitychange', sync);
-      focusCleanup = () => {
-        window.removeEventListener('focus', sync);
-        window.removeEventListener('blur', sync);
-        document.removeEventListener('visibilitychange', sync);
-      };
-      return;
-    }
-    const sub = AppState.addEventListener('change', (state) => {
-      updateFocusedState(state === 'active');
-    });
-    focusCleanup = () => sub.remove();
-  };
+  function clearRetry() { if (retryTimer !== null) clearTimeout(retryTimer); retryTimer = null; }
+  function clearConnectTimer() { if (connectTimer !== null) clearTimeout(connectTimer); connectTimer = null; }
+  function drop() {
+    ++generation;
+    attemptController?.abort(); attemptController = null;
+    connecting = false;
+    clearConnectTimer();
+    unbindSocket?.(); unbindSocket = null;
+    // Keep the old socket observable during its synchronous disconnect event.
+    // Account observers can publish offline before this reference is replaced.
+    socket?.disconnect();
+    socket = null;
+  }
+  function schedule() {
+    if (!alive || !visible || retryTimer !== null) return;
+    const delay = Math.min(MAX_RETRY_MS, baseDelay * 2 ** Math.min(failures++, 5));
+    retryTimer = setTimeout(() => { retryTimer = null; void connect(); }, delay);
+  }
+  function presence() { if (socket?.connected) socket.emit('presence:focus', { focused: focused() }); }
 
   async function connect() {
-    authRetrying = false;
-    loggedError = false;
-    const token = await options.getAccessToken();
-    if (!active) return;
-    if (!token) {
-      scheduleReconnect();
-      return;
+    if (!alive || !visible || connecting || socket?.connected) return;
+    clearRetry();
+    drop();
+    connecting = true;
+    attemptController = new AbortController();
+    const signal = attemptController.signal;
+    const own = generation;
+    const current = () => alive && own === generation;
+    try {
+      const token = await withDeadline(refreshRequired ? options.refreshAccessToken(signal) : options.getAccessToken(signal), TOKEN_TIMEOUT_MS, signal);
+      if (!current()) return;
+      if (!token) { connecting = false; schedule(); return; }
+      const next = io(options.url, {
+        transports: ['websocket', 'polling'], auth: { token },
+        // Retrying here and in Socket.IO at the same time can revive an old
+        // namespace after resume. This owner alone rebuilds the transport.
+        autoConnect: false, reconnection: false, forceNew: true, timeout: CONNECT_TIMEOUT_MS,
+      });
+      socket = next;
+      const onConnect = () => {
+        if (!current()) return;
+        clearConnectTimer(); connecting = false; failures = 0; refreshRequired = false; presence();
+      };
+      const onDisconnect = () => {
+        if (!current()) return;
+        clearConnectTimer(); connecting = false; schedule();
+      };
+      const onError = (error: Error) => {
+        if (!current()) return;
+        if (process.env.EXPO_PUBLIC_SOCKET_DEBUG === 'true') console.warn(`${options.loggerPrefix} connection failed`);
+        clearConnectTimer();
+        const unauthorized = String(error?.message ?? '').toLowerCase().includes('unauthorized');
+        if (unauthorized) refreshRequired = true;
+        drop();
+        // Hidden tabs never start retries, including an unauthorized handshake.
+        schedule();
+      };
+      next.on('connect', onConnect);
+      next.on('disconnect', onDisconnect);
+      next.on('connect_error', onError);
+      unbindSocket = () => {
+        next.off('connect', onConnect); next.off('disconnect', onDisconnect); next.off('connect_error', onError);
+      };
+      options.onSocketReady(next);
+      if (!current() || socket !== next) return;
+      // A JS watchdog also covers native transports which never report an error.
+      connectTimer = setTimeout(() => { if (current()) { drop(); schedule(); } }, CONNECT_TIMEOUT_MS);
+      next.connect();
+    } catch {
+      if (current()) { drop(); schedule(); }
     }
-
-    socket = io(options.url, {
-      transports: ['websocket', 'polling'],
-      auth: { token },
-      reconnection: true,
-      reconnectionDelay: 800,
-      reconnectionDelayMax: 5000,
-      timeout: 8000,
-    });
-
-    socket.on('connect', () => {
-      authRetrying = false;
-      loggedError = false;
-      lastSentFocused = null;
-      emitPresenceFocus(true);
-    });
-
-    socket.on('connect_error', async (err: any) => {
-      if (socketDebugEnabled() && !loggedError) {
-        loggedError = true;
-        console.warn(`${options.loggerPrefix} connect_error`, err?.message || err);
-      }
-      const msg = String(err?.message || '');
-      if (msg.toLowerCase().includes('unauthorized') && !authRetrying) {
-        authRetrying = true;
-        try {
-          await options.refreshAccessToken();
-        } catch {
-          // noop
-        }
-        authRetrying = false;
-        socket?.disconnect();
-        socket = null;
-        scheduleReconnect();
-      }
-    });
-
-    options.onSocketReady(socket);
   }
-
-  bindFocusTracking();
+  function syncVisibility() {
+    const next = foreground();
+    if (next === visible) { presence(); return; }
+    visible = next;
+    if (!visible) {
+      presence(); clearRetry();
+      // Keep an established browser transport alive. Incomplete auth/handshake
+      // work has no useful subscription yet and must not finish in background.
+      if (Platform.OS !== 'web' || !socket?.connected) drop();
+    } else { recover({reason:'foreground'}); presence(); }
+  }
+  const state = AppState.addEventListener('change', syncVisibility);
+  if (Platform.OS === 'web' && typeof document !== 'undefined' && typeof window !== 'undefined') {
+    document.addEventListener('visibilitychange', syncVisibility);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('focus', syncVisibility);
+    window.addEventListener('blur', presence);
+  }
+  function recover(recovery:ManagedSocketRecovery = {}) {
+    if (!alive || !visible || connecting) return;
+    if (socket?.connected && !recovery.replaceConnected) return;
+    // Foreground/network recovery should not sit behind an old 30s backoff.
+    // connect() claims ownership synchronously before its first await.
+    clearRetry(); failures = 0;
+    if (recovery.replaceConnected) drop();
+    void connect();
+  }
+  function onOnline() { recover({reason:'online'}); }
   void connect();
-
   return {
-    disconnect: () => {
-      active = false;
-      clearRetry();
-      focusCleanup?.();
-      focusCleanup = null;
-      socket?.disconnect();
-      socket = null;
-    },
     getSocket: () => socket,
+    recover,
+    disconnect() {
+      if (!alive) return;
+      alive = false; clearRetry(); drop(); state.remove();
+      if (Platform.OS === 'web' && typeof document !== 'undefined' && typeof window !== 'undefined') {
+        document.removeEventListener('visibilitychange', syncVisibility);
+        window.removeEventListener('online', onOnline);
+        window.removeEventListener('focus', syncVisibility);
+        window.removeEventListener('blur', presence);
+      }
+    },
   };
 }

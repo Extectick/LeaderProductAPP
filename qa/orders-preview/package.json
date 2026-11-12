@@ -1,0 +1,1 @@
+{"name":"leader-orders-local-qa","private":true,"version":"0.1.0","main":"index.js","scripts":{"start":"node ../../node_modules/expo/bin/cli start --web --host localhost --port 8131"}}

@@ -58,8 +58,10 @@ import { shadeColor, tintColor } from '@/utils/color';
 import { formatPhoneDisplay, formatPhoneInputMask, normalizePhoneInputToDigits11, toApiPhoneDigitsString } from '@/utils/phone';
 import { getRoleDisplayName } from '@/utils/rbacLabels';
 import { getAppVersionInfo } from '@/utils/appVersion';
-import { Avatar, Divider, HelperText, List } from 'react-native-paper';
+import { Divider, HelperText, List } from 'react-native-paper';
 import { ProfileAction, ProfileFact, ProfileField } from '@/src/features/profile/ui/ProfileSettingsPrimitives';
+import { UserProfileCard } from './UserProfileCard';
+import {UserAvatar, resolveProfileAvatar} from './UserAvatar';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 type Tone = 'green' | 'violet' | 'gray' | 'red' | 'blue';
@@ -168,7 +170,7 @@ export function ProfileView({
   );
 
   const refreshProfile = useCallback(async () => {
-    const next = await getProfileById(userId);
+    const next = await getProfileById(userId, {force:true});
     if (!next) {
       throw new Error('Не удалось загрузить профиль');
     }
@@ -590,18 +592,22 @@ export function ProfileView({
     );
   }
 
+  if (!isSelf) {
+    return <UserProfileCard profile={profile} presenceLabel={presenceLabel} presenceOnline={presence?.isOnline} style={style} />;
+  }
+
   const {
     firstName,
     lastName,
     middleName,
     email,
-    avatarUrl,
     role,
     employeeProfile,
     departmentRoles,
     id,
   } = profile;
 
+  const avatarUrl = resolveProfileAvatar(profile);
   const fullName = [firstName, middleName, lastName].filter(Boolean).join(' ').replace(/\s+/g, ' ');
   const initials = `${(firstName?.[0] ?? '').toUpperCase()}${(lastName?.[0] ?? '').toUpperCase()}` || '👤';
   const hasPhone = Boolean(profilePhoneDigits);
@@ -651,7 +657,7 @@ export function ProfileView({
     return <View style={[{ gap: 6 }, style]}>
       <ProfileFact title="Фотография" value={uploadingAvatar ? 'Загрузка…' : 'Изменить фото'} icon="camera-outline"
         onPress={uploadingAvatar ? undefined : handlePickAvatar} right={() =>
-          avatarUrl ? <Avatar.Image size={52} source={{ uri: avatarUrl }} /> : <Avatar.Text size={52} label={initials === '👤' ? '?' : initials} style={{ backgroundColor: '#DBE7FF' }} color="#2563EB" />} />
+          <UserAvatar identityKey={id} uri={avatarUrl} size={52} initials={initials === '👤' ? '?' : initials}/>} />
       {(['lastName', 'firstName', 'middleName'] as const).map(key => <ProfileField key={key}
         label={{ lastName: 'Фамилия', firstName: 'Имя', middleName: 'Отчество' }[key]} value={nameForm[key]} disabled={nameSaving}
         autoCapitalize="words" onChangeText={value => { setNameMode('editing'); setNameForm(prev => ({ ...prev, [key]: value })); setNameError(null); }} />)}
@@ -694,6 +700,7 @@ export function ProfileView({
   return (
     <View style={[styles.profileShell, style]}>
       <Hero
+        identityKey={id}
         avatarUrl={avatarUrl || undefined}
         initials={initials}
         title={fullName || 'Профиль'}
@@ -893,6 +900,7 @@ function ProfileSection({
 }
 
 function Hero({
+  identityKey,
   avatarUrl,
   initials,
   title,
@@ -914,6 +922,7 @@ function Hero({
   onNameSave,
   disableAppearAnimation,
 }: {
+  identityKey: number;
   avatarUrl?: string;
   initials: string;
   title: string;
@@ -954,13 +963,7 @@ function Hero({
           style={styles.avatarPressable}
         >
           <View style={styles.avatarOuter}>
-            {avatarUrl ? (
-              <Image source={{ uri: avatarUrl }} style={styles.avatar} />
-            ) : (
-              <View style={[styles.avatar, styles.avatarFallback]}>
-                <Text style={styles.avatarInitials}>{initials}</Text>
-              </View>
-            )}
+            <UserAvatar identityKey={identityKey} uri={avatarUrl} size={90} radius={23} initials={initials}/>
             {typeof presenceOnline === 'boolean' ? (
               <View
                 style={[
@@ -1663,9 +1666,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
-  avatar: { width: 90, height: 90, borderRadius: 23 },
-  avatarFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#F1F5F9' },
-  avatarInitials: { fontSize: 30, fontWeight: '800', color: '#0F172A' },
   avatarPresenceDot: {
     position: 'absolute',
     right: -3,

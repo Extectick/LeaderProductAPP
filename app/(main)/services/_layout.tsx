@@ -6,8 +6,8 @@ import {useTheme} from '@/context/ThemeContext';
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useNotify } from '@/components/NotificationHost';
 import { Ionicons } from '@expo/vector-icons';
-import { Image as ExpoImage } from 'expo-image';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import {UserAvatar, resolveProfileAvatar} from '@/components/Profile/UserAvatar';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { AuthContext } from '@/context/AuthContext';
 import type { Profile } from '@/src/entities/user/types';
 import { useServicesData } from '@/src/features/services/hooks/useServicesData';
@@ -17,6 +17,7 @@ import { ServicesHeaderSlotProvider, type ServicesHeaderOverride } from '@/src/f
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { serviceOwnsHeader } from '@/src/features/navigation/serviceHeaderOwnership';
 import { ScreenBlurProvider } from '@/components/ui/AppScreenBlur';
+import {useHelpReducedMotion} from '@/src/features/help/helpTheme';
 
 type HeaderMeta = {
   title: string;
@@ -26,8 +27,6 @@ type HeaderMeta = {
   subtitle?: string;
 };
 
-const loadedProfileAvatarKeys = new Set<string>();
-const visibleProfileAvatarUrls = new Map<string, string>();
 
 const headerMap: Record<string, HeaderMeta> = {
   index: { title: 'Каталог сервисов', icon: 'apps-outline', showBack: false, subtitle: 'Все доступные сервисы' },
@@ -55,6 +54,7 @@ const headerMap: Record<string, HeaderMeta> = {
 };
 
 export default function ServicesLayout() {
+  const reducedHelpMotion=useHelpReducedMotion();
   const background=useThemeColor({},'background');
   const {theme}=useTheme();
   const router = useRouter();
@@ -71,9 +71,9 @@ export default function ServicesLayout() {
   const [trackingHeaderBottomSlot, setTrackingHeaderBottomSlot] = React.useState<React.ReactNode | null>(null);
   const [trackingHeaderRightSlot, setTrackingHeaderRightSlot] = React.useState<React.ReactNode | null>(null);
   const [headerOverride, setHeaderOverride] = React.useState<ServicesHeaderOverride | null>(null);
-  const profileAvatarUrl = React.useMemo(() => resolveProfileAvatarUrl(auth?.profile), [auth?.profile]);
+  const profileAvatarUrl = React.useMemo(() => resolveProfileAvatar(auth?.profile), [auth?.profile]);
   const profileInitials = React.useMemo(() => resolveProfileInitials(auth?.profile), [auth?.profile]);
-  const profileAvatarKey = auth?.profile?.id ? `user:${auth.profile.id}` : profileAvatarUrl || 'anonymous';
+  const profileAvatarKey = String(auth?.profile?.id || 'anonymous');
   const catalogOffline = serverStatus.isReachable === false;
   const headerSlotContextValue = React.useMemo(
     () => ({
@@ -295,7 +295,7 @@ export default function ServicesLayout() {
                 showServerStatus={activeHeaderOverride?.showServerStatus ?? (!isCatalogPath && !isClientOrdersPath)}
               />
             ),
-            animation: isHelpScreen || isClientOrdersPath ? 'fade' : 'ios_from_left',
+            animation: isHelpScreen ? reducedHelpMotion ? 'none' : 'slide_from_right' : isClientOrdersPath ? 'fade' : 'ios_from_left',
           };
         }}
       >
@@ -303,16 +303,6 @@ export default function ServicesLayout() {
         <Stack.Screen name="help/knowledge" options={{ headerShown: false }} />
       </Stack>
     </ServicesHeaderSlotProvider></ScreenBlurProvider>
-  );
-}
-
-function resolveProfileAvatarUrl(profile: Profile | null | undefined) {
-  return (
-    profile?.avatarUrl ||
-    profile?.employeeProfile?.avatarUrl ||
-    profile?.clientProfile?.avatarUrl ||
-    profile?.supplierProfile?.avatarUrl ||
-    null
   );
 }
 
@@ -338,103 +328,8 @@ function CatalogProfileAvatar({
   avatarKey: string;
   initials: string;
 }) {
-  const [loading, setLoading] = React.useState(() => Boolean(avatarUrl && !loadedProfileAvatarKeys.has(avatarKey)));
-  const [failed, setFailed] = React.useState(false);
-  const [displayAvatarUrl, setDisplayAvatarUrl] = React.useState<string | null>(() => visibleProfileAvatarUrls.get(avatarKey) || avatarUrl);
-  const [pendingAvatarUrl, setPendingAvatarUrl] = React.useState<string | null>(null);
-  const displayAvatarSource = React.useMemo(() => (displayAvatarUrl ? { uri: displayAvatarUrl } : null), [displayAvatarUrl]);
-  const pendingAvatarSource = React.useMemo(() => (pendingAvatarUrl ? { uri: pendingAvatarUrl } : null), [pendingAvatarUrl]);
-
-  React.useEffect(() => {
-    setFailed(false);
-    if (!avatarUrl) {
-      visibleProfileAvatarUrls.delete(avatarKey);
-      setDisplayAvatarUrl(null);
-      setPendingAvatarUrl(null);
-      setLoading(false);
-      return;
-    }
-    if (!displayAvatarUrl) {
-      setDisplayAvatarUrl(avatarUrl);
-      setPendingAvatarUrl(null);
-      setLoading(!loadedProfileAvatarKeys.has(avatarKey));
-      return;
-    }
-    if (displayAvatarUrl !== avatarUrl) {
-      setPendingAvatarUrl(avatarUrl);
-      setLoading(false);
-      return;
-    }
-    setPendingAvatarUrl(null);
-    setLoading(false);
-  }, [avatarKey, avatarUrl, displayAvatarUrl]);
-
-  const showAvatar = Boolean(displayAvatarSource && !failed);
-
-  if (offline) {
-    return (
-      <View style={styles.profileHeaderOffline}>
-        <Ionicons name="cloud-offline-outline" size={24} color="#DC2626" />
-      </View>
-    );
-  }
-
-  return (
-    <>
-      {showAvatar ? (
-        <ExpoImage
-          source={displayAvatarSource}
-          style={styles.profileHeaderAvatar}
-          contentFit="cover"
-          cachePolicy="memory-disk"
-          recyclingKey={displayAvatarUrl || 'profile-avatar'}
-          transition={0}
-          onLoadStart={() => {
-            if (!displayAvatarUrl || loadedProfileAvatarKeys.has(avatarKey)) return;
-            setLoading((current) => (current ? current : true));
-          }}
-          onLoadEnd={() => {
-            if (displayAvatarUrl) {
-              loadedProfileAvatarKeys.add(avatarKey);
-              visibleProfileAvatarUrls.set(avatarKey, displayAvatarUrl);
-            }
-            setLoading((current) => (current ? false : current));
-          }}
-          onError={() => {
-            setFailed(true);
-            setLoading((current) => (current ? false : current));
-          }}
-        />
-      ) : (
-        <View style={styles.profileHeaderFallback}>
-          <Text style={styles.profileHeaderFallbackText}>{initials}</Text>
-        </View>
-      )}
-      {pendingAvatarSource ? (
-        <ExpoImage
-          pointerEvents="none"
-          source={pendingAvatarSource}
-          style={styles.profileHeaderAvatarPreload}
-          contentFit="cover"
-          cachePolicy="memory-disk"
-          recyclingKey={`pending-${pendingAvatarUrl}`}
-          onLoad={() => {
-            if (!pendingAvatarUrl) return;
-            loadedProfileAvatarKeys.add(avatarKey);
-            visibleProfileAvatarUrls.set(avatarKey, pendingAvatarUrl);
-            setDisplayAvatarUrl(pendingAvatarUrl);
-            setPendingAvatarUrl(null);
-          }}
-          onError={() => setPendingAvatarUrl(null)}
-        />
-      ) : null}
-      {showAvatar && loading ? (
-        <View pointerEvents="none" style={styles.profileHeaderAvatarLoader}>
-          <ActivityIndicator size="small" color="#FFFFFF" />
-        </View>
-      ) : null}
-    </>
-  );
+  if (offline) return <View style={styles.profileHeaderOffline}><Ionicons name="cloud-offline-outline" size={24} color="#DC2626" /></View>;
+  return <UserAvatar identityKey={avatarKey} uri={avatarUrl} initials={initials} backgroundColor="#0F766E" color="#FFFFFF"/>;
 }
 
 const MemoCatalogProfileAvatar = React.memo(CatalogProfileAvatar);
@@ -478,33 +373,6 @@ const styles = StyleSheet.create({
   profileHeaderActionPressed: {
     opacity: 0.86,
     transform: [{ scale: 0.97 }],
-  },
-  profileHeaderAvatar: {
-    width: '100%',
-    height: '100%',
-  },
-  profileHeaderAvatarPreload: {
-    ...StyleSheet.absoluteFill,
-    opacity: 0,
-  },
-  profileHeaderAvatarLoader: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(15, 23, 42, 0.24)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  profileHeaderFallback: {
-    width: '100%',
-    height: '100%',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#0F766E',
-  },
-  profileHeaderFallbackText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    lineHeight: 18,
-    fontWeight: '900',
   },
   profileHeaderOffline: {
     width: '100%',

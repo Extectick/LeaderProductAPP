@@ -22,6 +22,7 @@ import {
   Typography,
 } from '@mui/material';
 import React from 'react';
+import { useAppSurfaceTheme } from '@/components/ui/appSurfaceTokens';
 import {
   formatDateOnly,
   getCounterpartyTaxMeta,
@@ -40,16 +41,18 @@ export function ToolbarIconButton(props: {
   loading?: boolean;
   onClick: () => void;
 }) {
-  const color = props.disabled ? '#94A3B8' : props.color || '#0F172A';
+  const colors = useAppSurfaceTheme();
+  const color = props.disabled ? colors.muted : props.color || colors.text;
   const filled = !!props.label && !props.disabled;
-  const buttonSize = props.buttonSize || 32;
-  const iconSize = props.iconSize || 17;
+  const buttonSize = props.buttonSize || 40;
+  const iconSize = props.iconSize || 20;
 
   return (
     <Tooltip title={props.title} arrow>
       <span>
         <IconButton
           size="small"
+          aria-label={props.title}
           onClick={props.onClick}
           disabled={props.disabled}
           sx={{
@@ -59,17 +62,17 @@ export function ToolbarIconButton(props: {
             px: props.label ? 1 : undefined,
             py: 0,
             gap: props.label ? 0.55 : undefined,
-            border: `1px solid ${props.label ? color : '#D8E2F0'}`,
-            borderRadius: '7px',
-            bgcolor: filled ? color : '#FFFFFF',
+            border: '1px solid transparent',
+            borderRadius: '24px',
+            bgcolor: filled ? color : colors.panel,
             boxSizing: 'border-box',
             transition: 'background-color 140ms ease, transform 90ms ease',
-            '&:hover': { bgcolor: filled ? color : '#F1F5F9', opacity: filled ? 0.9 : 1 },
+            '&:hover': { bgcolor: filled ? color : colors.soft, opacity: filled ? 0.9 : 1 },
             '&:active': { transform: 'scale(0.94)' },
           }}
         >
           {props.loading ? <CircularProgress size={15} /> : <Ionicons name={props.icon as any} size={iconSize} color={filled ? '#FFFFFF' : color} />}
-          {props.label ? <Typography sx={{ fontSize: 12, fontWeight: 900, color: filled ? '#FFFFFF' : color }}>{props.label}</Typography> : null}
+          {props.label ? <Typography sx={{ fontSize: 14, fontWeight: 600, color: filled ? '#FFFFFF' : color }}>{props.label}</Typography> : null}
         </IconButton>
       </span>
     </Tooltip>
@@ -84,7 +87,7 @@ export function DocumentPlusIcon(props: { color?: string; plusColor?: string; si
   return (
     <Box component="span" sx={{ position: 'relative', width: size, height: size, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
       <Ionicons name="document-text-outline" size={size} color={color} />
-      <Box component="span" sx={{ position: 'absolute', right: -4, bottom: -3, width: 12, height: 12, borderRadius: '999px', bgcolor: '#FFFFFF', display: 'grid', placeItems: 'center' }}>
+      <Box component="span" sx={{ position: 'absolute', right: -4, bottom: -3, width: 12, height: 12, borderRadius: '999px', bgcolor: 'var(--co-surface, #FFFFFF)', display: 'grid', placeItems: 'center' }}>
         <Ionicons name="add-circle" size={12} color={plusColor} />
       </Box>
     </Box>
@@ -98,6 +101,7 @@ export function ResetAdornmentButton(props: { title: string; disabled?: boolean;
         <IconButton
           size="small"
           disabled={props.disabled}
+          aria-label={props.title}
           onMouseDown={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -108,15 +112,15 @@ export function ResetAdornmentButton(props: { title: string; disabled?: boolean;
             if (!props.disabled) props.onClick();
           }}
           sx={{
-            width: 24,
-            height: 24,
-            color: props.disabled ? '#CBD5E1' : '#2563EB',
+            width: 32,
+            height: 32,
+            color: props.disabled ? 'var(--co-muted, #627185)' : 'var(--co-accent, #2563EB)',
             transition: 'background-color 140ms ease, color 140ms ease, transform 90ms ease',
-            '&:hover': { bgcolor: props.disabled ? 'transparent' : '#EFF6FF', color: props.disabled ? '#CBD5E1' : '#1D4ED8' },
+            '&:hover': { bgcolor: props.disabled ? 'transparent' : 'var(--co-soft, #EAF2FF)', color: props.disabled ? 'var(--co-muted, #627185)' : 'var(--co-accent, #2563EB)' },
             '&:active': props.disabled ? {} : { transform: 'scale(0.92)' },
           }}
         >
-          <Ionicons name="refresh-outline" size={14} />
+          <Ionicons style={{ color: 'inherit' }} name="refresh-outline" size={14} />
         </IconButton>
       </span>
     </Tooltip>
@@ -206,7 +210,7 @@ export function DeliveryDateField(props: {
   return (
     <ClickAwayListener onClickAway={() => setOpen(false)}>
       <Box ref={anchorRef} sx={{ position: 'relative', mt: 0.35 }}>
-        <Typography sx={{ position: 'absolute', top: -5, left: 10, zIndex: 1, px: 0.35, bgcolor: '#FFFFFF', fontSize: 10, fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', lineHeight: 1 }}>
+        <Typography sx={{ position: 'absolute', top: -5, left: 10, zIndex: 1, px: 0.35, bgcolor: 'var(--co-surface, #FFFFFF)', fontSize: 12, fontWeight: 600, color: 'var(--co-muted, #627185)', textTransform: 'uppercase', letterSpacing: '0.04em', lineHeight: 1 }}>
           Дата отгрузки
         </Typography>
         <TextField
@@ -214,23 +218,28 @@ export function DeliveryDateField(props: {
           value={displayValue}
           placeholder="Выберите дату"
           disabled={disabled}
-          onClick={() => setOpen(true)}
-          onFocus={() => setOpen(true)}
+          onClick={() => !disabled && setOpen(true)}
+          onKeyDown={event => {
+            if (event.nativeEvent.isComposing) return;
+            if (event.key === 'Escape') {event.preventDefault(); setOpen(false);}
+            if (!disabled && (event.key === 'Enter' || event.key === ' ' || event.key === 'ArrowDown')) {event.preventDefault(); setOpen(true);}
+          }}
           fullWidth
           sx={{
-            '& .MuiInputBase-root': { height: 30, borderRadius: '8px', fontSize: 10.5, fontWeight: 800 },
-            '& .MuiInputBase-input': { py: 0, lineHeight: '30px' },
-            '& .MuiInputBase-input.Mui-disabled': { WebkitTextFillColor: '#64748B' },
+            '& .MuiInputBase-root': { height: 40, borderRadius: '12px', fontSize: 14, fontWeight: 500 },
+            '& .MuiInputBase-input': { py: 0, lineHeight: '40px' },
+            '& .MuiInputBase-input.Mui-disabled': { WebkitTextFillColor: 'var(--co-muted, #627185)' },
           }}
           slotProps={{
+            htmlInput: {'aria-label': 'Дата отгрузки', 'aria-expanded': open && !disabled, 'aria-haspopup': 'dialog'},
             input: {
               readOnly: true,
-              endAdornment: <Ionicons name="calendar-outline" size={15} color="#64748B" />,
+              endAdornment: <Ionicons name="calendar-outline" size={15} color="var(--co-muted, #627185)" />,
             }
           }}
         />
-        <Popper open={open && !disabled} anchorEl={anchorRef.current} placement="bottom-start" sx={{ zIndex: 1500, width: anchorRef.current?.clientWidth || 260 }}>
-          <Paper variant="outlined" sx={{ mt: 0.35, borderRadius: '8px', overflow: 'hidden', boxShadow: '0 12px 32px rgba(15, 23, 42, 0.16)', p: 1 }}>
+        <Popper open={open && !disabled} anchorEl={anchorRef.current} placement="bottom-start" sx={{ zIndex: 1500, width: Math.max(anchorRef.current?.clientWidth || 0, 296), maxWidth: 'calc(100vw - 24px)' }}>
+          <Paper role="dialog" aria-label="Календарь отгрузки" onKeyDown={event => {if (event.key === 'Escape') setOpen(false);}} variant="outlined" sx={{ mt: 0.75, borderRadius: '16px', overflow: 'hidden', boxShadow: '0 12px 32px rgba(15, 23, 42, 0.16)', p: 1 }}>
             <Stack spacing={0.8}>
               <Stack
                 direction="row"
@@ -238,37 +247,39 @@ export function DeliveryDateField(props: {
                   justifyContent: "space-between",
                   alignItems: "center"
                 }}>
-                <IconButton size="small" disabled={!canPrevMonth} onClick={() => moveMonth(-1)} sx={{ width: 24, height: 24 }}>
-                  <Ionicons name="chevron-back-outline" size={14} />
+                <IconButton aria-label="Предыдущий месяц" size="small" disabled={!canPrevMonth} onClick={() => moveMonth(-1)} sx={{ width: 32, height: 32 }}>
+                  <Ionicons style={{ color: 'inherit' }} name="chevron-back-outline" size={14} />
                 </IconButton>
-                <Typography sx={{ fontSize: 12, fontWeight: 900, textTransform: 'capitalize' }}>{visibleMonthLabel}</Typography>
-                <IconButton size="small" disabled={!canNextMonth} onClick={() => moveMonth(1)} sx={{ width: 24, height: 24 }}>
-                  <Ionicons name="chevron-forward-outline" size={14} />
+                <Typography sx={{ fontSize: 12, fontWeight: 700, textTransform: 'capitalize' }}>{visibleMonthLabel}</Typography>
+                <IconButton aria-label="Следующий месяц" size="small" disabled={!canNextMonth} onClick={() => moveMonth(1)} sx={{ width: 32, height: 32 }}>
+                  <Ionicons style={{ color: 'inherit' }} name="chevron-forward-outline" size={14} />
                 </IconButton>
               </Stack>
               <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 0.25 }}>
                 {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map((label) => (
-                  <Typography key={label} sx={{ fontSize: 10, color: '#64748B', textAlign: 'center', fontWeight: 800 }}>{label}</Typography>
+                  <Typography key={label} sx={{ fontSize: 12, color: 'var(--co-muted, #627185)', textAlign: 'center', fontWeight: 600 }}>{label}</Typography>
                 ))}
                 {days.map((day) => (
                   <Box
                     key={day.iso}
                     component="button"
                     type="button"
+                    aria-label={new Date(`${day.iso}T00:00:00`).toLocaleDateString('ru-RU', {day: 'numeric', month: 'long', year: 'numeric'})}
+                    aria-pressed={day.iso === value}
                     disabled={day.disabled}
                     onClick={() => selectDate(day.iso)}
                     sx={{
                       border: 0,
                       borderRadius: '6px',
-                      height: 28,
-                      background: day.iso === value ? '#2563EB' : day.today ? '#EFF6FF' : '#FFFFFF',
-                      color: day.iso === value ? '#FFFFFF' : day.inMonth ? '#0F172A' : '#CBD5E1',
+                      height: 36,
+                      background: day.iso === value ? 'var(--co-accent, #2563EB)' : day.today ? 'var(--co-soft, #EAF2FF)' : 'var(--co-surface, #FFFFFF)',
+                      color: day.iso === value ? '#FFFFFF' : day.inMonth ? 'var(--co-text, #18212D)' : 'var(--co-muted, #627185)',
                       cursor: day.disabled ? 'not-allowed' : 'pointer',
-                      fontSize: 11,
-                      fontWeight: day.today || day.iso === value ? 900 : 700,
+                      fontSize: 14,
+                      fontWeight: day.today || day.iso === value ? 700 : 500,
                       opacity: day.disabled ? 0.35 : 1,
                       transition: 'background-color 140ms ease, transform 90ms ease',
-                      '&:hover': { backgroundColor: day.disabled ? undefined : day.iso === value ? '#1D4ED8' : '#F1F5F9' },
+                      '&:hover': { backgroundColor: day.disabled ? undefined : day.iso === value ? 'var(--co-accent, #2563EB)' : 'var(--co-panel, #EEF2F7)' },
                       '&:active': day.disabled ? {} : { transform: 'scale(0.95)' },
                     }}
                   >
@@ -276,7 +287,7 @@ export function DeliveryDateField(props: {
                   </Box>
                 ))}
               </Box>
-              <Typography sx={{ fontSize: 10, color: '#64748B' }}>Доступно с сегодня до {formatShortDate(toDateInputValue(maxDate.toISOString()))}.</Typography>
+              <Typography sx={{ fontSize: 12, color: 'var(--co-muted, #627185)' }}>Доступно с сегодня до {formatShortDate(toDateInputValue(maxDate.toISOString()))}.</Typography>
             </Stack>
           </Paper>
         </Popper>
@@ -316,11 +327,11 @@ export function ReferenceDetailsDialog(props: {
             alignItems: "flex-start"
           }}>
           <Box sx={{ minWidth: 0 }}>
-            <Typography sx={{ fontSize: 20, fontWeight: 900 }}>{props.details?.title || 'Карточка реквизита'}</Typography>
-            {props.details?.subtitle ? <Typography sx={{ color: '#64748B', fontSize: 12 }}>{props.details.subtitle}</Typography> : null}
+            <Typography sx={{ fontSize: 20, fontWeight: 700 }}>{props.details?.title || 'Карточка реквизита'}</Typography>
+            {props.details?.subtitle ? <Typography sx={{ color: 'var(--co-muted, #627185)', fontSize: 12 }}>{props.details.subtitle}</Typography> : null}
           </Box>
-          <IconButton size="small" onClick={props.onClose}>
-            <Ionicons name="close-outline" size={18} />
+          <IconButton aria-label="Закрыть реквизиты" size="small" onClick={props.onClose}>
+            <Ionicons style={{ color: 'inherit' }} name="close-outline" size={18} />
           </IconButton>
         </Stack>
       </DialogTitle>
@@ -330,33 +341,33 @@ export function ReferenceDetailsDialog(props: {
             alignItems: "center"
           }}>
             <CircularProgress size={18} />
-            <Typography sx={{ color: '#64748B', fontSize: 13 }}>Загрузка карточки...</Typography>
+            <Typography sx={{ color: 'var(--co-muted, #627185)', fontSize: 13 }}>Загрузка карточки...</Typography>
           </Stack>
         ) : props.error ? (
           <Alert severity="error">{props.error}</Alert>
         ) : !props.details ? (
-          <Typography sx={{ color: '#64748B', fontSize: 13 }}>Нет данных.</Typography>
+          <Typography sx={{ color: 'var(--co-muted, #627185)', fontSize: 13 }}>Нет данных.</Typography>
         ) : (
           <Stack spacing={1.2}>
             {props.details.sections.map((section) => (
               <Paper key={section.title} variant="outlined" sx={{ borderRadius: '10px', p: 1.2 }}>
-                <Typography sx={{ fontWeight: 900, mb: 0.8 }}>{section.title}</Typography>
-                <Box sx={{ display: 'grid', gridTemplateColumns: '180px 1fr', gap: 0.6 }}>
+                <Typography sx={{ fontWeight: 700, mb: 0.8 }}>{section.title}</Typography>
+                <Box sx={{ display: 'grid', gridTemplateColumns: {xs: '1fr', sm: '180px minmax(0, 1fr)'}, gap: 0.6 }}>
                   {section.rows.map((row) => (
                     <React.Fragment key={`${section.title}-${row.label}`}>
-                      <Typography sx={{ color: '#64748B', fontSize: 12, fontWeight: 800 }}>{row.label}</Typography>
-                      <Typography sx={{ color: '#0F172A', fontSize: 11, fontWeight: 700, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{stringifyDetailsValue(row.value)}</Typography>
+                      <Typography sx={{ color: 'var(--co-muted, #627185)', fontSize: 12, fontWeight: 600 }}>{row.label}</Typography>
+                      <Typography sx={{ color: 'var(--co-text, #18212D)', fontSize: 14, fontWeight: 700, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{stringifyDetailsValue(row.value)}</Typography>
                     </React.Fragment>
                   ))}
                 </Box>
               </Paper>
             ))}
             <Accordion disableGutters>
-              <AccordionSummary expandIcon={<Ionicons name="chevron-down-outline" size={16} />}>
-                <Typography sx={{ fontWeight: 900 }}>JSON / debug</Typography>
+              <AccordionSummary expandIcon={<Ionicons style={{ color: 'inherit' }} name="chevron-down-outline" size={16} />}>
+                <Typography sx={{ fontWeight: 700 }}>JSON / debug</Typography>
               </AccordionSummary>
               <AccordionDetails>
-                <Box component="pre" sx={{ m: 0, p: 1, bgcolor: '#0F172A', color: '#E2E8F0', borderRadius: '8px', maxHeight: 320, overflow: 'auto', fontSize: 11 }}>
+                <Box component="pre" sx={{ m: 0, p: 1, bgcolor: 'var(--co-panel, #EEF2F7)', color: 'var(--co-text, #18212D)', borderRadius: '8px', maxHeight: 320, overflow: 'auto', fontSize: 11 }}>
                   {JSON.stringify(props.details.debug, null, 2)}
                 </Box>
               </AccordionDetails>
@@ -365,7 +376,7 @@ export function ReferenceDetailsDialog(props: {
         )}
       </DialogContent>
       <DialogActions>
-        <Button onClick={props.onClose} sx={{ textTransform: 'none', fontWeight: 800 }}>Закрыть</Button>
+        <Button onClick={props.onClose} sx={{ textTransform: 'none', fontWeight: 600 }}>Закрыть</Button>
       </DialogActions>
     </Dialog>
   );

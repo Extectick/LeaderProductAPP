@@ -1,6 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
-import { Dimensions, Modal, Pressable, StyleSheet, View } from 'react-native';
+import { Dimensions, Modal, Platform, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
+import {APP_LAYOUT} from '@/src/shared/layout/appLayout';
+import {AppDesktopDialog} from './ui/AppDesktopDialog';
 
 interface Props {
   visible: boolean;
@@ -11,6 +13,8 @@ interface Props {
 const { width } = Dimensions.get('window');
 
 export default function CenteredModal({ visible, onClose, children }: Props) {
+  const {width:viewportWidth}=useWindowDimensions();
+  if(Platform.OS==='web'&&viewportWidth>APP_LAYOUT.compactMax)return <AppDesktopDialog visible={visible} onClose={onClose} accessibilityLabel="Диалог" maxWidth={560} contentStyle={{alignItems:'center'}} testID="centered-modal-dialog">{children}</AppDesktopDialog>;
   return (
     <Modal
       visible={visible}

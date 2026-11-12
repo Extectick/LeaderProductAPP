@@ -23,7 +23,7 @@ export function helpQuestions(message: HelpMessage): HelpAssistantQuestion[] {
     options: suggestions.filter(value => !questionLike(value)).map(label => ({ label })) }];
 }
 
-export type HelpQuestionAnswer = { selected: string[]; text: string; fileCount?: number; fileNames?: string[]; fileKeys?: string[] };
+export type HelpQuestionAnswer = { selected: string[]; text: string; skipped?: boolean; fileCount?: number; fileNames?: string[]; fileKeys?: string[] };
 export type HelpQuestionDraft = { index: number; collapsed: boolean; review?: boolean;
   answers: Record<string, HelpQuestionAnswer> };
 export const emptyHelpQuestionDraft = (): HelpQuestionDraft => ({ index: 0, collapsed: false, review: false, answers: Object.create(null) });
@@ -37,7 +37,12 @@ export function helpQuestionAnswerText(answer: HelpQuestionAnswer | undefined, a
   const matchingFiles = answer.fileKeys?.length && attachmentKeys ? answer.fileKeys.some(key => attachmentKeys.includes(key))
     : answer.fileNames?.length && attachmentNames ? answer.fileNames.some(name => attachmentNames.includes(name)) : true;
   const hasFiles = (answer.fileCount || 0) > 0 && matchingFiles && (attachmentCount === undefined || attachmentCount > 0);
-  return [...answer.selected, answer.text.trim(), hasFiles ? 'См. вложение' : ''].filter(Boolean).join('; ');
+  const text=[...answer.selected, answer.text.trim(), hasFiles ? 'См. вложение' : ''].filter(Boolean).join('; ');
+  return text || (answer.skipped ? 'Пропущен' : '');
+}
+
+export function helpQuestionHasAnswer(answer: HelpQuestionAnswer | undefined, attachmentCount?: number, attachmentNames?: string[], attachmentKeys?: string[]) {
+  return Boolean(answer && helpQuestionAnswerText({...answer,skipped:false},attachmentCount,attachmentNames,attachmentKeys));
 }
 
 export function restoreHelpQuestionDraft(raw: string, questions: HelpAssistantQuestion[]): HelpQuestionDraft {
@@ -51,6 +56,7 @@ export function restoreHelpQuestionDraft(raw: string, questions: HelpAssistantQu
       const answer = value?.answers?.[question.id];
       if (!answer) continue;
       result.answers[question.id] = {
+        skipped: answer.skipped === true,
         text: typeof answer.text === 'string' ? answer.text.slice(0, 4000) : '',
         fileCount: Number.isInteger(answer.fileCount) ? Math.max(0, Math.min(10, answer.fileCount)) : 0,
         fileNames: Array.isArray(answer.fileNames) ? answer.fileNames.filter((name: unknown): name is string => typeof name === 'string').slice(0, 10).map((name: string) => name.slice(0, 200)) : [],
@@ -60,11 +66,26 @@ export function restoreHelpQuestionDraft(raw: string, questions: HelpAssistantQu
       };
     }
   } catch { /* A missing or obsolete local draft starts a fresh questionnaire. */ }
+  // Recover drafts saved by the old whole-questionnaire dismissal. Keep every
+  // earlier answer and apply the user's Skip to the active question only.
+  try { if (JSON.parse(raw)?.dismissed === true) return skipHelpQuestion(result, questions); } catch { /* empty draft */ }
   return result;
+}
+
+export function skipHelpQuestion(draft: HelpQuestionDraft, questions: HelpAssistantQuestion[], attachmentCount?: number, attachmentNames?: string[], attachmentKeys?: string[]): HelpQuestionDraft {
+  const question=questions[draft.index];
+  if(!question || draft.review)return draft;
+  const previous=helpQuestionAnswer(draft,question.id);
+  const answer=helpQuestionHasAnswer(previous,attachmentCount,attachmentNames,attachmentKeys)
+    ? {...previous!,skipped:false}
+    : {selected:[],text:'',skipped:true,fileCount:0,fileNames:[],fileKeys:[]};
+  return {...draft,collapsed:false,index:Math.min(draft.index+1,questions.length-1),review:draft.index===questions.length-1,
+    answers:{...draft.answers,[question.id]:answer}};
 }
 
 export function formatHelpQuestionAnswers(questions: HelpAssistantQuestion[], draft: HelpQuestionDraft, attachmentCount?: number, attachmentNames?: string[], attachmentKeys?: string[]) {
   return questions.map(question => {
+    if (helpQuestionAnswer(draft, question.id)?.skipped && !helpQuestionHasAnswer(helpQuestionAnswer(draft,question.id),attachmentCount,attachmentNames,attachmentKeys)) return `${question.question}\nВопрос пропущен пользователем.`;
     const answer = helpQuestionAnswerText(helpQuestionAnswer(draft, question.id), attachmentCount, attachmentNames, attachmentKeys);
     if (!answer) throw new Error('Ответьте на каждый вопрос.');
     return `${question.question}\nОтвет: ${answer}`;

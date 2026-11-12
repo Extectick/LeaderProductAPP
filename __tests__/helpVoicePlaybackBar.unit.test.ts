@@ -3,7 +3,7 @@ import TestRenderer,{act} from 'react-test-renderer';
 import {Animated,StyleSheet} from 'react-native';
 let mockReduced=true;
 jest.mock('@expo/vector-icons',()=>({Ionicons:'Ionicons'}));
-jest.mock('../src/features/help/helpTheme',()=>({useHelpReducedMotion:()=>mockReduced,useHelpTheme:()=>({text:'#F2F4F7',muted:'#A6B0BE',accentText:'#68B0FF',line:'#33404E'})}));
+jest.mock('../src/features/help/helpTheme',()=>({useHelpReducedMotion:()=>mockReduced,useHelpTheme:()=>({text:'#F2F4F7',muted:'#A6B0BE',accentText:'#68B0FF',line:'#33404E',headerSurface:'#151B22'})}));
 import {HelpVoicePlaybackBar,type HelpVoicePlaybackBarProps} from '../src/features/help/components/HelpVoicePlaybackBar';
 
 describe('Help shared voice playback strip',()=>{
@@ -15,6 +15,7 @@ describe('Help shared voice playback strip',()=>{
   const control=(id:string)=>screen!.root.findAllByProps({testID:id}).find(node=>node.props.accessibilityRole==='button')!;
   test('pause and close control the shared player, with44dp targets and author/time',async()=>{
     await render();
+    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-voice-playback-bar'}).props.style).backgroundColor).toBe('#151B22');
     expect(screen!.root.findAllByProps({children:'Анна'}).length).toBeGreaterThan(0);
     expect(screen!.root.findAllByProps({children:'Голосовое · 0:12 / 1:30'}).length).toBeGreaterThan(0);
     const toggle=control('help-voice-playback-toggle');expect(toggle.props.accessibilityLabel).toBe('Приостановить голосовое сообщение');

@@ -15,12 +15,12 @@ export function ProfileDataProvider({ children }: React.PropsWithChildren) {
   authRef.current = auth;
   const inFlight = React.useRef(false);
   const alive = React.useRef(true);
-  const refresh = React.useCallback(async () => {
+  const refresh = React.useCallback(async (force = true) => {
     if (inFlight.current) return;
     const userId = authRef.current?.profile?.id;
     inFlight.current = true; setLoading(true); setError(null);
     try {
-      const next = await getProfile();
+      const next = await getProfile({ force });
       if (!alive.current || authRef.current?.profile?.id !== userId) return;
       if (next && (!userId || next.id === userId)) await authRef.current?.setProfile(next);
       else if (!authRef.current?.profile) setError('Не удалось загрузить профиль');
@@ -28,7 +28,7 @@ export function ProfileDataProvider({ children }: React.PropsWithChildren) {
       if (alive.current && !authRef.current?.profile) setError('Не удалось загрузить профиль');
     } finally { inFlight.current = false; if (alive.current) setLoading(false); }
   }, []);
-  React.useEffect(() => { alive.current = true; void refresh(); return () => { alive.current = false; }; }, [refresh]);
+  React.useEffect(() => { alive.current = true; void refresh(false); return () => { alive.current = false; }; }, [refresh]);
   const update = React.useCallback((next: Profile) => {
     if (next.id === authRef.current?.profile?.id) void authRef.current.setProfile(next);
   }, []);

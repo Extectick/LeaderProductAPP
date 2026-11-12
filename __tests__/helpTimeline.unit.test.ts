@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer,{act} from 'react-test-renderer';
-import {Animated,StyleSheet,View} from 'react-native';
+import {Animated,Platform,StyleSheet,View} from 'react-native';
 import { helpNavigationIndex, helpIsAtLatest, helpTimelineRows, helpVisibleRows, helpTimelineEntries, helpMessageGroups } from '../src/features/help/helpTimelineModel';
 import type { HelpMessage } from '../src/features/help/helpApi';
 let mockFlashProps:any;
@@ -34,6 +34,7 @@ import {HelpDateSeparator} from '../src/features/help/components/HelpTimelineInd
 import {HelpMediaLoadingContext} from '../src/features/help/helpMediaLoading';
 import {HelpMessageArrival} from '../src/features/help/components/HelpMessageArrival';
 
+const animatedNumber=(value:any)=>typeof value==='number'?value:value.__getValue();
 const message=(sequence:number,date='2026-10-28T12:00:00Z')=>({id:sequence,sequence,createdAt:date}) as HelpMessage;
 describe('messenger viewport and read boundaries',()=>{
   test('nonmonotonic dates keep recycled row keys unique',()=>{
@@ -113,6 +114,42 @@ describe('sticky date geometry and navigation integration',()=>{
     ref=React.createRef<HelpTimelineHandle>();
   });
   afterEach(async()=>{if(screen)await act(async()=>screen!.unmount());screen=undefined;jest.clearAllTimers();jest.useRealTimers();});
+  test('web margin wheel uses the existing scroll node and the manual scroll policy',async()=>{
+    const previous=Platform.OS;Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});
+    const node={scrollTop:500,clientHeight:600,scrollHeight:2000};mockListApi.getScrollableNode=()=>node;
+    props.onUserScroll=jest.fn();
+    try{
+      await render();
+      await act(async()=>{expect(ref.current!.scrollByWheel!(-100,0)).toBe(true);});
+      expect(node.scrollTop).toBe(400);expect(props.onUserScroll).toHaveBeenCalledTimes(1);expect(props.onFollow).toHaveBeenLastCalledWith(false);
+      await act(async()=>{ref.current!.scrollByWheel!(2,1);});expect(node.scrollTop).toBe(432);
+      await act(async()=>{ref.current!.scrollByWheel!(1,2);});expect(node.scrollTop).toBe(1032);
+      await act(async()=>{ref.current!.scrollByWheel!(9999,0);});expect(node.scrollTop).toBe(1400);
+      props.active=false;await render();
+      await act(async()=>{expect(ref.current!.scrollByWheel!(-100,0)).toBe(false);});expect(node.scrollTop).toBe(1400);
+    }finally{delete mockListApi.getScrollableNode;Object.defineProperty(Platform,'OS',{configurable:true,value:previous});}
+  });
+  test.each(['web','android'] as const)('%s chat readiness survives layout and empty-history updates with the correct animation driver',async platform=>{
+    const previous=Platform.OS;
+    Object.defineProperty(Platform,'OS',{configurable:true,value:platform});
+    try{
+      await render();
+      const layer=screen!.root.findByProps({testID:'help-timeline-live-layer'});
+      const opacity=StyleSheet.flatten(layer.props.style).opacity as any;
+      // A native-marked value calls the unavailable bridge from setValue on web.
+      expect(Boolean(opacity.__isNative)).toBe(platform!=='web');
+      props={...props,messages:[]};
+      await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+      expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-timeline-live-layer'}).props.style).opacity).toBe(1);
+      props={...props,messages:[message(3,nextDate)]};
+      await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+      await act(async()=>mockFlashProps.onLoad());
+      expect(props.onError).not.toHaveBeenCalled();
+    }finally{
+      if(screen)await act(async()=>screen!.unmount());screen=undefined;
+      Object.defineProperty(Platform,'OS',{configurable:true,value:previous});
+    }
+  });
   test('a still-visible inline day hides its sticky copy even when FlashList starts at the next message',async()=>{
     mockLayouts[0]={y:110,height:44};mockLayouts[1]={y:154,height:100};
     mockListApi.computeVisibleIndices=()=>({startIndex:1,endIndex:3});
@@ -125,6 +162,30 @@ describe('sticky date geometry and navigation integration',()=>{
     mockListApi.getChildContainerDimensions=()=>({width:390,height:464});
     await render();
     expect(floating()).toBeUndefined();
+    const moving=screen!.root.findAllByProps({testID:'help-moving-date'})[0];
+    expect(StyleSheet.flatten(moving.props.style).opacity.__getValue()).toBe(0);
+    const inline=screen!.root.findAllByProps({testID:'help-inline-date-motion'})[0];
+    expect(StyleSheet.flatten(inline.props.style).opacity.__getValue()).toBe(1);
+    expect(StyleSheet.flatten(inline.props.style).transform).toBeUndefined();
+  });
+  test.each(['android','web'] as const)('%s binds dates to native scrolling only and preserves the FlashList listener',async platform=>{
+    const previous=Platform.OS;Object.defineProperty(Platform,'OS',{configurable:true,value:platform});
+    const publish=jest.fn();props={...props,onDatePresentationChange:publish};await render();
+    const listener=jest.fn(),event=jest.fn(),binding=jest.spyOn(Animated,'event').mockReturnValue(event);
+    let scroll!:TestRenderer.ReactTestRenderer;
+    try{
+      const Scroll=mockFlashProps.renderScrollComponent,ref=React.createRef<any>();
+      await act(async()=>{scroll=TestRenderer.create(React.createElement(Scroll,{ref,onScroll:listener}));});
+      if(platform==='web'){
+        expect(binding).not.toHaveBeenCalled();
+        expect(scroll.root.findByType(Animated.ScrollView).props.onScroll).toBe(listener);
+      }else{
+        const [mapping,config]=binding.mock.calls.at(-1)!;
+        expect(config).toMatchObject({useNativeDriver:true,listener});
+        expect(mapping[0].nativeEvent.contentOffset.y).toBe(publish.mock.calls.at(-1)![0].scrollOffset);
+      }
+      expect(mockListApi.getNativeScrollRef()).toBeNull();
+    }finally{if(scroll)await act(async()=>scroll.unmount());binding.mockRestore();Object.defineProperty(Platform,'OS',{configurable:true,value:previous});}
   });
   test('atomic native layout owns appended media and late geometry without a JS or nested answer clock',async()=>{
     mockReducedMotion=false;mockNativeChatLayout=true;mockNativeAtomicTailMotion=true;
@@ -191,6 +252,46 @@ describe('sticky date geometry and navigation integration',()=>{
     height=440;await act(async()=>mockFlashProps.onCommitLayoutEffect());
     expect(mockTailTiming).not.toHaveBeenCalled();
   });
+  test('opening geometry is a baseline, not an animated tail arrival',async()=>{
+    mockReducedMotion=false;mockNativeChatLayout=true;props={...props,bottomAligned:true,entrySettled:false};
+    let height=300;mockListApi.getChildContainerDimensions=()=>({width:390,height});
+    await render();mockTailTiming.mockClear();
+    height=360;props={...props,messages:[...props.messages,message(3,nextDate)]};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(mockTailTiming).not.toHaveBeenCalled();
+    props={...props,entrySettled:true};await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    await act(async()=>mockFlashProps.onCommitLayoutEffect());
+    expect(mockTailTiming).not.toHaveBeenCalled();
+    height=420;props={...props,messages:[...props.messages,message(4,nextDate)]};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(mockTailTiming).toHaveBeenCalledTimes(1);
+  });
+  test.each([false,true])('late initial measurements stay still until live content arrives (native atomic=%s)',async atomic=>{
+    mockReducedMotion=false;mockNativeChatLayout=atomic;mockNativeAtomicTailMotion=atomic;
+    const onLiveTailStart=jest.fn();props={...props,onLiveTailStart,entrySettled:false};
+    let height=1000;mockListApi.getChildContainerDimensions=()=>({width:390,height});
+    await render();mockTailTiming.mockClear();
+    // A cache/network opening refresh is still initial history.
+    height=1100;props={...props,messages:props.messages.map(row=>({...row,text:'Cached final answer'}))};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    props={...props,entrySettled:true};await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    height=1200;await act(async()=>mockFlashProps.onCommitLayoutEffect());
+    height=1280;await act(async()=>mockFlashProps.onContentSizeChange(390,height));
+    expect(mockTailTiming).not.toHaveBeenCalled();expect(onLiveTailStart).not.toHaveBeenCalled();
+    // New references, profile/avatar hydration and dates are not live replies.
+    props={...props,messages:props.messages.map(row=>({...row,createdAt:nextDate,author:{id:5,name:'Updated profile',avatarUrl:'avatar.png'}}))};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    height=1320;await act(async()=>mockFlashProps.onCommitLayoutEffect());
+    expect(mockTailTiming).not.toHaveBeenCalled();expect(onLiveTailStart).not.toHaveBeenCalled();
+    height=1400;props={...props,messages:[...props.messages,message(3,nextDate)]};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(onLiveTailStart).toHaveBeenCalledTimes(1);
+    expect(mockTailTiming).toHaveBeenCalledTimes(atomic?0:1);
+    height=1450;props={...props,messages:props.messages.map(row=>row.id===3?{...row,text:'Live stream'}:row)};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(onLiveTailStart).toHaveBeenCalledTimes(1);
+    expect(mockTailTiming).toHaveBeenCalledTimes(atomic?0:2);
+  });
   test.each([['TEXT',60],['AUDIO',88],['IMAGE',360]])('%s lifts a long native history by its measured height on one clock',async(kind,growth)=>{
     mockReducedMotion=false;mockNativeChatLayout=true;
     let height=1600;mockListApi.getChildContainerDimensions=()=>({width:390,height});
@@ -241,7 +342,8 @@ describe('sticky date geometry and navigation integration',()=>{
     expect(window).not.toHaveBeenCalled();
     mockListApi.getLayout=(index:number)=>mockLayouts[index];
     await act(async()=>mockFlashProps.onCommitLayoutEffect());
-    expect(window).toHaveBeenCalledTimes(1);
+    // Tail geometry and date projection each tolerate unavailable dimensions.
+    expect(window).toHaveBeenCalledTimes(2);
   });
   test('inactive updates retain the geometry baseline without animating on return',async()=>{
     mockReducedMotion=false;mockNativeChatLayout=true;props={...props,bottomAligned:true};
@@ -276,6 +378,30 @@ describe('sticky date geometry and navigation integration',()=>{
     await act(async()=>mockFlashProps.onLoad());
     await observe();
   }
+  test('web commits late offscreen measurements at the tail before paint and releases it on a user gesture',async()=>{
+    const previousPlatform=Platform.OS;
+    Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});
+    let content=1000,offset=400;
+    const nativeEnd=jest.fn(()=>{offset=content-600;});
+    mockListApi.getNativeScrollRef=()=>({scrollToEnd:nativeEnd});
+    mockListApi.getAbsoluteLastScrollOffset=()=>offset;
+    try{
+      await render();nativeEnd.mockClear();mockListApi.scrollToEnd.mockClear();
+      // Expanding drawDistance measures older cells after the scene is visible.
+      // Browser clamping keeps an outdated offset until we commit the new end.
+      content=1042;
+      await act(async()=>mockFlashProps.onCommitLayoutEffect());
+      expect(offset).toBe(442);
+      expect(nativeEnd).toHaveBeenCalledWith({animated:false});
+      expect(mockListApi.scrollToEnd).not.toHaveBeenCalled();
+      nativeEnd.mockClear();
+      await act(async()=>mockFlashProps.onWheel());
+      offset=200;content=1100;
+      await act(async()=>mockFlashProps.onCommitLayoutEffect());
+      expect(offset).toBe(200);
+      expect(nativeEnd).not.toHaveBeenCalled();
+    }finally{Object.defineProperty(Platform,'OS',{configurable:true,value:previousPlatform});}
+  });
   test('server receipt updates a stable list holder instead of moving a footer into the list',async()=>{
     const pending={key:'qa-cell',ticketId:7,create:false,createdAt:Date.parse(nextDate),status:'sending' as const,input:{text:'QA',clientMessageId:'qa-cell'}};
     props={...props,pendingMessages:[pending],renderPending:()=>React.createElement(View,{testID:'pending-cell'})};
@@ -318,6 +444,46 @@ describe('sticky date geometry and navigation integration',()=>{
     await act(async()=>jest.advanceTimersByTimeAsync(700));
     expect(props.onRead).toHaveBeenLastCalledWith(2);
   });
+  test('a grouped question answer is one cell with committed read sequence and stable source anchor',async()=>{
+    const question=props.messages[1],answer={...message(3,nextDate),ticketId:question.ticketId};
+    props={...props,messages:[props.messages[0],question,answer],questionExchanges:new Map([[question.id,{message:answer,answers:[]}]])};
+    await render();await act(async()=>jest.advanceTimersByTimeAsync(700));
+    expect(mockFlashProps.data.filter((row:any)=>row.kind==='message').map((row:any)=>row.message.id)).toEqual([1,2]);
+    expect(props.onRead).toHaveBeenLastCalledWith(3);
+    expect(screen!.root.findAllByProps({testID:'message-3'})).toHaveLength(0);
+    await act(async()=>ref.current!.save());
+    expect(props.onSave).toHaveBeenCalledWith(expect.objectContaining({messageId:1,sequence:1}),expect.anything());
+  });
+  test('a final answer replacing progress rechecks reads without scroll or content-size events',async()=>{
+    props={...props,messages:[message(1,firstDate),{...message(2,nextDate),kind:'ASSISTANT_PROGRESS'}]};
+    await render();await act(async()=>jest.advanceTimersByTimeAsync(700));
+    (props.onRead as jest.Mock).mockClear();
+    props={...props,messages:[props.messages[0],{...props.messages[1],kind:'TEXT',text:'Final answer'}]};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    await act(async()=>jest.advanceTimersByTimeAsync(700));
+    expect(props.onRead).toHaveBeenLastCalledWith(2);
+    // The same update while reading above the answer must only read the visible history.
+    (props.onRead as jest.Mock).mockClear();mockLayouts[3]={y:650,height:100};
+    props={...props,messages:[props.messages[0],{...props.messages[1],text:'Updated final answer'}]};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    await act(async()=>jest.advanceTimersByTimeAsync(700));
+    expect(props.onRead).toHaveBeenLastCalledWith(1);
+  });
+  test('web background does not read answers and foreground rechecks the unchanged viewport',async()=>{
+    const platform=Platform.OS,previousDocument=Object.getOwnPropertyDescriptor(globalThis,'document');
+    const listeners=new Set<()=>void>();let visibilityState='hidden';
+    Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});
+    Object.defineProperty(globalThis,'document',{configurable:true,value:{get visibilityState(){return visibilityState;},addEventListener:(_event:string,fn:()=>void)=>listeners.add(fn),removeEventListener:(_event:string,fn:()=>void)=>listeners.delete(fn)}});
+    try{
+      await render();await act(async()=>jest.advanceTimersByTimeAsync(700));expect(props.onRead).not.toHaveBeenCalled();
+      visibilityState='visible';await act(async()=>{for(const listener of listeners)listener();});
+      await act(async()=>jest.advanceTimersByTimeAsync(700));expect(props.onRead).toHaveBeenLastCalledWith(2);
+      await act(async()=>screen!.unmount());screen=undefined;expect(listeners.size).toBe(0);
+    }finally{
+      Object.defineProperty(Platform,'OS',{configurable:true,value:platform});
+      if(previousDocument)Object.defineProperty(globalThis,'document',previousDocument);else Reflect.deleteProperty(globalThis,'document');
+    }
+  });
   test('first optimistic cell waits for settled tail geometry before playing its arrival',async()=>{
     props={...props,messages:[],bottomAligned:true,renderPending:()=>React.createElement(View)};
     await render();
@@ -326,12 +492,12 @@ describe('sticky date geometry and navigation integration',()=>{
     props={...props,pendingMessages:[pending]};
     await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
     const layer=()=>StyleSheet.flatten(screen!.root.findByProps({testID:'help-timeline-live-layer'}).props.style);
-    expect(layer().opacity).toBe(0);
+    expect(animatedNumber(layer().opacity)).toBe(0);
     expect(screen!.root.findByType(HelpMessageArrival).props.deferred).toBe(true);
-    await act(async()=>jest.advanceTimersByTimeAsync(100));expect(layer().opacity).toBe(0);
+    await act(async()=>jest.advanceTimersByTimeAsync(100));expect(animatedNumber(layer().opacity)).toBe(0);
     mockLayouts=[{y:400,height:44},{y:444,height:84}];
     await act(async()=>jest.advanceTimersByTimeAsync(100));
-    expect(layer().opacity).toBe(1);
+    expect(animatedNumber(layer().opacity)).toBe(1);
     expect(screen!.root.findByType(HelpMessageArrival).props.deferred).toBe(false);
   });
   test('missing first-cell measurements cannot keep a saved outgoing message invisible',async()=>{
@@ -340,7 +506,7 @@ describe('sticky date geometry and navigation integration',()=>{
     props={...props,pendingMessages:[{key:'qa-layout-timeout',ticketId:null,create:true,createdAt:Date.parse(nextDate),input:{text:'QA',clientMessageId:'qa-layout-timeout'}}]};
     await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
     await act(async()=>jest.advanceTimersByTimeAsync(700));
-    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-timeline-live-layer'}).props.style).opacity).toBe(1);
+    expect(animatedNumber(StyleSheet.flatten(screen!.root.findByProps({testID:'help-timeline-live-layer'}).props.style).opacity)).toBe(1);
   });
   test('only a live appended tail is eligible for arrival, not initial history or edits',async()=>{
     await render();
@@ -394,19 +560,22 @@ describe('sticky date geometry and navigation integration',()=>{
       await act(async()=>screen!.unmount());screen=undefined;
     }
   });
-  function floating(){return screen!.root.findAllByType(HelpDateSeparator).find(node=>StyleSheet.flatten(node.parent?.props.style)?.position==='absolute');}
+  function floating(){
+    const pinned=(props.onStickyDateChange as jest.Mock).mock.calls.at(-1)?.[0];
+    return screen!.root.findAllByType(HelpDateSeparator).find(node=>node.props.compact&&node.props.date===pinned);
+  }
   test('a future day separator does not hide the current day and compact pill sits4px below capsule',async()=>{
     await render();const date=floating()!;
     expect(date.props.date).toBe(firstDate);expect(date.props.compact).toBe(true);
-    const top=StyleSheet.flatten(date.parent!.props.style).top as number;
+    const top=StyleSheet.flatten(screen!.root.findByProps({testID:'help-date-layer'}).props.style).top as number;
     expect(top).toBe(88);expect(top-(props.headerHeight-16)).toBe(4);
     expect(props.onStickyDateChange).toHaveBeenLastCalledWith(firstDate);
     await act(async()=>date.props.onPress());expect(props.onDate).toHaveBeenCalledWith(firstDate);
   });
   test('voice header growth moves the chip by the measured delta without changing its date',async()=>{
-    await render();const initial=StyleSheet.flatten(floating()!.parent!.props.style).top as number;
+    await render();const initial=StyleSheet.flatten(screen!.root.findByProps({testID:'help-date-layer'}).props.style).top as number;
     props={...props,headerHeight:144};await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));await observe();
-    expect(StyleSheet.flatten(floating()!.parent!.props.style).top).toBe(initial+44);expect(floating()!.props.date).toBe(firstDate);
+    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-date-layer'}).props.style).top).toBe(initial+44);expect(floating()!.props.date).toBe(firstDate);
     expect(mockFlashProps.contentContainerStyle.paddingTop).toBe(156);
   });
   test('external overlay receives sticky date while internal rendering is hidden; handle jump uses it',async()=>{
@@ -422,17 +591,22 @@ describe('sticky date geometry and navigation integration',()=>{
     mockLayouts[0]={y:110,height:44};mockLayouts[1]={y:154,height:100};await render();
     expect(floating()).toBeUndefined();expect(props.onStickyDateChange).toHaveBeenLastCalledWith(null);
   });
-  test.each([80,55,51])('partly clipped same-day pill at rowTop%s suppresses the duplicate despite read-visibility threshold',async rowTop=>{
-    // At80 only24 of the44px touch row remain below headerHeight100; at51
-    // just1px of the pill remains below the capsule bottom84. Both are visible.
+  test.each([78,55,51])('a day at rowTop%s pins at its visual top independently of read visibility',async rowTop=>{
     mockLayouts[0]={y:rowTop,height:44};await render();
     expect(floating()!.props.date).toBe(firstDate);
-    expect(screen!.root.findAllByProps({testID:'help-inline-date-clip'})[0].props.style.opacity).toBe(0);
+    const inline=screen!.root.findAllByProps({testID:'help-inline-date-motion'})[0];
+    expect(StyleSheet.flatten(inline.props.style).opacity.__getValue()).toBe(0);
+    expect(StyleSheet.flatten(inline.props.style).transform).toBeUndefined();
   });
-  test('sticky date appears only after the inline pill fully clears the capsule boundary',async()=>{
+  test('the same date pins exactly at the layer boundary and unpins on reverse scroll',async()=>{
     mockLayouts[0]={y:110,height:44};await render();expect(floating()).toBeUndefined();
-    mockLayouts[0]={y:100,height:44};await observe();
+    const moving=screen!.root.findAllByProps({testID:'help-moving-date'})[0];
+    mockLayouts[0]={y:79,height:44};await observe();expect(floating()).toBeUndefined();
+    mockLayouts[0]={y:78,height:44};await observe();
     expect(floating()!.props.date).toBe(firstDate);expect(props.onStickyDateChange).toHaveBeenLastCalledWith(firstDate);
+    expect(screen!.root.findAllByProps({testID:'help-moving-date'})[0]).toBe(moving);
+    mockLayouts[0]={y:79,height:44};await observe();expect(floating()).toBeUndefined();
+    expect(screen!.root.findAllByProps({testID:'help-moving-date'})[0]).toBe(moving);
   });
   test('a partly clipped future-day pill cannot suppress the first visible message day',async()=>{
     // A following day can overlap the header during recycled layout estimates.
@@ -460,9 +634,9 @@ describe('sticky date geometry and navigation integration',()=>{
     expect(selected.props.accessibilityState.selected).toBe(true);
     await act(async()=>selected.props.onTouchEnd());expect(onPress).toHaveBeenCalledTimes(1);
   });
-  test.each(['attachment','reply'])('%s images retain viewport priorities without replacing the row renderer',async location=>{
-    const image={id:'test-image',kind:'IMAGE'};
-    props.messages=Array.from({length:12},(_,index)=>({...message(index+1,firstDate),...(location==='attachment'?{attachments:[image]}:{replyTo:{id:99,text:'',attachments:[image]}})})) as HelpMessage[];
+  test.each(['attachment','reply','html'])('%s media retain viewport priorities without replacing the row renderer',async location=>{
+    const image=location==='html'?{id:'html',kind:'FILE',mimeType:'application/vnd.leaderproduct.help-html+json',name:'2cdcf0db-cf0a-4e9e-b857-df9ea3666450.help-html.json'}:{id:'test-image',kind:'IMAGE'};
+    props.messages=Array.from({length:12},(_,index)=>({...message(index+1,firstDate),...(location!=='reply'?{attachments:[image]}:{replyTo:{id:99,text:'',attachments:[image]}})})) as HelpMessage[];
     function MediaPriority({id}:{id:number}){const priority=React.useContext(HelpMediaLoadingContext);return React.createElement(View,{testID:`priority-${id}`,accessibilityLabel:priority});}
     props.renderMessage=row=>React.createElement(MediaPriority,{id:row.id});
     await render();const renderer=mockFlashProps.renderItem;
@@ -477,6 +651,73 @@ describe('sticky date geometry and navigation integration',()=>{
     expect(screen!.root.findByProps({testID:'priority-10'}).props.accessibilityLabel).toBe('visible');
   });
   const scrollEvent=(offset:number)=>({nativeEvent:{contentOffset:{x:0,y:offset},layoutMeasurement:{width:390,height:600},contentSize:{width:390,height:1000}}});
+  test('the positioned initial window is visible in its layout commit before onLoad or entrance completion',async()=>{
+    props={...props,entrySettled:false,onReady:jest.fn(),navigationTarget:{key:289,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
+    mockListApi.getAbsoluteLastScrollOffset=()=>259;
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpTimeline,{...props,ref}));});
+    await act(async()=>{mockFlashProps.onLayout({nativeEvent:{layout:{height:600}}});mockFlashProps.onContentSizeChange(390,1000);});
+    await act(async()=>mockFlashProps.onCommitLayoutEffect());
+    expect(props.onReady).toHaveBeenCalledTimes(1);
+    expect(animatedNumber(StyleSheet.flatten(screen!.root.findByProps({testID:'help-timeline-live-layer'}).props.style).opacity)).toBe(1);
+    expect(mockFlashProps.drawDistance).toBe(320);
+    await act(async()=>mockFlashProps.onLoad());
+    expect(props.onReady).toHaveBeenCalledTimes(1);
+  });
+  test('prepared entry waits for stable native geometry after initial positioning',async()=>{
+    jest.spyOn(global,'requestAnimationFrame').mockImplementation(callback=>setTimeout(()=>callback(performance.now()),16) as unknown as number);
+    jest.spyOn(global,'cancelAnimationFrame').mockImplementation(id=>clearTimeout(id));
+    props={...props,prepareBeforeEntry:true,entrySettled:false,onReady:jest.fn(),navigationTarget:{key:289,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
+    mockListApi.getAbsoluteLastScrollOffset=()=>259;
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpTimeline,{...props,ref}));});
+    await act(async()=>{mockFlashProps.onLayout({nativeEvent:{layout:{height:600}}});mockFlashProps.onContentSizeChange(390,1000);});
+    await act(async()=>mockFlashProps.onCommitLayoutEffect());
+    expect(props.onReady).not.toHaveBeenCalled();
+    await act(async()=>jest.advanceTimersByTimeAsync(16));
+    await act(async()=>mockFlashProps.onContentSizeChange(390,1010));
+    expect(props.onReady).not.toHaveBeenCalled();
+    await act(async()=>jest.advanceTimersByTimeAsync(100));
+    expect(props.onReady).toHaveBeenCalledTimes(1);
+    expect(mockFlashProps.drawDistance).toBe(320);
+  });
+  test('an initial layout commit keeps an unmeasured saved anchor hidden',async()=>{
+    props={...props,entrySettled:false,onReady:jest.fn(),navigationTarget:{key:288,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
+    mockLayouts=mockLayouts.map(layout=>({...layout,isHeightMeasured:false}));
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpTimeline,{...props,ref}));});
+    await act(async()=>{mockFlashProps.onLayout({nativeEvent:{layout:{height:600}}});mockFlashProps.onContentSizeChange(390,1000);mockFlashProps.onCommitLayoutEffect();});
+    expect(props.onReady).not.toHaveBeenCalled();
+    expect(animatedNumber(StyleSheet.flatten(screen!.root.findByProps({testID:'help-timeline-live-layer'}).props.style).opacity)).toBe(0);
+  });
+  test('initial rows cannot reveal while FlashList still estimates their width',async()=>{
+    props={...props,entrySettled:false,onReady:jest.fn(),navigationTarget:{key:287,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
+    mockListApi.getAbsoluteLastScrollOffset=()=>259;
+    mockLayouts=mockLayouts.map(layout=>({...layout,isHeightMeasured:true,isWidthMeasured:false,width:0}));
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpTimeline,{...props,ref}));});
+    await act(async()=>{mockFlashProps.onLayout({nativeEvent:{layout:{height:600}}});mockFlashProps.onContentSizeChange(390,1000);mockFlashProps.onCommitLayoutEffect();});
+    expect(props.onReady).not.toHaveBeenCalled();
+    mockLayouts=mockLayouts.map(layout=>({...layout,isHeightMeasured:true,isWidthMeasured:true,width:390}));
+    await act(async()=>mockFlashProps.onCommitLayoutEffect());
+    await act(async()=>jest.advanceTimersByTimeAsync(32));
+    expect(props.onReady).toHaveBeenCalledTimes(1);
+  });
+  test('a measured initial window at its requested offset reveals on load without advancing a frame timer',async()=>{
+    props={...props,onReady:jest.fn(),navigationTarget:{key:290,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
+    mockListApi.getAbsoluteLastScrollOffset=()=>259;
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpTimeline,{...props,ref}));});
+    await act(async()=>{mockFlashProps.onLayout({nativeEvent:{layout:{height:600}}});mockFlashProps.onContentSizeChange(390,1000);});
+    expect(props.onReady).not.toHaveBeenCalled();
+    await act(async()=>mockFlashProps.onLoad());
+    expect(props.onReady).toHaveBeenCalledTimes(1);
+    expect(animatedNumber(StyleSheet.flatten(screen!.root.findByProps({testID:'help-timeline-live-layer'}).props.style).opacity)).toBe(1);
+  });
+  test('a measured short initial window reveals on load despite a stale cached index offset',async()=>{
+    props={...props,onReady:jest.fn(),navigationTarget:{key:291,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
+    mockListApi.getAbsoluteLastScrollOffset=()=>80;
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpTimeline,{...props,ref}));});
+    await act(async()=>{mockFlashProps.onLayout({nativeEvent:{layout:{height:600}}});mockFlashProps.onContentSizeChange(390,470);});
+    await act(async()=>mockFlashProps.onLoad());
+    expect(props.onReady).toHaveBeenCalledTimes(1);
+    expect(animatedNumber(StyleSheet.flatten(screen!.root.findByProps({testID:'help-timeline-live-layer'}).props.style).opacity)).toBe(1);
+  });
   test('opening a saved index needs one measured alignment, not an index preparation and stability loop',async()=>{
     props={...props,onReady:jest.fn(),navigationTarget:{key:91,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
     mockListApi.scrollToOffset.mockImplementation(({offset}:any)=>{mockListApi.getAbsoluteLastScrollOffset=()=>offset;});
@@ -496,6 +737,8 @@ describe('sticky date geometry and navigation integration',()=>{
     expect(props.onReady).toHaveBeenCalled();
     expect(mockFlashProps.drawDistance).toBe(320);
     props={...props,entrySettled:true};await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(mockFlashProps.drawDistance).toBe(320);
+    await act(async()=>jest.advanceTimersByTimeAsync(80));
     expect(mockFlashProps.drawDistance).toBeGreaterThanOrEqual(1200);
   });
   test('initial positioning keeps estimates hidden and owns the anchor until measured rows stop changing',async()=>{
@@ -529,6 +772,44 @@ describe('sticky date geometry and navigation integration',()=>{
     expect(mockListApi.scrollToIndex).not.toHaveBeenCalled();
     expect(mockListApi.scrollToOffset).toHaveBeenLastCalledWith({offset:259,animated:false,skipFirstItemOffset:true});
     expect(props.onReady).toHaveBeenCalledTimes(1);
+  });
+  test.each(['web','android'] as const)('%s late history keeps delayed initial-index replay at the opening target after reveal',async platform=>{
+    const previousPlatform=Platform.OS;
+    Object.defineProperty(Platform,'OS',{configurable:true,value:platform});
+    const opening=require('../src/features/help/helpOpeningScroll');
+    const createOpeningRef=opening.helpOpeningScrollRef;
+    let resolvePosition!:()=>import('../src/features/help/helpOpeningScroll').HelpOpeningScrollPosition|null;
+    const wrapper=jest.spyOn(opening,'helpOpeningScrollRef').mockImplementation((native:any,position:any)=>{
+      resolvePosition=position;return createOpeningRef(native,position);
+    });
+    let scroll:TestRenderer.ReactTestRenderer|undefined;
+    try{
+      const messages=props.messages;
+      props={...props,messages:[],loading:true,onReady:jest.fn(),navigationTarget:null};
+      mockListApi.scrollToOffset.mockImplementation(({offset}:any)=>{mockListApi.getAbsoluteLastScrollOffset=()=>offset;});
+      await render();expect(props.onReady).not.toHaveBeenCalled();
+      const Scroll=mockFlashProps.renderScrollComponent,scrollRef=React.createRef<any>();
+      await act(async()=>{scroll=TestRenderer.create(React.createElement(Scroll,{ref:scrollRef}));});
+      props={...props,messages,loading:false,navigationTarget:{key:194,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
+      await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+      await act(async()=>jest.advanceTimersByTimeAsync(80));
+      expect(props.onReady).toHaveBeenCalledTimes(1);
+      expect(animatedNumber(StyleSheet.flatten(screen!.root.findByProps({testID:'help-timeline-live-layer'}).props.style).opacity)).toBe(1);
+      // Exercise the resolver mounted before history arrived, then the actual
+      // proxy contract used by FlashList's queued initial-index scroll command.
+      let offset=259;
+      const native={scrollTo:jest.fn(({y}:{y:number})=>{offset=y;}),scrollToEnd:jest.fn()};
+      const replay=createOpeningRef(native,resolvePosition);
+      replay.scrollTo({y:364,animated:false});
+      expect(offset).toBe(259);expect(native.scrollTo).toHaveBeenLastCalledWith({y:259,animated:false});
+      await act(async()=>mockFlashProps.onScrollBeginDrag());
+      replay.scrollTo({y:120,animated:true});
+      expect(offset).toBe(120);expect(native.scrollTo).toHaveBeenLastCalledWith({y:120,animated:true});
+    }finally{
+      if(scroll)await act(async()=>scroll!.unmount());
+      wrapper.mockRestore();
+      Object.defineProperty(Platform,'OS',{configurable:true,value:previousPlatform});
+    }
   });
   test('late history brings an unmeasured saved cell into the rendered window',async()=>{
     const messages=props.messages;props={...props,messages:[],loading:true,onReady:jest.fn(),navigationTarget:null};
@@ -580,18 +861,18 @@ describe('sticky date geometry and navigation integration',()=>{
   test('date preparation leaves the original on screen and resolves only after the old viewport is painted',async()=>{
     mockReducedMotion=false;await render();
     await act(async()=>ref.current!.jumpToDate(firstDate));
-    expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-timeline-live-layer'})[0].props.style).opacity).toBe(1);
-    expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-timeline-preparation'})[0].props.style).opacity).toBe(0);
+    expect(animatedNumber(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-timeline-live-layer'})[0].props.style).opacity)).toBe(1);
+    expect(animatedNumber(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-timeline-preparation'})[0].props.style).opacity)).toBe(0);
     let prepared=false;
     const waiting=ref.current!.waitForJumpReady().then(value=>{prepared=value;});
     expect(prepared).toBe(false);
     await act(async()=>jest.advanceTimersByTimeAsync(70));
     await waiting;
     expect(prepared).toBe(true);
-    expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-timeline-transition'})[0].props.style).opacity).toBe(1);
+    expect(animatedNumber(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-timeline-transition'})[0].props.style).opacity)).toBe(1);
   });
-  test('latest retains a nearby viewport until ready, blocks repeat taps and animates both fragments once',async()=>{
-    mockReducedMotion=false;await render();
+  test('latest retains a distant unloaded viewport until ready and animates both fragments once',async()=>{
+    mockReducedMotion=false;props={...props,hasNewer:true};await render();
     const timing=jest.spyOn(require('react-native').Animated,'timing');
     try{
       let accepted=false;
@@ -601,18 +882,58 @@ describe('sticky date geometry and navigation integration',()=>{
       expect(live().transform[0].translateY.__getValue()).toBe(0);
       const waiting=ref.current!.waitForJumpReady();
       await act(async()=>jest.advanceTimersByTimeAsync(70));expect(await waiting).toBe(true);
-      props={...props,navigationTarget:{kind:'latest',key:902,animate:true}};
+      props={...props,hasNewer:false,navigationTarget:{kind:'latest',key:902,animate:true}};
       mockListApi.scrollToEnd.mockClear();
       await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
       expect(ref.current!.prepareJump()).toBe(false);
       await act(async()=>jest.advanceTimersByTimeAsync(70));
-      expect(timing.mock.calls.filter(([,config]:any)=>config.duration===600)).toHaveLength(1);
+      expect(timing.mock.calls.filter(([,config]:any)=>config.duration===400)).toHaveLength(1);
       const positions=mockListApi.scrollToEnd.mock.calls.length;
       await act(async()=>jest.advanceTimersByTimeAsync(700));
       expect(mockListApi.scrollToEnd.mock.calls.length).toBe(positions);
       expect(screen!.root.findAllByProps({testID:'help-timeline-transition'})).toHaveLength(0);
       expect(props.onFollow).toHaveBeenLastCalledWith(true);
     }finally{timing.mockRestore();}
+  });
+  test.each([false,true])('near latest preserves mounted message state and waits for native scroll completion (native=%s)',async native=>{
+    mockReducedMotion=false;mockNativeChatLayout=native;
+    const mounted=jest.fn(),unmounted=jest.fn(),nativeEnd=jest.fn();
+    const StatefulMessage=({id}:{id:number})=>{React.useEffect(()=>{mounted(id);return()=>unmounted(id);},[id]);return React.createElement(View,{testID:`stateful-${id}`});};
+    props={...props,renderMessage:row=>React.createElement(StatefulMessage,{id:row.id})};
+    mockListApi.getNativeScrollRef=()=>({scrollToEnd:nativeEnd});
+    await render();const instances=screen!.root.findAllByType(StatefulMessage);
+    mounted.mockClear();unmounted.mockClear();mockListApi.scrollToEnd.mockClear();nativeEnd.mockClear();
+    await act(async()=>{expect(ref.current!.prepareJump()).toBe(true);});
+    expect(await ref.current!.waitForJumpReady()).toBe(true);
+    expect(screen!.root.findAllByProps({testID:'help-timeline-preparation'})).toHaveLength(0);
+    expect(screen!.root.findAllByProps({testID:'help-timeline-transition'})).toHaveLength(0);
+    props={...props,navigationTarget:{kind:'latest',key:903,animate:true}};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(native?nativeEnd:mockListApi.scrollToEnd).toHaveBeenCalledWith({animated:true});
+    expect(ref.current!.prepareJump()).toBe(false);expect(props.onFollow).toHaveBeenLastCalledWith(false);
+    await act(async()=>mockFlashProps.onScroll(scrollEvent(200)));
+    expect(props.onFollow).toHaveBeenLastCalledWith(false);
+    await act(async()=>mockFlashProps.onScroll(scrollEvent(native?472:400)));
+    expect(props.onFollow).toHaveBeenLastCalledWith(true);
+    expect(mounted).not.toHaveBeenCalled();expect(unmounted).not.toHaveBeenCalled();
+    expect(screen!.root.findAllByType(StatefulMessage)).toEqual(instances);
+  });
+  test('a long final message already on screen is not copied even beyond one viewport',async()=>{
+    mockReducedMotion=false;mockLayouts[3]={y:364,height:1800};await render();
+    await act(async()=>mockFlashProps.onScroll({nativeEvent:{contentOffset:{x:0,y:0},layoutMeasurement:{width:390,height:600},contentSize:{width:390,height:2164}}}));
+    await act(async()=>{expect(ref.current!.prepareJump()).toBe(true);});
+    expect(await ref.current!.waitForJumpReady()).toBe(true);
+    expect(screen!.root.findAllByProps({testID:'help-timeline-preparation'})).toHaveLength(0);
+  });
+  test('a manual drag cancels an in-place latest scroll and keeps follow released',async()=>{
+    mockReducedMotion=false;await render();
+    await act(async()=>{ref.current!.prepareJump();});
+    props={...props,navigationTarget:{kind:'latest',key:904,animate:true}};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    await act(async()=>mockFlashProps.onScrollBeginDrag());
+    await act(async()=>mockFlashProps.onScroll(scrollEvent(200)));
+    expect(props.onFollow).toHaveBeenLastCalledWith(false);
+    await act(async()=>{expect(ref.current!.prepareJump()).toBe(true);ref.current!.cancelJump();});
   });
   test('touching the old viewport cancels a still-preparing date jump',async()=>{
     mockReducedMotion=false;await render();
@@ -643,6 +964,80 @@ describe('sticky date geometry and navigation integration',()=>{
     await act(async()=>mockFlashProps.onScrollEndDrag());
     await act(async()=>jest.advanceTimersByTimeAsync(220));
     expect(props.onFollow).toHaveBeenLastCalledWith(false);
+  });
+  test('releases the first-row anchor at the absolute start and restores it after scrolling away',async()=>{
+    await render();
+    await act(async()=>mockFlashProps.onScrollBeginDrag());
+    await act(async()=>mockFlashProps.onScroll(scrollEvent(40)));
+    expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(false);
+    await act(async()=>mockFlashProps.onScroll(scrollEvent(0)));
+    expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(true);
+    await act(async()=>mockFlashProps.onScroll(scrollEvent(40)));
+    expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(false);
+  });
+  test.each([
+    ['android',true],['android',false],['ios',true],['web',true],
+  ] as const)('short child remains draggable at zero with native dock: %s/%s',async(os,nativeDock)=>{
+    const previous=Platform.OS;Object.defineProperty(Platform,'OS',{configurable:true,value:os});
+    mockNativeChatLayout=nativeDock;
+    let scroller:TestRenderer.ReactTestRenderer|undefined;
+    try{
+      await render();
+      const onLayout=jest.fn();
+      await act(async()=>{scroller=TestRenderer.create(React.createElement(mockFlashProps.renderScrollComponent,{onLayout,contentContainerStyle:{paddingTop:112}}));});
+      const scroll=()=>scroller!.root.findByType(require('react-native').ScrollView);
+      for(const height of [600,430.5,800]){
+        const event={nativeEvent:{layout:{width:390,height}}};
+        await act(async()=>scroll().props.onLayout(event));
+        expect(onLayout).toHaveBeenLastCalledWith(event);
+        const style=StyleSheet.flatten(scroll().props.contentContainerStyle);
+        expect(style).toMatchObject({flexGrow:1,paddingTop:112});
+        if(os==='android' && nativeDock){
+          // Android ScrollView rejects interception at y=0 when child.bottom
+          // <= full viewport height, even though native dock padding adds range.
+          expect(style.minHeight).toBeGreaterThan(height);
+          expect(style.minHeight-height).toBeLessThanOrEqual(2);
+        }else expect(style.minHeight).toBeUndefined();
+      }
+    }finally{
+      if(scroller)await act(async()=>scroller!.unmount());
+      Object.defineProperty(Platform,'OS',{configurable:true,value:previous});
+    }
+  });
+  test('complete short native history never mounts a scroll anchor during edge gestures',async()=>{
+    mockNativeChatLayout=true;mockNativeAtomicTailMotion=true;
+    mockListApi.getChildContainerDimensions=()=>({width:390,height:150});
+    props={...props,hasOlder:false,hasNewer:false};
+    const shortScroll=(offset:number)=>({nativeEvent:{contentOffset:{x:0,y:offset},layoutMeasurement:{width:390,height:600},contentSize:{width:390,height:600}}});
+    await render();
+    await act(async()=>mockFlashProps.onScroll(shortScroll(72)));
+    await act(async()=>mockFlashProps.onScrollBeginDrag());
+    expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(true);
+    await act(async()=>mockFlashProps.onScroll(shortScroll(0)));
+    await act(async()=>mockFlashProps.onScrollEndDrag());
+    await act(async()=>jest.advanceTimersByTimeAsync(220));
+    expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(true);
+    await act(async()=>mockFlashProps.onScrollBeginDrag());
+    await act(async()=>mockFlashProps.onScroll(shortScroll(40)));
+    expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(true);
+    expect(mockFlashProps.maintainVisibleContentPosition.startRenderingFromBottom).toBe(true);
+  });
+  test.each(['hasOlder','hasNewer'] as const)('a short partial window keeps its anchor while %s is available',async edge=>{
+    mockNativeChatLayout=true;mockNativeAtomicTailMotion=true;
+    mockListApi.getChildContainerDimensions=()=>({width:390,height:150});
+    props={...props,hasOlder:false,hasNewer:false,[edge]:true};
+    await render();await act(async()=>mockFlashProps.onScrollBeginDrag());
+    await act(async()=>mockFlashProps.onScroll(scrollEvent(40)));
+    expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(false);
+  });
+  test('keeps prepend anchoring at the top while older history remains',async()=>{
+    props={...props,hasOlder:true};await render();
+    await act(async()=>mockFlashProps.onScrollBeginDrag());
+    await act(async()=>mockFlashProps.onScroll(scrollEvent(0)));
+    expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(false);
+    props={...props,hasOlder:false};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(true);
   });
   test('deferred cache trimming waits for drag and momentum to finish',async()=>{
     await render();(props.onSave as jest.Mock).mockClear();

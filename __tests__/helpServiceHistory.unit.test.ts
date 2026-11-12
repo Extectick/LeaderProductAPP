@@ -51,9 +51,9 @@ test('saved message and offset open an older window; snapshot fetching never mar
 test('opening ticket 1 stays interactive and falls back to the server when its local snapshot never settles',async()=>{
   mockApi.list.mockResolvedValue({tickets:[ticket(1,6)],nextCursor:null});
   mockApi.detail.mockResolvedValue({ticket:ticket(1,6),...page(1,6,1,6)});
-  await render();
   const read=jest.spyOn(helpHistory,'readCachedHelpTicket').mockImplementation(()=>new Promise(()=>{}));
   try{
+    await render();
     let opening!:ReturnType<typeof service.openTicket>;
     await act(async()=>{opening=service.openTicket(1);});
     // Header/back navigation belong to the known ticket while storage is busy.
@@ -90,9 +90,10 @@ test('opening reads the saved older position directly instead of downloading or 
 });
 
 test('a memory tail without the first unread message falls back to the matching cached window',async()=>{
-  await cacheHelpPage(5,ticket(),{...page(1,100),firstUnreadSequence:30});
-  await cacheHelpPage(5,ticket(),{...page(101,200),firstUnreadSequence:30});
-  helpViewCache('https://dev.example.test:5:true').windows.set(7,{ticket:ticket(),page:{...page(101,200),firstUnreadSequence:30},anchor:null});
+  const unreadTicket={...ticket(),lastReadSequence:29,unreadCount:171};
+  await cacheHelpPage(5,unreadTicket,{...page(1,100),lastReadSequence:29,firstUnreadSequence:30});
+  await cacheHelpPage(5,unreadTicket,{...page(101,200),lastReadSequence:29,firstUnreadSequence:30});
+  helpViewCache('https://dev.example.test:5:true').windows.set(7,{ticket:unreadTicket,page:{...page(101,200),lastReadSequence:29,firstUnreadSequence:30},anchor:null});
   await render();mockApi.sync.mockImplementation(()=>new Promise(()=>{}));
   await act(async()=>{await service.openTicket(7);});
   expect(service.navigationTarget).toMatchObject({kind:'unread',sequence:30});
@@ -188,6 +189,43 @@ test('active history trims only after idle anchor save and explicitly restores t
   expect(service.navigationTarget?.key).toBeGreaterThan(key!);
   expect((await readCachedHelpTicket(5,7,800))?.page?.messages.some(message=>message.sequence===800)).toBe(true);
 });
+test('latest keeps the loaded tail and prepended rows without replaying disk or server snapshots',async()=>{
+  await render();await open();
+  await act(async()=>{await service.loadOlder();});
+  expect(service.messages).toHaveLength(200);expect(service.hasNewer).toBe(false);
+  const messages=service.messages,last=messages.at(-1),key=service.navigationTarget?.key;
+  const read=jest.spyOn(helpHistory,'readCachedHelpTicket');mockApi.messages.mockClear();
+  try{
+    await act(async()=>{await service.jumpToLatest();});
+    expect(service.navigationTarget).toMatchObject({kind:'latest',animate:true});
+    expect(service.navigationTarget?.key).toBeGreaterThan(key!);
+    expect(service.messages).toBe(messages);expect(service.messages.at(-1)).toBe(last);
+    expect(read).not.toHaveBeenCalled();expect(mockApi.messages).not.toHaveBeenCalled();
+    await act(async()=>{await service.jumpToLatest();});
+    expect(service.messages).toBe(messages);expect(mockApi.messages).not.toHaveBeenCalled();
+  }finally{read.mockRestore();}
+});
+test('latest still loads missing tail messages when the current window has newer history',async()=>{
+  mockApi.detail.mockResolvedValue({ticket:ticket(),...page(1,100)});
+  await render();await open();expect(service.hasNewer).toBe(true);mockApi.messages.mockClear();
+  await act(async()=>{await service.jumpToLatest();});
+  expect(mockApi.messages).toHaveBeenCalledWith(7,{});
+  expect(service.messages.at(-1)?.sequence).toBe(200);expect(service.hasNewer).toBe(false);
+  expect(service.navigationTarget).toMatchObject({kind:'latest',animate:true});
+});
+test('latest cancels an older outstanding jump without replacing the already loaded tail',async()=>{
+  await render();await open();const messages=service.messages;
+  let resolve!:(value:HelpHistoryPage)=>void;
+  mockApi.messages.mockReturnValueOnce(new Promise(done=>{resolve=done;}));
+  let older!:Promise<void>;
+  await act(async()=>{older=service.jumpToMessage(70020,20);});
+  expect(mockApi.messages).toHaveBeenCalledWith(7,{around:20});
+  await act(async()=>{await service.jumpToLatest();});
+  const key=service.navigationTarget?.key;
+  await act(async()=>{resolve(page(1,79));await older;});
+  expect(service.messages).toBe(messages);expect(service.navigationTarget?.key).toBe(key);
+  expect(service.navigationTarget?.kind).toBe('latest');
+});
 test('online date lookup sends exact local bounds and navigates without selecting a message',async()=>{
   await render();await open();const bounds=helpLocalDayBounds('2026-10-28');
   const messages=service.messages;mockApi.messages.mockClear();
@@ -268,9 +306,14 @@ test('successful list loading clears an interim startup error',async()=>{
 
 
 test('returning to the list repairs displaced rows in a batch without fetching histories',async()=>{
+  // Visible-row history preparation runs independently on a zero-delay timer.
+  // Seed every listed history before mounting so this assertion measures only
+  // batch list reconciliation, regardless of when the runner flushes timers.
+  await cacheHelpPage(5,ticket(7),page(101,200));
+  await cacheHelpPage(5,ticket(8),page(1,3,8));
+  await cacheHelpPage(5,ticket(9),page(1,3,9));
   mockApi.list.mockResolvedValueOnce({tickets:[ticket(7),ticket(8)],nextCursor:null});
   await render();
-  await cacheHelpPage(5,ticket(8),page(1,3,8));
   const cache=helpViewCache('https://dev.example.test:5:true');
   cache.windows.set(8,{ticket:ticket(8),page:page(1,3,8),anchor:null});
   cache.lists.set('other-filter',[ticket(8)]);
@@ -286,6 +329,8 @@ test('returning to the list repairs displaced rows in a batch without fetching h
 });
 
 test('old APIs fall back to bounded details while transient summary errors retain existing rows',async()=>{
+  // History preparation is independent of this list-reconciliation contract.
+  await cacheHelpPage(5,ticket(7),page(101,200));
   mockApi.list.mockResolvedValueOnce({tickets:[ticket(7)],nextCursor:null});await render();
   mockApi.list.mockImplementation(async()=>({tickets:[ticket(9)],nextCursor:null}));
   mockApi.summaries.mockRejectedValue(new HelpApiError('Unavailable',503));
@@ -295,4 +340,29 @@ test('old APIs fall back to bounded details while transient summary errors retai
   await act(async()=>{await service.loadTickets('OPEN','mine',false,'',true);});
   expect(mockApi.detail).toHaveBeenCalledWith(7);
   expect(service.tickets.map(item=>item.id)).toEqual([9,7]);
+});
+
+test('list status is independent from detail loading and unrelated configuration errors',async()=>{
+ mockApi.config.mockRejectedValue(new Error('Configuration failed'));
+ await render();expect(service.error).toBe('Configuration failed');expect(service.listError).toBeNull();expect(service.listLoading).toBe(false);
+ await open();
+ let finish!:(value:any)=>void;mockApi.list.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+ let request!:Promise<void>;await act(async()=>{request=service.loadTickets('OPEN','mine',true);});
+ expect(service.listLoading).toBe(true);expect(service.loading).toBe(false);
+ await act(async()=>{finish({tickets:[ticket(7)],nextCursor:null});await request;});
+ expect(service.listLoading).toBe(false);expect(service.listError).toBeNull();
+});
+
+test('old list failures cannot overwrite a newer query and retry clears the scoped list error',async()=>{
+ await render();let rejectOld!:(error:Error)=>void;
+ mockApi.list.mockImplementationOnce(()=>new Promise((_resolve,reject)=>{rejectOld=reject;}));
+ let old!:Promise<void>;await act(async()=>{old=service.loadTickets('OPEN','mine',false,'old');});
+ mockApi.list.mockResolvedValueOnce({tickets:[ticket(8)],nextCursor:null});
+ await act(async()=>{await service.loadTickets('OPEN','mine',false,'new');rejectOld(new Error('Old failure'));await old;});
+ expect(service.listError).toBeNull();expect(service.listLoading).toBe(false);expect(service.tickets[0].id).toBe(8);
+ mockApi.list.mockRejectedValueOnce(new Error('Current failure'));
+ await act(async()=>{await service.loadTickets('OPEN','mine',false,'new');});
+ expect(service.listError).toBe('Не удалось загрузить обращения. Попробуйте ещё раз.');expect(service.listLoading).toBe(false);
+ await act(async()=>{await service.loadTickets('OPEN','mine',false,'new');});
+ expect(service.listError).toBeNull();
 });

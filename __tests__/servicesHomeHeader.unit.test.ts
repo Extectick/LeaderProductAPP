@@ -4,6 +4,7 @@ import {Platform} from 'react-native';
 
 jest.mock('../components/AppHeader',()=>({AppHeader:({contentSlot}:any)=>require('react').createElement(require('react-native').View,null,contentSlot)}));
 jest.mock('../hooks/useThemeColor',()=>({useThemeColor:(colors:any)=>colors.light??'#FFFFFF'}));
+jest.mock('../context/ThemeContext',()=>({useTheme:()=>({theme:'light'})}));
 jest.mock('@expo/vector-icons',()=>({Ionicons:'Ionicons'}));
 jest.mock('react-native-svg',()=>({__esModule:true,default:'Svg',Path:'Path'}));
 
@@ -31,7 +32,9 @@ test('decorative web wordmark uses ARIA instead of native accessibility props',a
     const svg=screen.root.findByType('Svg' as any);
     expect(svg.props.accessible).toBeUndefined();
     expect(svg.props['aria-hidden']).toBe(true);
-    expect(svg.props.focusable).toBe(false);
+    expect(svg.props.focusable).toBeUndefined();
+    expect(svg.props.tabIndex).toBeUndefined();
+    expect(svg.props.pointerEvents).toBe('none');
   }finally{
     if(screen)await act(async()=>screen.unmount());
     Object.defineProperty(Platform,'OS',original);

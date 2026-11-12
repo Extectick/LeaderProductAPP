@@ -45,22 +45,11 @@ export const getAuthScreenStyles = (colors: AuthScreenColors) =>
       justifyContent: 'center',
       marginBottom: 12,
     },
-    logoWrap: {
-      backgroundColor: 'rgba(255,255,255,0.92)',
-      alignItems: 'center',
-      justifyContent: 'center',
-      shadowColor: '#000',
-      shadowOpacity: 0.14,
-      shadowRadius: 12,
-      shadowOffset: { width: 0, height: 6 },
-      elevation: 4,
-    },
-
     segmentWrapper: { width: '100%', alignItems: 'center', marginBottom: 10 },
     segment: {
       width: '100%',
       maxWidth: 420,
-      backgroundColor: 'rgba(255,255,255,0.7)',
+      backgroundColor: colors.disabledBackground,
       borderRadius: 16,
       padding: 4,
       flexDirection: 'row',
@@ -68,9 +57,9 @@ export const getAuthScreenStyles = (colors: AuthScreenColors) =>
       ...Platform.select({ web: { backdropFilter: 'blur(8px)' } }),
     },
     segmentBtn: { flex: 1, paddingVertical: 10, alignItems: 'center', justifyContent: 'center' },
-    segmentText: { fontWeight: '700', color: '#4b5563' },
-    segmentTextActive: { color: '#111827' },
-    segmentPill: { position: 'absolute', top: 4, bottom: 4, borderRadius: 12, backgroundColor: '#fff' },
+    segmentText: { fontWeight: '700', color: colors.secondaryText },
+    segmentTextActive: { color: colors.text },
+    segmentPill: { position: 'absolute', top: 4, bottom: 4, borderRadius: 12, backgroundColor: colors.cardBackground },
 
     errorWrap: {
       maxWidth: 420,
@@ -99,7 +88,7 @@ export const getAuthScreenStyles = (colors: AuthScreenColors) =>
       justifyContent: 'flex-start',
     },
     card: {
-      backgroundColor: Platform.OS === 'web' ? 'rgba(255,255,255,0.85)' : colors.cardBackground,
+      backgroundColor: colors.cardBackground,
       borderRadius: 20,
       padding: CARD_PAD_H,
       overflow: 'hidden',

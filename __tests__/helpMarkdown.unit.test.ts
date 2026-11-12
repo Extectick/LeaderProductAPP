@@ -1,6 +1,8 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 import { Alert, Linking, ScrollView, StyleSheet, Text } from 'react-native';
+const mockNavigate=jest.fn();
+jest.mock('expo-router',()=>({router:{navigate:mockNavigate}}));
 jest.mock('../context/ThemeContext', () => ({ useTheme: () => ({ theme: 'dark' }) }));
 import { HelpMarkdown } from '../src/features/help/components/HelpMarkdown';
 import {EntityCardContext} from '../src/features/entityCards/EntityCardContext';
@@ -38,16 +40,17 @@ test('wide tables and code scroll horizontally and preserve code characters lite
   } finally { await act(async () => view.unmount()); }
 });
 
-test('only supported external links open; HTML and image markup never execute or load an image', async () => {
+test('public websites open the shared viewer; HTML and image markup never execute or load an image', async () => {
   const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
-  const view = await render('[Инструкция](https://example.com/help)\n\n[опасно](javascript:alert(1)) [файл](file:///etc/passwd)\n\n<img src="https://example.com/tracker">\n\n![Схема](https://example.com/image.png)');
+  const openWeb=jest.fn(()=>true);let view!:TestRenderer.ReactTestRenderer;
+  await act(async()=>{view=TestRenderer.create(React.createElement(EntityCardContext.Provider,{value:{isOpen:false,status:'ready',openEntity:()=>false,openEntityLink:()=>false,openWeb,close:()=>{},back:()=>{}}},React.createElement(HelpMarkdown,{text:'[Инструкция](https://example.com/help)\n\n[опасно](javascript:alert(1)) [файл](file:///etc/passwd)\n\n<img src="https://example.com/tracker">\n\n![Схема](https://example.com/image.png)'})))});
   try {
     const links = view.root.findAllByType(Text).filter(node => node.props.accessibilityRole === 'link');
     expect(links.length).toBeGreaterThanOrEqual(1);
     await act(async () => links[0].props.onPress());
-    expect(open).toHaveBeenCalledWith('https://example.com/help');
+    expect(openWeb).toHaveBeenCalledWith('https://example.com/help','Инструкция');expect(open).not.toHaveBeenCalled();
     await act(async () => { for (const link of links) await link.props.onPress(); });
-    expect(open.mock.calls.every(([url]) => /^(https?:\/\/|mailto:)/i.test(url))).toBe(true);
+    expect(openWeb.mock.calls.every(([url]) => /^https?:\/\//i.test(url))).toBe(true);expect(open).not.toHaveBeenCalled();
     expect(content(view)).toContain('<img src='); expect(content(view)).toContain('Схема');
     expect(view.root.findAll(node => typeof node.type === 'string' && /Image|WebView/.test(node.type))).toHaveLength(0);
   } finally { open.mockRestore(); await act(async () => view.unmount()); }
@@ -91,4 +94,33 @@ test('missing card provider is not reported as a signed-out account',async()=>{
   expect(alert).toHaveBeenCalledWith('Карточка недоступна',expect.stringContaining('Reload'));
   expect(alert.mock.calls[0][1]).not.toContain('войдите');
  }finally{alert.mockRestore();await act(async()=>view.unmount());}
+});
+
+
+test('confirmed Help chat links reuse the internal Help route without opening the browser',async()=>{
+ const external=jest.spyOn(Linking,'openURL').mockResolvedValue(true);mockNavigate.mockClear();
+ const view=await render('[Чат №52](leaderproduct://services/help?ticketId=52)');
+ try{
+  const link=view.root.findAllByType(Text).find(node=>node.props.accessibilityRole==='link')!;
+  expect(link.props.accessibilityHint).toBe('Открыть чат в приложении');await act(async()=>link.props.onPress());
+  expect(mockNavigate).toHaveBeenCalledWith({pathname:'/services/help',params:{ticketId:'52',messageId:undefined,eventId:undefined,htmlId:undefined}});
+  expect(external).not.toHaveBeenCalled();
+ }finally{external.mockRestore();await act(async()=>view.unmount());}
+});
+
+test('malformed Help destinations remain text and cannot navigate',async()=>{
+ mockNavigate.mockClear();
+ const view=await render('[Нулевой](leaderproduct://services/help?ticketId=0) [Другой экран](leaderproduct://services/help/other?ticketId=52) [Лишние параметры](leaderproduct://services/help?ticketId=52&htmlId=other)');
+ try{expect(view.root.findAllByType(Text).filter(node=>node.props.accessibilityRole==='link')).toHaveLength(0);expect(mockNavigate).not.toHaveBeenCalled();}
+ finally{await act(async()=>view.unmount());}
+});
+
+test('a copied HTML permalink reuses the protected Help route with the exact bounded origin',async()=>{
+ mockNavigate.mockClear();const external=jest.spyOn(Linking,'openURL').mockResolvedValue(true);
+ const artifact='12345678-1234-4234-8234-123456789abc';
+ const view=await render(`[Страница](leaderproduct://services/help?ticketId=81&messageId=1323&htmlId=${artifact})`);
+ try{
+  const link=view.root.findAllByType(Text).find(node=>node.props.accessibilityRole==='link')!;await act(async()=>link.props.onPress());
+  expect(mockNavigate).toHaveBeenCalledWith({pathname:'/services/help',params:{ticketId:'81',messageId:'1323',htmlId:artifact,eventId:undefined}});expect(external).not.toHaveBeenCalled();
+ }finally{external.mockRestore();await act(async()=>view.unmount());}
 });

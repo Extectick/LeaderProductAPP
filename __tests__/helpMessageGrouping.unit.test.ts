@@ -110,11 +110,11 @@ describe('grouped message presentation', () => {
     const first = StyleSheet.flatten(node(rendered[0], 'help-message-bubble').props.style);
     const middle = StyleSheet.flatten(node(rendered[2], 'help-message-bubble').props.style);
     const last = StyleSheet.flatten(node(rendered[5], 'help-message-bubble').props.style);
-    expect(first).toMatchObject({ borderTopLeftRadius: 16, borderBottomLeftRadius: 4 });
-    expect(middle).toMatchObject({ borderTopLeftRadius: 4, borderBottomLeftRadius: 4 });
-    expect(last).toMatchObject({ borderTopLeftRadius: 4, borderBottomLeftRadius: 16 });
-    expect(StyleSheet.flatten(node(rendered[2], 'help-message-outline').props.style)).toMatchObject({ borderTopLeftRadius: 4, borderBottomLeftRadius: 4 });
-    expect(StyleSheet.flatten(node(rendered[2], 'help-message-3').props.style)).toMatchObject({ marginTop: 1, marginBottom: 1 });
+    expect(first).toMatchObject({ borderTopLeftRadius: 20, borderBottomLeftRadius: 8 });
+    expect(middle).toMatchObject({ borderTopLeftRadius: 8, borderBottomLeftRadius: 8 });
+    expect(last).toMatchObject({ borderTopLeftRadius: 8, borderBottomLeftRadius: 20 });
+    expect(StyleSheet.flatten(node(rendered[2], 'help-message-outline').props.style)).toMatchObject({ borderTopLeftRadius: 8, borderBottomLeftRadius: 8 });
+    expect(StyleSheet.flatten(node(rendered[2], 'help-message-3').props.style)).toMatchObject({ marginTop: 2, marginBottom: 2 });
   });
 
   test('outgoing groups mirror the connected corners and keep their own receipts', async () => {
@@ -122,8 +122,8 @@ describe('grouped message presentation', () => {
     const rendered = bubbles();
     expect(screen!.root.findAllByType('HelpAvatar' as any)).toHaveLength(0);
     expect(rendered.every(bubble => !node(bubble, 'help-message-author'))).toBe(true);
-    expect(StyleSheet.flatten(node(rendered[0], 'help-message-bubble').props.style)).toMatchObject({ borderTopRightRadius: 16, borderBottomRightRadius: 4 });
-    expect(StyleSheet.flatten(node(rendered[1], 'help-message-bubble').props.style)).toMatchObject({ borderTopRightRadius: 4, borderBottomRightRadius: 16 });
+    expect(StyleSheet.flatten(node(rendered[0], 'help-message-bubble').props.style)).toMatchObject({ borderTopRightRadius: 20, borderBottomRightRadius: 8 });
+    expect(StyleSheet.flatten(node(rendered[1], 'help-message-bubble').props.style)).toMatchObject({ borderTopRightRadius: 8, borderBottomRightRadius: 20 });
     expect(rendered.every(bubble => node(bubble, 'help-message-receipt'))).toBe(true);
   });
 });

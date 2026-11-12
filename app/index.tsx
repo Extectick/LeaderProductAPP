@@ -1,6 +1,5 @@
 import { usePathname, useRouter } from 'expo-router';
 import React, { useEffect, useRef } from 'react';
-import { Platform } from 'react-native';
 
 import { AuthContext } from '@/context/AuthContext';
 import StartupLogoLoader from '@/components/StartupLogoLoader';
@@ -8,16 +7,18 @@ import { normalizeRoutePath } from '@/src/shared/lib/routePath';
 import { getProfileGate } from '@/utils/profileGate';
 import { getMaxStartAppealId, getMaxStartClientOrderGuid, isMaxMiniAppLaunch } from '@/utils/maxAuthService';
 import { getTelegramStartAppealId, getTelegramStartClientOrderGuid, isTelegramMiniAppLaunch } from '@/utils/telegramAuthService';
+import {StartupNavigationContext} from '@/src/features/navigation/StartupNavigationContext';
 
 export default function RootRedirect() {
   const router = useRouter();
   const pathname = usePathname();
   const auth = React.useContext(AuthContext);
   const lastRedirectRef = useRef('');
+  const startupNavigationPending = React.useContext(StartupNavigationContext);
 
   useEffect(() => {
     if (!auth) return;
-    if (auth.isLoading) return;
+    if (auth.isLoading || startupNavigationPending) return;
 
     const gateState = getProfileGate(auth.profile);
     const startAppealId = getTelegramStartAppealId() || getMaxStartAppealId();
@@ -33,8 +34,6 @@ export default function RootRedirect() {
         ? `/(main)/services/appeals/${startAppealId}`
         : startClientOrderGuid
         ? `/(main)/services/client_orders?orderGuid=${encodeURIComponent(startClientOrderGuid)}`
-        : Platform.OS === 'web'
-        ? '/home'
         : '/services'
       : gateState === 'pending'
       ? '/(auth)/ProfilePendingScreen'
@@ -51,7 +50,7 @@ export default function RootRedirect() {
     if (lastRedirectRef.current === targetPath) return;
     lastRedirectRef.current = targetPath;
     router.replace(target as any);
-  }, [auth, pathname, router]);
+  }, [auth, pathname, router, startupNavigationPending]);
 
   return <StartupLogoLoader />;
 }

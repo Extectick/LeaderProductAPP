@@ -1,5 +1,5 @@
 export type HelpLatestAffordance = { visible: boolean; up: number; down: number };
-export const HELP_LATEST_SCROLL_THRESHOLD = 100;
+export const HELP_LATEST_SCROLL_THRESHOLD = 24;
 export const hiddenHelpLatest = (): HelpLatestAffordance => ({ visible: false, up: 0, down: 0 });
 
 // Telegram's RecyclerAnimationScrollHelper animates only the outgoing/incoming
@@ -33,5 +33,5 @@ export function updateHelpLatestAffordance(previous: HelpLatestAffordance, input
     return { visible: previous.visible || up >= HELP_LATEST_SCROLL_THRESHOLD && (input.hasNewer || input.gap >= HELP_LATEST_SCROLL_THRESHOLD), up, down: 0 };
   }
   const down = previous.down + input.delta;
-  return { visible: previous.visible && down < HELP_LATEST_SCROLL_THRESHOLD && (input.hasNewer || input.gap > 40), up: 0, down };
+  return { visible: previous.visible && down < HELP_LATEST_SCROLL_THRESHOLD && (input.hasNewer || input.gap > 8), up: 0, down };
 }

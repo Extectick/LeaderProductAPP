@@ -42,6 +42,7 @@ import {
   resolveClientOrdersLayoutTier,
   type ClientOrdersDocumentBottomBarLayout,
   type DraftItem,
+  DEFAULT_ORDER_CURRENCY,
 } from './lib/clientOrdersShared';
 import {
   formatDateOnly,
@@ -67,6 +68,7 @@ import {
   unitLabel,
 } from './lib/clientOrdersUi';
 import { hasMorePage } from './lib/clientOrdersPaging';
+import {clientOrderReadOnlyDraft} from './lib/clientOrderReadOnlyDraft';
 import { resolveStoredBooleanDefaultTrue, serializeStoredBoolean } from './lib/clientOrdersPrefs';
 import { getClientOrdersSearchTextInputProps } from './lib/clientOrdersSearchInput';
 import {
@@ -99,7 +101,7 @@ import PagerView, {
   type PagerViewOnPageSelectedEvent,
 } from './ClientOrdersPager';
 import { Alert, Animated, BackHandler, findNodeHandle, FlatList, Keyboard, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, UIManager, useWindowDimensions, View } from 'react-native';
-import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
+import type { FlatListProps, LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, ScrollViewProps } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
@@ -3327,6 +3329,68 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   );
 }
 
+/** The normal service's header and item cards, without mounting its mutable workspace.
+ * Foreign-base documents never initialize lists, local queues, reference lookups,
+ * product enrichment, invoices or save/share actions in the service publication.
+ */
+export type ClientOrderReadOnlyViewProps = {
+  order: ClientOrder;
+  /** The viewer supplies Gorhom adapters so native scroll and close gestures share an owner. */
+  ScrollComponent?: React.ComponentType<ScrollViewProps>;
+  ListComponent?: React.ComponentType<FlatListProps<any>>;
+  contentTopInset?: number;
+  scrollOffset?: number;
+  onScrollOffsetChange?: (offset: number) => void;
+};
+export function ClientOrderReadOnlyView({order,ScrollComponent=ScrollView,ListComponent,contentTopInset=0,scrollOffset=0,onScrollOffsetChange}: ClientOrderReadOnlyViewProps) {
+  const background=useThemeColor({},'background'),text=useThemeColor({},'text'),muted=useThemeColor({},'secondaryText');
+  const card=useThemeColor({},'cardBackground'),accent=useThemeColor({},'tint'),border=useThemeColor({},'inputBorder');
+  const [section,setSection]=React.useState<'header'|'items'>('items');
+  const listRef=React.useRef<any>(null);
+  const draft=React.useMemo(()=>clientOrderReadOnlyDraft(order),[order]);
+  const currency=draft.currency;
+  const noop=React.useCallback(()=>{},[]);
+  const onScroll=React.useCallback((event:NativeSyntheticEvent<NativeScrollEvent>)=>{
+    const y=event.nativeEvent.contentOffset.y;
+    if(Number.isFinite(y))onScrollOffsetChange?.(Math.max(0,y));
+  },[onScrollOffsetChange]);
+  const changeSection=(next:'header'|'items')=>{
+    if(next===section)return;
+    onScrollOffsetChange?.(0);
+    setSection(next);
+  };
+  const workspace=React.useMemo(()=>({
+    draft,selectedOrder:order,readOnly:true,mutationLocked:true,loadingDefaults:false,
+    documentHeaderLoadingState:{},hasDebt:false,isHeaderPriceTypeCustom:false,patchDraft:noop,
+    selections:{organization:order.organization??null,counterparty:order.counterparty??null,agreement:order.agreement??null,
+      contract:order.contract??null,warehouse:order.warehouse??null,deliveryAddress:order.deliveryAddress??null},
+  }),[draft,order,noop]);
+  return <View testID="client-order-readonly-view" style={{flex:1,marginTop:contentTopInset,backgroundColor:background}}>
+    <View style={{paddingHorizontal:16,paddingTop:8,gap:8}}>
+      <Text selectable style={{fontSize:13,color:muted}}>{order.date1c?formatDateTime(order.date1c):''}</Text>
+      <View accessibilityRole="tablist" style={{flexDirection:'row',gap:8}}>
+        {(['header','items'] as const).map(key=><Pressable key={key} accessibilityRole="tab" accessibilityState={{selected:section===key}}
+          onPress={()=>changeSection(key)} style={{flex:1,minHeight:42,borderRadius:8,alignItems:'center',justifyContent:'center',backgroundColor:section===key?withColorOpacity(accent,0.14):card}}>
+          <Text style={{fontSize:15,fontWeight:'600',color:section===key?accent:muted}}>{key==='header'?'Шапка':`Товары (${draft.items.length})`}</Text>
+        </Pressable>)}
+      </View>
+    </View>
+    {(order.sourceTruncated||order.commentTruncated)?<Text testID="client-order-source-truncated" style={{paddingHorizontal:16,paddingTop:8,color:muted}}>{order.readOnlyReason||(order.commentTruncated?'Комментарий сокращён.':'Показана часть строк заказа.')}</Text>:null}
+    {section==='header'?<ScrollComponent testID="client-order-readonly-header" style={{flex:1}} keyboardShouldPersistTaps="handled" contentContainerStyle={{padding:16,paddingBottom:32}}
+      contentOffset={{x:0,y:Math.max(0,scrollOffset)}} onScroll={onScroll} scrollEventThrottle={16} showsVerticalScrollIndicator={false}>
+      <HeaderSection workspace={workspace} pickerVisible={false} openPicker={noop} openDetails={noop} onCommentFocus={noop} onResetHeaderPriceType={noop}
+        onDownloadInvoice={noop} onShareInvoice={noop} onRequestInvoice={noop} invoiceDownloadBusy={false} invoiceShareBusy={false} invoiceRequesting={false} invoiceRequestPending={false} readOnlyPresentation />
+    </ScrollComponent>:<ItemsSection listRef={listRef} ListComponent={ListComponent}
+      listScrollProps={{testID:'client-order-readonly-items',contentOffset:{x:0,y:Math.max(0,scrollOffset)},onScroll,scrollEventThrottle:16,showsVerticalScrollIndicator:false}}
+      contentContainerStyle={{padding:16,paddingBottom:32}} filteredItems={draft.items}
+      generalDiscountPercent={draft.generalDiscountPercent} currency={draft.currency} readOnly mutationLocked itemMessages={{}} itemWarnings={{}}
+      onEditItem={noop} onRemoveItem={noop} onOpenImages={noop}/>}
+    <View style={{paddingHorizontal:16,paddingVertical:12,borderTopWidth:StyleSheet.hairlineWidth,borderColor:border}}>
+      <Text style={{fontSize:16,fontWeight:'700',color:text}}>Итого: {formatMoney(order.totalAmount,currency)}</Text>
+    </View>
+  </View>;
+}
+
 const HeaderSection = React.memo(function HeaderSection({
   workspace,
   pickerVisible,
@@ -3341,7 +3405,9 @@ const HeaderSection = React.memo(function HeaderSection({
   invoiceShareBusy,
   invoiceRequesting,
   invoiceRequestPending,
+  readOnlyPresentation = false,
 }: {
+  readOnlyPresentation?: boolean;
   workspace: any;
   pickerVisible: boolean;
   openPicker: (kind: PickerKind, lineKey?: string) => void;
@@ -3405,7 +3471,7 @@ const HeaderSection = React.memo(function HeaderSection({
 
   return <View style={styles.cardStack}>
     <FlatDocumentField label="Организация" value={workspace.selections.organization?.name || 'Выбрать'} icon="office-building-outline" onPress={() => openPicker('organization')} disabled={readOnly} invalid={showRequiredErrors && !hasOrganizationValue} loading={workspace.documentHeaderLoadingState.organization} onDetails={() => openDetails('organization', workspace.draft.organizationGuid || workspace.selections.organization?.guid)} />
-    <FlatDocumentField label="Контрагент" value={workspace.selections.counterparty?.name || 'Выбрать'} labelBadgeText={showCounterpartyDebt ? 'долг' : null} icon="account-outline" onPress={() => openPicker('counterparty')} disabled={readOnly} invalid={(showRequiredErrors && !hasCounterpartyValue) || showCounterpartyDebt} loading={workspace.documentHeaderLoadingState.counterparty} detailsVisible={hasCounterpartyValue} onDetails={() => openDetails('counterparty', workspace.draft.counterpartyGuid || workspace.selections.counterparty?.guid)} />
+    <FlatDocumentField label="Контрагент" value={workspace.selections.counterparty?.name || 'Выбрать'} labelBadgeText={showCounterpartyDebt ? 'долг' : null} icon="account-outline" onPress={() => openPicker('counterparty')} disabled={readOnly} invalid={(showRequiredErrors && !hasCounterpartyValue) || showCounterpartyDebt} loading={workspace.documentHeaderLoadingState.counterparty} detailsVisible={hasCounterpartyValue && !readOnlyPresentation} onDetails={() => openDetails('counterparty', workspace.draft.counterpartyGuid || workspace.selections.counterparty?.guid)} />
     <FlatDocumentField label="Соглашение" value={workspace.selections.agreement?.name || 'Выбрать'} icon="file-document-outline" onPress={() => openPicker('agreement')} disabled={readOnly || missingOrderContext} invalid={showDependentRequiredErrors && !hasAgreementValue} loading={workspace.documentHeaderLoadingState.agreement} onDetails={() => openDetails('agreement', workspace.draft.agreementGuid || workspace.selections.agreement?.guid)} />
     <FlatDocumentField label="Договор" value={workspace.selections.contract?.name || workspace.selections.contract?.number || 'Выбрать'} icon="file-sign" onPress={() => openPicker('contract')} disabled={readOnly || missingOrderContext} invalid={showDependentRequiredErrors && !hasContractValue} loading={workspace.documentHeaderLoadingState.contract} onDetails={() => openDetails('contract', workspace.draft.contractGuid || workspace.selections.contract?.guid)} />
     <FlatDocumentField
@@ -3419,7 +3485,7 @@ const HeaderSection = React.memo(function HeaderSection({
       onDetails={() => openDetails('price-type', workspace.draft.priceTypeGuid || workspace.selections.agreement?.priceType?.guid)}
       onReset={workspace.isHeaderPriceTypeCustom ? onResetHeaderPriceType : undefined}
     />
-    <InvoiceRequestField
+    {!readOnlyPresentation ? <InvoiceRequestField
       workspace={workspace}
       readOnly={readOnly}
       onDownload={onDownloadInvoice}
@@ -3429,7 +3495,7 @@ const HeaderSection = React.memo(function HeaderSection({
       shareBusy={invoiceShareBusy}
       requestBusy={invoiceRequesting}
       requestPending={invoiceRequestPending}
-    />
+    /> : null}
     <FlatSegmentedField
       label="Форма оплаты"
       value={workspace.draft.paymentForm}
@@ -3514,6 +3580,7 @@ function areHeaderSectionPropsEqual(previous: any, next: any) {
     && previous.invoiceShareBusy === next.invoiceShareBusy
     && previous.invoiceRequesting === next.invoiceRequesting
     && previous.invoiceRequestPending === next.invoiceRequestPending
+    && previous.readOnlyPresentation === next.readOnlyPresentation
     && a.draft === b.draft
     && a.selections === b.selections
     && a.selectedOrder === b.selectedOrder
@@ -4823,6 +4890,8 @@ function DocumentBottomBar({
 
 const ItemsSection = React.memo(function ItemsSection({
   listRef,
+  ListComponent,
+  listScrollProps,
   contentContainerStyle,
   filteredItems,
   generalDiscountPercent,
@@ -4836,6 +4905,8 @@ const ItemsSection = React.memo(function ItemsSection({
   onOpenImages,
 }: {
   listRef: React.RefObject<any>;
+  ListComponent?: React.ComponentType<FlatListProps<any>>;
+  listScrollProps?: Pick<FlatListProps<any>,'testID'|'contentOffset'|'onScroll'|'scrollEventThrottle'|'showsVerticalScrollIndicator'>;
   contentContainerStyle: any;
   filteredItems: any[];
   generalDiscountPercent: any;
@@ -4864,9 +4935,11 @@ const ItemsSection = React.memo(function ItemsSection({
     />
   ), [currency, generalDiscountPercent, itemMessages, itemWarnings, mutationLocked, onEditItem, onOpenImages, onRemoveItem, readOnly]);
   const keyExtractor = React.useCallback((item: any) => String(item.key), []);
+  const ListComponentWithRef=(ListComponent??FlatList) as typeof FlatList;
 
   return (
-    <FlatList
+    <ListComponentWithRef
+      {...listScrollProps}
       ref={listRef}
       style={[styles.editorPageScroll, styles.itemsFlatSection]}
       contentContainerStyle={contentContainerStyle}
@@ -5085,7 +5158,7 @@ const LineItemCard = React.memo(function LineItemCard({
   onOpenImages: (item: any) => void;
 }) {
   const displayedPrice = getDisplayedUnitPriceValue(item);
-  const lineTotalAmount = computeLineTotal(item, generalDiscountPercent);
+  const lineTotalAmount = documentReadOnly&&typeof item.readOnlyLineAmount==='number'&&Number.isFinite(item.readOnlyLineAmount)?item.readOnlyLineAmount:computeLineTotal(item, generalDiscountPercent);
   const lineTotal = formatMoney(lineTotalAmount, currency);
   const lineProfitAvailable = canComputeLineProfit(item);
   const lineProfitAmount = lineProfitAvailable
@@ -5178,7 +5251,7 @@ const LineItemCard = React.memo(function LineItemCard({
             <Text style={[styles.productPreviewPackage, readOnly && styles.productPreviewMetaReadOnly]} numberOfLines={1}>{packageLabelText}</Text>
             <Text style={[styles.productPreviewFormulaSeparator, readOnly && styles.productPreviewFormulaSeparatorReadOnly]}>×</Text>
             {manualPrice ? <MaterialCommunityIcons name="pencil-outline" size={12} color={hasErrors || hasWarnings ? '#DC2626' : '#64748B'} /> : null}
-            <Text style={[styles.productPreviewPrice, readOnly && styles.productPreviewPriceReadOnly]} numberOfLines={1}>{displayedPrice || '0'} ₽</Text>
+            <Text style={[styles.productPreviewPrice, readOnly && styles.productPreviewPriceReadOnly]} numberOfLines={1}>{displayedPrice || '0'} {(currency || DEFAULT_ORDER_CURRENCY).toUpperCase()==='RUB'?'₽':currency || DEFAULT_ORDER_CURRENCY}</Text>
           </View>
           <View style={styles.productPreviewTotals}>
             <Text style={[styles.productPreviewTotal, readOnly && styles.productPreviewTotalReadOnly]} numberOfLines={1}>{lineTotal}</Text>

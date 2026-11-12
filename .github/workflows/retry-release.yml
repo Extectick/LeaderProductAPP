@@ -26,6 +26,8 @@ jobs:
   diagnostics-only:
     if: ${{ inputs.preflightOnly }}
     uses: ./.github/workflows/release-preflight.yml
+    with:
+      channel: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || github.ref_name == 'dev' && 'dev' || 'prod' }}
     permissions:
       contents: read
   publish:
@@ -52,12 +54,12 @@ jobs:
       EXPO_PUBLIC_MAP_STYLE_URL: https://tiles.openfreemap.org/styles/liberty
       EXPO_PUBLIC_TELEGRAM_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_TELEGRAM_BOT_USERNAME }}
       EXPO_PUBLIC_MAX_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_MAX_BOT_USERNAME }}
-      EXPO_PUBLIC_SENTRY_ENABLED: 'true'
-      EXPO_PUBLIC_SENTRY_DSN: ${{ secrets.EXPO_PUBLIC_SENTRY_DSN }}
-      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-      SENTRY_READ_TOKEN: ${{ secrets.SENTRY_READ_TOKEN }}
-      SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
-      SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+      EXPO_PUBLIC_SENTRY_ENABLED: ${{ ((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && 'false' || 'true' }}
+      EXPO_PUBLIC_SENTRY_DSN: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.EXPO_PUBLIC_SENTRY_DSN || '' }}
+      SENTRY_AUTH_TOKEN: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.SENTRY_AUTH_TOKEN || '' }}
+      SENTRY_READ_TOKEN: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.SENTRY_READ_TOKEN || '' }}
+      SENTRY_ORG: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.SENTRY_ORG || '' }}
+      SENTRY_PROJECT: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.SENTRY_PROJECT || '' }}
       SENTRY_URL: http://127.0.0.1:19000
       EXPO_PUBLIC_SENTRY_ENVIRONMENT: ${{ ((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && 'development' || 'production' }}
       NODE_ENV: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'production' || 'development' }}
@@ -68,7 +70,8 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
-      - run: node scripts/checkReleaseDiagnostics.js
+      - if: ${{ env.EXPO_PUBLIC_SENTRY_ENABLED == 'true' }}
+        run: node scripts/checkReleaseDiagnostics.js
       - run: node scripts/checkReleaseTarget.js
       - name: Verify immutable source and unchanged application
         env:
@@ -93,6 +96,7 @@ jobs:
           RELEASE_KIND: ${{ inputs.kind }}
         run: node scripts/validateReleaseCandidate.js
       - name: Verify private diagnostic artifacts
+        if: ${{ env.EXPO_PUBLIC_SENTRY_ENABLED == 'true' }}
         env:
           RELEASE_KIND: ${{ inputs.kind }}
         run: |

@@ -5,8 +5,9 @@ import { useAppealUpdates } from '@/hooks/useAppealUpdates';
 import { useNotify } from '@/components/NotificationHost';
 import { normalizeRoutePath } from '@/src/shared/lib/routePath';
 import { startAppealsOutboxAutoFlush, stopAppealsOutboxAutoFlush } from '@/src/features/appeals/sync/outbox';
-import { bindPushNavigation } from '@/utils/pushNotifications';
+import { bindPushNavigation, helpPushNavigationTarget } from '@/utils/pushNotifications';
 import { HelpNotificationsBridge } from '@/src/features/help/HelpNotificationsBridge';
+import {StartupNavigationContext} from '@/src/features/navigation/StartupNavigationContext';
 import { getProfileGate } from '@/utils/profileGate';
 import {
   getAppealMuteStatus,
@@ -19,6 +20,7 @@ import { AppState, StyleSheet, View } from 'react-native';
 
 function AppealsNotificationsBridge() {
   const auth = useContext(AuthContext);
+  const startupNavigationPending=useContext(StartupNavigationContext);
   const router = useRouter();
   const pathname = usePathname();
   const notify = useNotify();
@@ -46,7 +48,9 @@ function AppealsNotificationsBridge() {
   }, [auth?.profile?.departmentRoles, auth?.profile?.employeeProfile?.department?.id]);
 
   useEffect(() => {
-    if (!auth?.isAuthenticated || !Number.isSafeInteger(Number(auth.profile?.id)) || Number(auth.profile?.id)<=0) return;
+    // Startup owns the initial response until its route commits. Binding a
+    // second cold-start reader under the cover would race replace with push.
+    if (startupNavigationPending || !auth?.isAuthenticated || !Number.isSafeInteger(Number(auth.profile?.id)) || Number(auth.profile?.id)<=0) return;
     let cleanup: (() => void) | undefined;
     let alive=true;
     bindPushNavigation((appealId) => {
@@ -55,7 +59,7 @@ function AppealsNotificationsBridge() {
       return true;
     }, (ticketId,target) => {
       if(!alive||target?.recipientUserId!==undefined&&target.recipientUserId!==Number(auth?.profile?.id))return false;
-      router.push({ pathname: '/services/help', params: { ticketId: String(ticketId), ...(target?.messageId?{messageId:String(target.messageId)}:{}), ...(target?.eventId?{eventId:String(target.eventId)}:{}) } } as any);
+      router.push(helpPushNavigationTarget({ ...target, ticketId }) as any);
       return true;
     })
       .then((cb) => {
@@ -67,7 +71,7 @@ function AppealsNotificationsBridge() {
     return () => {
       alive=false;cleanup?.();
     };
-  }, [auth?.isAuthenticated, auth?.profile?.id,router]);
+  }, [auth?.isAuthenticated, auth?.profile?.id,router,startupNavigationPending]);
 
   const rememberShown = useCallback((key: string) => {
     if (!key) return false;

@@ -8,17 +8,18 @@ export type HelpImageAlbumProps = {
   attachments: HelpAttachment[];
   resolve: ResolveHelpMedia;
   availableWidth: number;
+  maxHeight?: number;
   onImage: (index: number, origin?: HelpImageOrigin) => void;
   onLongPress: () => void;
 };
 
-export function HelpImageAlbum({ attachments, resolve, availableWidth, onImage, onLongPress }: HelpImageAlbumProps) {
+export function HelpImageAlbum({ attachments, resolve, availableWidth, maxHeight, onImage, onLongPress }: HelpImageAlbumProps) {
   const refs = useRef(new Map<string, View>());
   const images = attachments.slice(0, 10);
   const signature = images.map(item => `${item.width}:${item.height}`).join('|');
   // Unknown legacy dimensions keep the reserved square estimate for this view.
   // Loading image pixels must never resize a message under the reader's finger.
-  const layout = useMemo(() => helpAlbumLayout(images, availableWidth), [signature, availableWidth]);
+  const layout = useMemo(() => helpAlbumLayout(images, availableWidth, 2, maxHeight), [signature, availableWidth, maxHeight]);
   return <View testID="help-image-album" style={{ width: layout.width, height: layout.height, position: 'relative', overflow: 'hidden' }}>
     {layout.items.map(tile => {
       const attachment = images[tile.index];

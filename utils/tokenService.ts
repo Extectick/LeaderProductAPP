@@ -1,4 +1,5 @@
 ﻿// utils/tokenService.ts
+import { acceptOwnProfile, persistOwnProfile, resetOwnProfileSession, ownProfileFence, ownProfileFenceMatches, type OwnProfileFence } from '@/src/features/profile/model/ownProfileCache';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import { jwtDecode } from 'jwt-decode';
@@ -10,10 +11,11 @@ import { API_BASE_URL } from './config';
 import { setServerReachable, setServerUnavailable } from '@/src/shared/network/serverStatus';
 import { clearServicesAccessCache } from '@/src/features/services/storage/servicesAccessCache';
 import { SERVER_CONNECTION_UNAVAILABLE_MESSAGE } from '@/src/shared/errors/userErrorMessage';
+import { withDeadline } from '@/src/shared/network/withDeadline';
+import {withAuthWebLock} from './authWebLock';
 
 const ACCESS_KEY = 'accessToken';
 const REFRESH_KEY = 'refreshToken';
-const PROFILE_KEY = 'profile';
 const AUTH_API_BASE_URL_KEY = 'authApiBaseUrl';
 const DEVICE_SESSION_KEY = 'deviceSessionId';
 const INSTALL_ID_KEY = 'authInstallId';
@@ -23,10 +25,37 @@ let refreshAttempts = 0;
 let refreshInFlight: Promise<string | null> | null = null;
 let lastWarnTs = 0;
 let nextRefreshAttemptAt = 0;
+let lastRefreshResumeAt = -Infinity;
 let sessionExpiredActive = false;
 let lastRefreshFailure: RefreshFailure | null = null;
+let authGeneration = 0;
+let authWrites: Promise<void> = Promise.resolve();
+
+/** Serialize token writes/clears; a late refresh must not overtake a new login. */
+function mutateCredentials<T>(operation:()=>Promise<T>):Promise<T> {
+  const result=authWrites.then(()=>withAuthWebLock('credentials',operation));
+  authWrites=result.then(()=>undefined,()=>undefined);
+  return result;
+}
+
+async function finishCredentialWrites(operations:Promise<unknown>[]) {
+  // A rejection must not release the queue while sibling writes are still
+  // running: otherwise they could overwrite the next login after it completes.
+  const results=await Promise.allSettled(operations);
+  const failure=results.find(result=>result.status==='rejected');
+  if(failure?.status==='rejected')throw failure.reason;
+}
+
+function beginAuthSessionChange() {
+  ++authGeneration;
+  refreshInFlight=null;
+  lastRefreshResumeAt = -Infinity;
+  resetOwnProfileSession();
+  return authGeneration;
+}
 
 const REFRESH_TIMEOUT_MS = 10_000;
+const AUTH_STORAGE_READ_TIMEOUT_MS = 5_000;
 const REFRESH_LOCK_TTL_MS = 15_000;
 const ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 90;
 const REFRESH_RETRY_BASE_MS = 5_000;
@@ -55,12 +84,18 @@ function canUseSecureStore() {
   return Platform.OS !== 'web';
 }
 
+// Only reads are raced. A late storage read cannot resume this operation after timeout.
+const readStored = (key: string) => withDeadline(AsyncStorage.getItem(key), AUTH_STORAGE_READ_TIMEOUT_MS);
+const readScope = () => withDeadline(AsyncStorage.multiGet([AUTH_API_BASE_URL_KEY]), AUTH_STORAGE_READ_TIMEOUT_MS);
+
 async function secureGet(key: string): Promise<string | null> {
-  if (!canUseSecureStore()) return AsyncStorage.getItem(key);
+  if (!canUseSecureStore()) return readStored(key);
   try {
-    return await SecureStore.getItemAsync(key);
-  } catch {
-    return AsyncStorage.getItem(key);
+    return await withDeadline(SecureStore.getItemAsync(key), AUTH_STORAGE_READ_TIMEOUT_MS);
+  } catch (error) {
+    // A stalled native store is not permission to use a possibly stale fallback.
+    if (error instanceof Error && error.name === 'TimeoutError') throw error;
+    return readStored(key);
   }
 }
 
@@ -88,15 +123,23 @@ async function secureRemove(key: string): Promise<void> {
 }
 
 async function migrateLegacyTokenIfNeeded(key: string): Promise<string | null> {
+  const generation=authGeneration;
   const secureValue = await secureGet(key);
+  if(generation!==authGeneration)return null;
   if (secureValue) return secureValue;
-  const legacyValue = await AsyncStorage.getItem(key);
-  if (!legacyValue) return null;
-  await secureSet(key, legacyValue);
-  if (canUseSecureStore()) {
-    await AsyncStorage.removeItem(key);
-  }
-  return legacyValue;
+  const legacyValue = await readStored(key);
+  if (!legacyValue||generation!==authGeneration) return null;
+  return mutateCredentials(async()=>{
+    if(generation!==authGeneration)return null;
+    const existing=await secureGet(key);
+    if(generation!==authGeneration)return null;
+    if(existing)return existing;
+    const currentLegacy=await readStored(key);
+    if(!currentLegacy||generation!==authGeneration)return null;
+    await secureSet(key,currentLegacy);
+    if(canUseSecureStore())await AsyncStorage.removeItem(key);
+    return generation===authGeneration?currentLegacy:null;
+  });
 }
 
 function makeInstallId() {
@@ -104,7 +147,7 @@ function makeInstallId() {
 }
 
 export async function getInstallId(): Promise<string> {
-  const existing = await AsyncStorage.getItem(INSTALL_ID_KEY);
+  const existing = await readStored(INSTALL_ID_KEY);
   if (existing) return existing;
   const next = makeInstallId();
   await AsyncStorage.setItem(INSTALL_ID_KEY, next);
@@ -163,14 +206,16 @@ function isRefreshTokenRotatedConflict(errorInfo: ReturnType<typeof readRefreshE
 
 async function waitForRotatedTokenFromOtherRuntime(
   previousRefreshToken: string,
-  previousAccessToken?: string | null
+  previousAccessToken?: string | null,
+  generation=authGeneration
 ): Promise<string | null> {
   // A second JS runtime (or a request finishing just before us) may have
   // already claimed the one-time refresh token. Wait for its atomic token
   // pair write instead of rotating the newly issued refresh token again.
   for (const waitMs of [250, 750, 1500, 2500]) {
     await delay(waitMs);
-    const accessFromOtherRuntime = await getAccessTokenIfRefreshChanged(previousRefreshToken, previousAccessToken);
+    if(generation!==authGeneration)return null;
+    const accessFromOtherRuntime = await getAccessTokenIfRefreshChanged(previousRefreshToken, previousAccessToken,generation);
     if (accessFromOtherRuntime) return accessFromOtherRuntime;
   }
   return null;
@@ -211,11 +256,12 @@ function scheduleRefreshRetry() {
 }
 
 async function clearStoredAuthState(): Promise<void> {
-  await Promise.all([
+  await finishCredentialWrites([
     secureRemove(ACCESS_KEY),
     secureRemove(REFRESH_KEY),
     secureRemove(DEVICE_SESSION_KEY),
-    AsyncStorage.multiRemove([PROFILE_KEY, AUTH_API_BASE_URL_KEY]),
+    AsyncStorage.multiRemove([AUTH_API_BASE_URL_KEY]),
+    persistOwnProfile(null),
   ]);
   await clearServicesAccessCache();
   refreshAttempts = 0;
@@ -223,18 +269,32 @@ async function clearStoredAuthState(): Promise<void> {
   nextRefreshAttemptAt = 0;
 }
 
-async function invalidateAuthSession(reason: string, status?: number) {
-  await clearStoredAuthState();
-  refreshInFlight = null;
-  setServerReachable();
-  if (sessionExpiredActive) return;
-  sessionExpiredActive = true;
-  notifyAuthSessionExpired({ reason, status, at: Date.now() });
+async function invalidateAuthSession(reason: string, status?: number, expectedRefresh?:string|null, generation=authGeneration) {
+  return mutateCredentials(async()=>{
+    if(generation!==authGeneration)return false;
+    if(expectedRefresh!==undefined&&await secureGet(REFRESH_KEY)!==expectedRefresh)return false;
+    if(generation!==authGeneration)return false;
+    const shouldNotify=!sessionExpiredActive;
+    sessionExpiredActive=true;
+    const invalidating=beginAuthSessionChange();
+    // The rejection is confirmed for this exact token. Failed disk cleanup
+    // cannot keep it authorized in memory; a later login still owns the queue.
+    await clearStoredAuthState().catch(()=>{});
+    // A login may have queued while removal was in flight. Its writes run next;
+    // do not emit a stale expiry event or replace its failure/backoff state.
+    if(invalidating!==authGeneration)return false;
+    setServerReachable();
+    if(status)rememberRefreshFailure({kind:'invalid',status,message:reason});
+    if(shouldNotify){
+      notifyAuthSessionExpired({reason,status,at:Date.now()});
+    }
+    return true;
+  });
 }
 
-async function ensureTokenStorageScope(): Promise<boolean> {
-  const entries = await AsyncStorage.multiGet([AUTH_API_BASE_URL_KEY]);
-  const storedBaseUrl = entries[0]?.[1] || '';
+async function ensureTokenStorageScope(knownBaseUrl?: string): Promise<boolean> {
+  const generation=authGeneration;
+  const storedBaseUrl = knownBaseUrl ?? ((await readScope())[0]?.[1] || '');
   const [accessToken, refreshToken] = await Promise.all([
     migrateLegacyTokenIfNeeded(ACCESS_KEY),
     migrateLegacyTokenIfNeeded(REFRESH_KEY),
@@ -249,7 +309,7 @@ async function ensureTokenStorageScope(): Promise<boolean> {
   }
 
   if (storedBaseUrl !== API_BASE_URL) {
-    await invalidateAuthSession('api_base_url_changed');
+    await invalidateAuthSession('api_base_url_changed',undefined,refreshToken,generation);
     return false;
   }
 
@@ -257,7 +317,18 @@ async function ensureTokenStorageScope(): Promise<boolean> {
 }
 
 export async function getAccessToken(): Promise<string | null> {
-  if (!(await ensureTokenStorageScope())) return null;
+  if(sessionExpiredActive)return null;
+  const storedBaseUrl = (await readScope())[0]?.[1] || '';
+  // A scoped, populated store needs only a fresh access-token read. Reading
+  // and migrating both tokens on every Help account fence triples native I/O.
+  // Never retain this value across calls: another runtime may rotate or clear it.
+  if (storedBaseUrl === API_BASE_URL) {
+    const accessToken = await secureGet(ACCESS_KEY);
+    if (accessToken) return accessToken;
+  }
+  // Missing/legacy tokens and unknown/changed API scopes keep the full repair
+  // path, including refresh-only sessions and the final fresh access read.
+  if (!(await ensureTokenStorageScope(storedBaseUrl))) return null;
   return secureGet(ACCESS_KEY);
 }
 
@@ -267,7 +338,10 @@ export async function getAccessToken(): Promise<string | null> {
  * not depend on this application session after it has been started once.
  */
 export async function getAccessTokenForRequest(): Promise<string | null> {
+  const generation=authGeneration;
+  await authWrites;
   const accessToken = await getAccessToken();
+  if(generation!==authGeneration)return null;
   const exp = decodeExp(accessToken);
   if (!accessToken || !exp) return accessToken;
 
@@ -275,51 +349,93 @@ export async function getAccessTokenForRequest(): Promise<string | null> {
   if (exp - now > ACCESS_TOKEN_REFRESH_SKEW_SECONDS) return accessToken;
 
   const refreshed = await refreshToken();
+  if(generation!==authGeneration)return null;
+  if(refreshed&&differentTokenAccounts(accessToken,refreshed))return null;
   if (refreshed) return refreshed;
+  // Another tab can change accounts without incrementing this runtime's epoch.
+  // A failed refresh must not fall back to credentials captured before it.
+  if(await secureGet(ACCESS_KEY)!==accessToken||generation!==authGeneration)return null;
   return hasAuthSessionExpired() ? null : accessToken;
 }
 
 export async function getRefreshToken(): Promise<string | null> {
+  if(sessionExpiredActive)return null;
   if (!(await ensureTokenStorageScope())) return null;
   return secureGet(REFRESH_KEY);
 }
 
-export async function saveTokens(accessToken: string, refreshToken: string, profile?: any, deviceSessionId?: string | null): Promise<void> {
-  await Promise.all([
-    secureSet(ACCESS_KEY, accessToken),
-    secureSet(REFRESH_KEY, refreshToken),
-    deviceSessionId ? secureSet(DEVICE_SESSION_KEY, deviceSessionId) : Promise.resolve(),
-    AsyncStorage.setItem(AUTH_API_BASE_URL_KEY, API_BASE_URL),
-  ]);
+export async function saveTokens(accessToken: string, refreshToken: string, profile?: any, deviceSessionId?: string | null, profileFence?: OwnProfileFence): Promise<void> {
+  const generation=profileFence?authGeneration:beginAuthSessionChange();
+  await commitTokens(accessToken,refreshToken,profile,deviceSessionId,profileFence,generation);
+}
 
-  if (profile) {
-    await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
-  } else {
-    // No profile in response, clear a possibly stale profile.
-    await AsyncStorage.removeItem(PROFILE_KEY);
-  }
+async function commitTokens(accessToken:string,refreshToken:string,profile:any,deviceSessionId:string|null|undefined,profileFence:OwnProfileFence|undefined,generation:number,expectedRefresh?:string) {
+  return mutateCredentials(async()=>{
+    if(generation!==authGeneration)return false;
+    if(expectedRefresh!==undefined&&await secureGet(REFRESH_KEY)!==expectedRefresh)return false;
+    if(generation!==authGeneration)return false;
+    await finishCredentialWrites([
+      secureSet(ACCESS_KEY, accessToken),
+      secureSet(REFRESH_KEY, refreshToken),
+      deviceSessionId ? secureSet(DEVICE_SESSION_KEY, deviceSessionId) : Promise.resolve(),
+      AsyncStorage.setItem(AUTH_API_BASE_URL_KEY, API_BASE_URL),
+    ]);
+    if(generation!==authGeneration)return false;
 
-  refreshAttempts = 0;
-  sessionExpiredActive = false;
-  lastRefreshFailure = null;
-  nextRefreshAttemptAt = 0;
+    // A refresh response can predate an avatar/profile mutation. Never restore it
+    // over the newer snapshot; rotating tokens does not change the profile session.
+    if (!profileFence || ownProfileFenceMatches(profileFence)) {
+      if (profile && acceptOwnProfile(profile, true)) await persistOwnProfile(profile);
+      else if (!profileFence) await persistOwnProfile(null);
+    }
+    if(generation!==authGeneration)return false;
+
+    refreshAttempts = 0;
+    sessionExpiredActive = false;
+    lastRefreshFailure = null;
+    nextRefreshAttemptAt = 0;
+    return generation===authGeneration;
+  });
 }
 
 export async function logout(): Promise<void> {
-  await clearStoredAuthState();
-  // Reset backoff to avoid warning spam after explicit logout.
-  refreshAttempts = 0;
-  lastWarnTs = 0;
-  nextRefreshAttemptAt = 0;
-  sessionExpiredActive = false;
-  lastRefreshFailure = null;
-  // router.replace('/(auth)/AuthScreen');
+  const generation=beginAuthSessionChange();
+  await mutateCredentials(async()=>{
+    if(generation!==authGeneration)return;
+    await clearStoredAuthState();
+    if(generation!==authGeneration)return;
+    // Reset backoff to avoid warning spam after explicit logout.
+    refreshAttempts = 0;
+    lastWarnTs = 0;
+    nextRefreshAttemptAt = 0;
+    sessionExpiredActive = false;
+    lastRefreshFailure = null;
+  });
 }
 
 export function resetRefreshBackoff() {
   refreshAttempts = 0;
   lastWarnTs = 0;
   nextRefreshAttemptAt = 0;
+}
+
+/**
+ * A foreground/online/manual retry may expedite a transient network failure.
+ * This only releases backoff: the caller still uses the shared refresh flight,
+ * credential queue and session fences. Repeated lifecycle signals coalesce.
+ */
+export function resumeAuthRefresh(): boolean {
+  const now = Date.now();
+  if (sessionExpiredActive || refreshInFlight || nextRefreshAttemptAt <= now
+    || now - lastRefreshResumeAt < REFRESH_RETRY_BASE_MS) return false;
+  const transient = lastRefreshFailure?.kind === 'network'
+    || (lastRefreshFailure?.kind === 'server' && (lastRefreshFailure.status ?? 0) >= 500);
+  if (!transient) return false;
+  lastRefreshResumeAt = now;
+  nextRefreshAttemptAt = 0;
+  lastWarnTs = 0;
+  // Preserve the exponential penalty if the expedited attempt also fails.
+  return true;
 }
 
 function decodeExp(token?: string | null): number | null {
@@ -349,7 +465,7 @@ export async function handleBackendUnavailable(reason?: string) {
 
 async function acquireRefreshLock(owner: string): Promise<boolean> {
   const now = Date.now();
-  const raw = await AsyncStorage.getItem(REFRESH_LOCK_KEY);
+  const raw = await readStored(REFRESH_LOCK_KEY);
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
@@ -361,7 +477,7 @@ async function acquireRefreshLock(owner: string): Promise<boolean> {
     }
   }
   await AsyncStorage.setItem(REFRESH_LOCK_KEY, JSON.stringify({ owner, until: now + REFRESH_LOCK_TTL_MS }));
-  const confirmRaw = await AsyncStorage.getItem(REFRESH_LOCK_KEY);
+  const confirmRaw = await readStored(REFRESH_LOCK_KEY);
   try {
     const confirm = JSON.parse(confirmRaw || '{}');
     return confirm.owner === owner;
@@ -371,7 +487,7 @@ async function acquireRefreshLock(owner: string): Promise<boolean> {
 }
 
 async function releaseRefreshLock(owner: string) {
-  const raw = await AsyncStorage.getItem(REFRESH_LOCK_KEY);
+  const raw = await readStored(REFRESH_LOCK_KEY);
   if (!raw) return;
   try {
     const parsed = JSON.parse(raw);
@@ -383,12 +499,15 @@ async function releaseRefreshLock(owner: string) {
   }
 }
 
-async function postRefreshToken(storedRefreshToken: string) {
+async function postRefreshToken(storedRefreshToken: string,generation:number) {
+  const profileFence = ownProfileFence();
+  const device=await getAuthDevicePayload();
+  if(generation!==authGeneration)return null;
   const res = await axios.post(
     `${API_BASE_URL}/auth/token`,
     {
       refreshToken: storedRefreshToken,
-      ...(await getAuthDevicePayload()),
+      ...device,
     },
     { timeout: REFRESH_TIMEOUT_MS, headers: { 'Content-Type': 'application/json' } }
   );
@@ -401,7 +520,7 @@ async function postRefreshToken(storedRefreshToken: string) {
   if (!accessToken) throw new Error('Missing accessToken in refresh response');
 
   const refreshToStore = newRefreshToken ?? storedRefreshToken;
-  await saveTokens(accessToken, refreshToStore, profile, deviceSessionId);
+  if(!await commitTokens(accessToken, refreshToStore, profile, deviceSessionId, profileFence,generation,storedRefreshToken)||generation!==authGeneration)return null;
   refreshAttempts = 0;
   lastWarnTs = 0;
   nextRefreshAttemptAt = 0;
@@ -411,85 +530,131 @@ async function postRefreshToken(storedRefreshToken: string) {
 
 async function getAccessTokenIfRefreshChanged(
   previousRefreshToken: string,
-  previousAccessToken?: string | null
+  previousAccessToken?: string | null,
+  generation=authGeneration
 ): Promise<string | null> {
   const currentRefresh = await getRefreshToken();
   if (!currentRefresh || currentRefresh === previousRefreshToken) return null;
   const currentAccess = await secureGet(ACCESS_KEY);
+  if(generation!==authGeneration)return null;
   if (!currentAccess || currentAccess === previousAccessToken) return null;
+  if(previousAccessToken&&differentTokenAccounts(previousAccessToken,currentAccess))return null;
   return currentAccess;
+}
+
+function differentTokenAccounts(previous:string,current:string) {
+  try {
+    const before=jwtDecode<{userId?:number|string}>(previous).userId;
+    const after=jwtDecode<{userId?:number|string}>(current).userId;
+    return before!=null&&after!=null&&String(before)!==String(after);
+  }catch{return false;}
 }
 
 export async function refreshToken(): Promise<string | null> {
   if (refreshInFlight) return refreshInFlight;
+  if(sessionExpiredActive)return null;
+  const generation=authGeneration;
 
-  const storedRefreshToken = await getRefreshToken();
-  const storedAccessToken = await secureGet(ACCESS_KEY);
-  if (!storedRefreshToken) {
-    refreshAttempts = 0;
-    lastRefreshFailure = null;
-    return null;
-  }
-
-  if (nextRefreshAttemptAt > Date.now()) {
-    const now = Date.now();
-    if (now - lastWarnTs > 10_000) {
-      console.warn('Обновление токена отложено до восстановления соединения');
-      lastWarnTs = now;
-    }
-    return null;
-  }
-
-  refreshAttempts++;
-
-  refreshInFlight = (async () => {
+  // Publish the flight before the first storage await. Concurrent consumers must
+  // not both attempt to rotate the same one-time refresh token.
+  const work = Promise.resolve().then(async () => {
+    let storedRefreshToken: string | null = null;
+    let storedAccessToken: string | null = null;
     const lockOwner = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     let hasLock = false;
     try {
-      hasLock = await acquireRefreshLock(lockOwner);
-      if (!hasLock) {
-        await delay(350);
-        const accessFromOtherRuntime = await getAccessTokenIfRefreshChanged(storedRefreshToken, storedAccessToken);
-        if (accessFromOtherRuntime) {
-          return accessFromOtherRuntime;
-        }
-        hasLock = await acquireRefreshLock(lockOwner);
-        if (!hasLock) {
-          const recovered = await waitForRotatedTokenFromOtherRuntime(storedRefreshToken, storedAccessToken);
-          if (recovered) return recovered;
-          rememberRefreshFailure({
-            kind: 'rotated',
-            status: 409,
-            message: 'Refresh is being completed by another application runtime',
-          });
-          return null;
-        }
+      await authWrites;
+      if(generation!==authGeneration)return null;
+      storedRefreshToken = await getRefreshToken();
+      storedAccessToken = await secureGet(ACCESS_KEY);
+      if(generation!==authGeneration)return null;
+      if (!storedRefreshToken) {
+        refreshAttempts = 0;
+        lastRefreshFailure = null;
+        return null;
       }
 
-      return await postRefreshToken(storedRefreshToken);
+      if (nextRefreshAttemptAt > Date.now()) {
+        const now = Date.now();
+        if (now - lastWarnTs > 10_000) {
+          console.warn('Обновление токена отложено до восстановления соединения');
+          lastWarnTs = now;
+        }
+        return null;
+      }
+
+      refreshAttempts++;
+
+      return await withAuthWebLock('refresh',async()=>{
+        if(generation!==authGeneration)return null;
+        hasLock = await acquireRefreshLock(lockOwner);
+        if (!hasLock) {
+          await delay(350);
+          const accessFromOtherRuntime = await getAccessTokenIfRefreshChanged(storedRefreshToken!, storedAccessToken,generation);
+          if (accessFromOtherRuntime) {
+            return accessFromOtherRuntime;
+          }
+          hasLock = await acquireRefreshLock(lockOwner);
+          if (!hasLock) {
+            const recovered = await waitForRotatedTokenFromOtherRuntime(storedRefreshToken!, storedAccessToken,generation);
+            if (recovered) return recovered;
+            if(generation!==authGeneration)return null;
+            rememberRefreshFailure({
+              kind: 'rotated',
+              status: 409,
+              message: 'Refresh is being completed by another application runtime',
+            });
+            return null;
+          }
+        }
+
+        // The snapshot may have been rotated while waiting for either lock.
+        // Reuse its completed successor instead of sending the spent token.
+        const currentRefresh=await getRefreshToken();
+        if(generation!==authGeneration||!currentRefresh)return null;
+        if(currentRefresh!==storedRefreshToken){
+          return await getAccessTokenIfRefreshChanged(storedRefreshToken!,storedAccessToken,generation)
+            ?? await waitForRotatedTokenFromOtherRuntime(storedRefreshToken!,storedAccessToken,generation);
+        }
+        return await postRefreshToken(currentRefresh,generation);
+      });
     } catch (e: any) {
+      if(generation!==authGeneration)return null;
       const refreshError = readRefreshError(e);
       const { status, message: msg } = refreshError;
 
-      if (isRefreshTokenRotatedConflict(refreshError)) {
-        const recovered = await waitForRotatedTokenFromOtherRuntime(storedRefreshToken, storedAccessToken);
+      if (e instanceof Error && (e.name === 'TimeoutError'||e.name==='AbortError')) {
+        // Storage temporarily failed to answer. Preserve credentials and allow
+        // another attempt; do not classify this as invalid authentication.
+        rememberRefreshFailure({ kind: 'unknown', status: 503, message: 'Credential storage is temporarily unavailable' });
+        return null;
+      }
+      if (storedRefreshToken && isRefreshTokenRotatedConflict(refreshError)) {
+        const recovered = await waitForRotatedTokenFromOtherRuntime(storedRefreshToken, storedAccessToken,generation);
         if (recovered) return recovered;
+        if(generation!==authGeneration)return null;
         rememberRefreshFailure({ kind: 'rotated', status, message: msg });
         return null;
       }
 
-      console.error('[token] refresh error', { status, msg });
       if (status === 401 || status === 403) {
         const latestRefresh = await getRefreshToken();
-        if (latestRefresh && latestRefresh !== storedRefreshToken) {
-          const recovered = await waitForRotatedTokenFromOtherRuntime(storedRefreshToken, storedAccessToken);
+        if(generation!==authGeneration)return null;
+        if (storedRefreshToken && latestRefresh && latestRefresh !== storedRefreshToken) {
+          const recovered = await getAccessTokenIfRefreshChanged(storedRefreshToken,storedAccessToken,generation)
+            ?? await waitForRotatedTokenFromOtherRuntime(storedRefreshToken, storedAccessToken,generation);
           if (recovered) return recovered;
+          if(generation!==authGeneration)return null;
           rememberRefreshFailure({ kind: 'rotated', status: 409, message: 'Refresh token was rotated by another runtime' });
           return null;
         }
-        rememberRefreshFailure({ kind: 'invalid', status, message: msg });
-        await invalidateAuthSession(msg, status);
-      } else if (!status) {
+        // Expected session expiry already notifies AuthProvider, which opens
+        // login. console.error here incorrectly opens the development LogBox.
+        await invalidateAuthSession(msg,status,storedRefreshToken,generation);
+        return null;
+      }
+      console.error('[token] refresh error', { status, msg });
+      if (!status) {
         rememberRefreshFailure({ kind: 'network', message: msg });
         scheduleRefreshRetry();
         await handleBackendUnavailable(msg);
@@ -504,11 +669,23 @@ export async function refreshToken(): Promise<string | null> {
       return null;
     } finally {
       if (hasLock) {
-        await releaseRefreshLock(lockOwner);
+        // A storage read timeout must not replace the refresh result. The
+        // existing lease expires on its own if releasing it is unavailable.
+        await releaseRefreshLock(lockOwner).catch(()=>{});
       }
-      refreshInFlight = null;
     }
-  })();
-
-  return refreshInFlight;
+  });
+  // Recovery inside the catch above also reads storage/acquires a browser lock.
+  // Its failure must remain transient rather than escape as an unhandled error.
+  const flight = work.catch(()=>{
+    if(generation===authGeneration){
+      rememberRefreshFailure({kind:'unknown',status:503,message:'Credential storage is temporarily unavailable'});
+      scheduleRefreshRetry();
+    }
+    return null;
+  }).then(value=>generation===authGeneration?value:null).finally(() => {
+    if (refreshInFlight === flight) refreshInFlight = null;
+  });
+  refreshInFlight = flight;
+  return flight;
 }

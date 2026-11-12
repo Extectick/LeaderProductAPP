@@ -1,0 +1,7 @@
+import {loadMailConnections,saveMailConnection,sendMailDraft} from '../src/features/profile/api/mailConnections';
+import {httpRequest} from '../src/shared/api/httpClient';
+jest.mock('../src/shared/api/httpClient',()=>({httpRequest:jest.fn()}));
+beforeEach(()=>{jest.clearAllMocks();(httpRequest as jest.Mock).mockResolvedValue({ok:true,data:[]});});
+test('personal connection binds account, carries credentials only to protected endpoint and does not retry',async()=>{const signal=new AbortController().signal;await saveMailConnection(7,'yandex','employee@yandex.ru','test-app-secret',signal);expect(httpRequest).toHaveBeenCalledWith('/users/me/mail/connections/yandex',expect.objectContaining({method:'PUT',expectedUserId:7,signal,networkRetryCount:0,body:{email:'employee@yandex.ru',password:'test-app-secret'}}));});
+test('sending requires exact reviewed hash and disables transport retries',async()=>{const signal=new AbortController().signal;await sendMailDraft(7,{id:'draft',contentHash:'hash'} as any,signal);expect(httpRequest).toHaveBeenCalledWith('/users/me/mail/drafts/draft/send',expect.objectContaining({method:'POST',expectedUserId:7,networkRetryCount:0,body:{contentHash:'hash',confirmed:true}}));});
+test('connection API error never appears as successful connection',async()=>{(httpRequest as jest.Mock).mockResolvedValue({ok:false,message:'Проверьте пароль приложения.'});await expect(loadMailConnections(7,new AbortController().signal)).rejects.toThrow('Проверьте пароль приложения.');});

@@ -27,3 +27,20 @@ test('all ten photos have distinct accessible targets; narrow layout remains ins
   expect(screen.root.findAll(node => node.props.testID === 'help-image-album')[0].props.style.width).toBe(180);
   for (let i = 0; i < 10; i++) expect(screen.root.findAll(node => node.props.testID === `help-album-image-${i}`)[0].props.accessibilityLabel).toBe(`Открыть изображение ${i + 1} из 10`);
 });
+
+
+test('single portrait keeps contain rendering and resizes only with explicit column bounds', async () => {
+  const attachment = {...photos[0], width:1080, height:2400};
+  const props = {attachments:[attachment],availableWidth:310,maxHeight:511.5,resolve:jest.fn(),onImage:jest.fn(),onLongPress:jest.fn()};
+  await act(async()=>{screen=TestRenderer.create(React.createElement(HelpImageAlbum,props));});
+  const frame=()=>screen.root.findAll(node=>node.props.testID==='help-image-album')[0].props.style;
+  const phone=frame();
+  expect(phone.width/phone.height).toBeCloseTo(1080/2400);
+  const image=screen.root.findAll(node=>node.type==='HelpImage' as any)[0];
+  expect(image.props.resizeMode).toBe('contain');expect(image.props.onAspectRatio).toBeUndefined();
+  await act(async()=>{screen.update(React.createElement(HelpImageAlbum,{...props,attachments:[{...attachment}],onImage:jest.fn()}));});
+  expect(frame()).toEqual(phone);
+  await act(async()=>{screen.update(React.createElement(HelpImageAlbum,{...props,availableWidth:640,maxHeight:760}));});
+  expect(frame().width).toBeGreaterThan(phone.width);expect(frame().height).toBe(760);
+  expect(frame().width/frame().height).toBeCloseTo(1080/2400);
+});

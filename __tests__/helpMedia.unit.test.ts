@@ -1,6 +1,7 @@
+jest.mock('react-native-reanimated',()=>require('./mocks/reanimated'));
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
-import { ActivityIndicator, Animated, Image, PanResponder, Platform, StyleSheet, Text } from 'react-native';
+import { Dimensions, Modal, ActivityIndicator, Animated, Image, PanResponder, Platform, StyleSheet, Text } from 'react-native';
 
 const mockPlayer = { replace: jest.fn(), play: jest.fn(), pause: jest.fn(), seekTo: jest.fn() };
 const mockUseAudioPlayer = jest.fn(() => mockPlayer);
@@ -12,11 +13,12 @@ jest.mock('expo-file-system/legacy', () => ({ cacheDirectory: 'file://cache/', d
 jest.mock('expo-sharing', () => ({ isAvailableAsync: jest.fn().mockResolvedValue(true), shareAsync: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 20, bottom: 20, left: 0, right: 0 }) }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
-jest.mock('../src/features/help/helpTheme', () => ({ useHelpTheme: () => ({ muted: '#999999', accent: '#3388ff', accentText: '#68B0FF', elevated: '#333333' }), useHelpReducedMotion: () => mockReduced }));
+jest.mock('../src/features/help/helpTheme', () => ({ useHelpTheme: jest.fn(() => ({ muted: '#999999', accent: '#3388ff', accentText: '#68B0FF', elevated: '#333333' })), useHelpReducedMotion: () => mockReduced }));
 jest.mock('../src/features/help/components/HelpPrimitives', () => ({ HelpIcon: 'HelpIcon' }));
 import { HelpAudio, HelpGallery, HelpImage } from '../src/features/help/components/HelpMedia';
 import { createHelpImageCache, HelpImageCacheContext, HelpMediaLoadingContext } from '../src/features/help/helpMediaLoading';
 import { HelpAudioPlaybackProvider, type HelpAudioPlaybackController } from '../src/features/help/HelpAudioPlayback';
+import {publishHelpUploadProgress,clearHelpUploadProgress} from '../src/features/help/helpAudioTransfer';
 
 describe('Help media geometry and lifecycle', () => {
   let screen: TestRenderer.ReactTestRenderer | undefined;
@@ -65,6 +67,23 @@ describe('Help media geometry and lifecycle', () => {
     expect(byId('help-audio-seek').props.style.height).toBe(28);
     expect(byId('help-audio-caption').props.style.minHeight).toBe(12);
     expect(byId('help-audio-caption').findAll(n => n.props.testID === 'stamp').length).toBeGreaterThan(0);
+  });
+  test('voice download circle uses measured bytes and never guesses unknown totals',async()=>{
+    await renderSharedAudio();activateSharedAudio({loading:true,ready:false,transferProgress:{transferred:25,total:100}});await updateSharedAudio();
+    expect(byId('help-audio-loading').props.accessibilityValue).toEqual({min:0,max:100,now:25});
+    expect(byId('help-audio-transfer-arc').props.strokeDashoffset).toBeCloseTo(Math.PI*32*.75);
+    playback={...playback,transferProgress:{transferred:25,total:null}};await updateSharedAudio();
+    expect(byId('help-audio-loading').props.accessibilityValue.now).toBeUndefined();
+    expect(byId('help-audio-transfer-arc')).toBeUndefined();
+  });
+  test('own pending voice observes real upload progress without starting playback',async()=>{
+    const uri='file:///own-voice.m4a';props={...props,attachment:{...voice,localUri:uri},uploading:true};
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpAudio,props));});
+    await act(async()=>publishHelpUploadProgress(uri,{transferred:80,total:100}));
+    expect(byId('help-audio-loading').props.accessibilityValue.now).toBe(80);
+    expect(byLabel('Отправка голосового сообщения').props.disabled).toBe(true);
+    expect(props.resolve).not.toHaveBeenCalled();expect(mockUseAudioPlayer).not.toHaveBeenCalled();
+    await act(async()=>clearHelpUploadProgress(uri));
   });
   test('real playback position advances fractionally between native samples and stops on pause', async () => {
     mockStatus.playing = true; mockStatus.currentTime = 2; await renderAudio(); await startAudio();
@@ -153,6 +172,29 @@ describe('Help media geometry and lifecycle', () => {
     await act(async () => screen!.unmount()); screen = undefined;
     expect(playback.stop).toHaveBeenCalledTimes(1); // Rows never stop the persistent player on virtualization.
   });
+  test('inactive voice presentation skips other-track position samples and keeps fresh actions', async () => {
+    await renderSharedAudio();
+    const theme = require('../src/features/help/helpTheme').useHelpTheme as jest.Mock;
+    const before = theme.mock.calls.length;
+    const oldPlay = byLabel('Воспроизвести голосовое сообщение').props.onPress;
+    for (let position = 1; position <= 10; position++) {
+      playback = { ...playback, current: { attachment: voice, messageId: 99, author: '', createdAt: '', ticketId: 7 }, playing: true, positionSeconds: position, play: jest.fn().mockResolvedValue(undefined) };
+      await updateSharedAudio();
+    }
+    expect(theme.mock.calls.length).toBe(before);
+    expect(byId('help-audio-progress').props.style.width).toBe('0%');
+    await act(async () => oldPlay());
+    expect(playback.play).toHaveBeenCalledWith(expect.objectContaining({ messageId: 41 }), props.resolve);
+  });
+  test('active voice progress advances without rebuilding decorative bars', async () => {
+    await renderSharedAudio(); activateSharedAudio({ positionSeconds: 2, playing: true }); await updateSharedAudio();
+    const bars = () => byId('help-audio-decorative-track').findAll(node => node.props.style?.opacity === .3);
+    const before = bars().map(node => node.props.style);
+    expect(before.length).toBeGreaterThan(0);
+    await tick(50);
+    expect(parseFloat(byId('help-audio-progress').props.style.width)).toBeCloseTo(20.5);
+    bars().forEach((node, index) => expect(node.props.style).toBe(before[index]));
+  });
   test('shared loading appears only on the matching attachment and message', async () => {
     await renderSharedAudio(); activateSharedAudio({ loading: true, ready: false }); await updateSharedAudio();
     expect(byId('help-audio-loading')).toBeDefined();
@@ -230,10 +272,40 @@ describe('Help media geometry and lifecycle', () => {
     expect(props.resolve).toHaveBeenCalledWith(props.attachment);
     expect(originalImage().props.priority).toBe('low');
   });
-  test('fullscreen contain keeps the dark viewer visible in letterboxing without a theme-colored canvas or crossfade',async()=>{
+  test('fullscreen contain reserves grey space until pixels decode, then restores transparent letterboxing without crossfade',async()=>{
     props.resizeMode='contain';mockReduced=false;await renderImage();
+    expect(StyleSheet.flatten(byId('help-progressive-image').props.style).backgroundColor).toBe('#E4E7EB');
+    expect(byId('help-image-placeholder').props.accessibilityLabel).toBe('Загрузка изображения');
+    await act(async()=>originalImage().props.onLoad({source:{width:400,height:300}}));
     expect(StyleSheet.flatten(byId('help-progressive-image').props.style).backgroundColor).toBe('transparent');
+    expect(screen!.root.findAllByProps({testID:'help-image-placeholder'})).toHaveLength(0);
     expect(originalImage().props).toMatchObject({contentFit:'contain',transition:0});
+  });
+  test('recycling and a restored native source reserve grey space until that cell decodes, without another request or spinner',async()=>{
+    props.style={width:120,height:160};await renderImage();
+    await act(async()=>originalImage().props.onLoad({source:{width:400,height:300}}));
+    await act(async()=>screen!.update(imageTree('retained','snapshot')));
+    expect(byId('help-image-placeholder')).toBeDefined();
+    expect(StyleSheet.flatten(byId('help-progressive-image').props.style)).toMatchObject({width:120,height:160,backgroundColor:'#E4E7EB'});
+    expect(screen!.root.findAllByType(ActivityIndicator)).toHaveLength(0);
+    expect(props.resolve).toHaveBeenCalledTimes(1);
+    await act(async()=>originalImage().props.onLoad({source:{width:400,height:300}}));
+    expect(screen!.root.findAllByProps({testID:'help-image-placeholder'})).toHaveLength(0);
+    props.attachment={...file,id:'another',url:'/different'};await updateImage('deferred');
+    expect(byId('help-image-placeholder')).toBeDefined();
+    expect(props.resolve).toHaveBeenCalledTimes(1);
+  });
+  test('A to B to A recycling requires fresh decode and rejects callbacks from the first A mount',async()=>{
+    const first=props.attachment;await renderImage();
+    const staleLoad=originalImage().props.onLoad;
+    await act(async()=>staleLoad({source:{width:400,height:300}}));
+    props.attachment={...file,id:'pending-other',url:'/pending-other'};await updateImage('deferred');
+    props.attachment=first;await updateImage('retained');
+    expect(byId('help-image-placeholder')).toBeDefined();
+    await act(async()=>staleLoad({source:{width:400,height:300}}));
+    expect(byId('help-image-placeholder')).toBeDefined();
+    await act(async()=>originalImage().props.onLoad({source:{width:400,height:300}}));
+    expect(screen!.root.findAllByProps({testID:'help-image-placeholder'})).toHaveLength(0);
   });
   test('preview stays visible while the original is resolving and loading, with account-scoped cache key intact', async()=>{
     let finish!:(source:any)=>void;
@@ -482,6 +554,58 @@ describe('Help media geometry and lifecycle', () => {
     const transforms=StyleSheet.flatten(byId('help-gallery-transition').props.style).transform;
     expect(transforms.some((entry:any)=>'scaleX'in entry||'scaleY'in entry)).toBe(false);
   });
+  const webPhotoPoint=(x:number,y=300)=>({nativeEvent:{locationX:x,locationY:y,pageX:x,pageY:y,touches:[{pageX:x,pageY:y}],changedTouches:[{pageX:x,pageY:y}]}});
+  const clickWebPhoto=(x:number,y=300,button=0,pointerType='mouse')=>{
+    const surface=byId('help-gallery-gesture'),event=webPhotoPoint(x,y);
+    surface.props.onPointerDown({pointerType,button});surface.props.onPanResponderGrant(event);
+    surface.props.onPanResponderRelease(event,{dx:0,dy:0,vx:0,vy:0});
+  };
+  test.each([20,280])('desktop click on photo letterboxing closes through the existing return animation (x=%s)',async x=>{
+    jest.replaceProperty(Platform,'OS','web');mockReduced=false;
+    let finishAnimation:undefined|(()=>void);
+    const timing=jest.spyOn(Animated,'timing').mockImplementation((value:any,config:any)=>({start:(done?:any)=>{value.setValue(config.toValue);done?.({finished:true});},stop:jest.fn(),reset:jest.fn()} as any));
+    jest.spyOn(Animated,'parallel').mockImplementation((animations:any)=>({start:(done?:any)=>{finishAnimation=()=>{animations.forEach((animation:any)=>animation.start());done?.({finished:true});};},stop:jest.fn(),reset:jest.fn()} as any));
+    await renderGallery({attachments:[{...file,width:100,height:400}],origin:{x:40,y:420,width:100,height:100}});
+    timing.mockClear();await act(async()=>clickWebPhoto(x));
+    expect(props.onClose).not.toHaveBeenCalled();
+    expect(timing.mock.calls.some(([,config]:any)=>config.toValue===0&&config.duration===210&&config.useNativeDriver===false)).toBe(true);
+    await act(async()=>finishAnimation!());expect(props.onClose).toHaveBeenCalledTimes(1);
+    expect(StyleSheet.flatten(byId('help-gallery-backdrop').props.style).opacity.__getValue()).toBe(0);
+  });
+  test('desktop photo clicks retain double-click zoom and use the enlarged image bounds',async()=>{
+    jest.replaceProperty(Platform,'OS','web');await renderGallery({attachments:[{...file,width:100,height:400}]});
+    await act(async()=>{clickWebPhoto(150);now=100;clickWebPhoto(150);});
+    const scale=screen!.root.findAll(n=>n.props.testID==='help-gallery-cell')[0].props.style.transform[2].scale.__getValue();
+    expect(scale).toBe(2.5);expect(props.onClose).not.toHaveBeenCalled();
+    // At 2.5x, the photo fills the earlier side gap. This is an image click.
+    now=600;await act(async()=>clickWebPhoto(20));expect(props.onClose).not.toHaveBeenCalled();
+  });
+  test('desktop drags returning to their start, cancelled pointers and non-primary pointers never close letterboxing',async()=>{
+    jest.replaceProperty(Platform,'OS','web');await renderGallery({attachments:[{...file,width:100,height:400}]});
+    const surface=byId('help-gallery-gesture'),event=webPhotoPoint(20);
+    await act(async()=>{
+      surface.props.onPointerDown({pointerType:'mouse',button:0});surface.props.onPanResponderGrant(event);
+      surface.props.onPanResponderMove(event,{dx:25,dy:0});surface.props.onPanResponderMove(event,{dx:0,dy:0});
+      surface.props.onPanResponderRelease(event,{dx:0,dy:0,vx:0,vy:0});
+    });expect(props.onClose).not.toHaveBeenCalled();
+    now=600;await act(async()=>{
+      surface.props.onPointerDown({pointerType:'mouse',button:0});surface.props.onPanResponderGrant(event);surface.props.onPointerCancel();
+      surface.props.onPanResponderRelease(event,{dx:0,dy:0,vx:0,vy:0});
+    });expect(props.onClose).not.toHaveBeenCalled();
+    now=1200;await act(async()=>clickWebPhoto(20,300,2));expect(props.onClose).not.toHaveBeenCalled();
+    now=1800;await act(async()=>clickWebPhoto(20,300,0,'touch'));expect(props.onClose).not.toHaveBeenCalled();
+  });
+  test('desktop letterboxing hit testing waits for decoded dimensions when attachment metadata is absent',async()=>{
+    jest.replaceProperty(Platform,'OS','web');await renderGallery({attachments:[file]});
+    await act(async()=>clickWebPhoto(20));expect(props.onClose).not.toHaveBeenCalled();
+    const image=screen!.root.findByType(HelpImage);await act(async()=>image.props.onAspectRatio(1/4));
+    now=600;await act(async()=>clickWebPhoto(20));expect(props.onClose).toHaveBeenCalledTimes(1);
+  });
+  test('native touch surface has no desktop pointer dismissal handlers',async()=>{
+    await renderGallery({attachments:[{...file,width:100,height:400}]});
+    expect(byId('help-gallery-gesture').props.onPointerDown).toBeUndefined();
+    expect(byId('help-gallery-gesture').props.onPointerCancel).toBeUndefined();
+  });
   test('interrupted dismiss animation cannot close after gallery unmount', async () => {
     mockReduced = false;
     let completion: ((state: { finished: boolean }) => void) | undefined;
@@ -490,6 +614,19 @@ describe('Help media geometry and lifecycle', () => {
     await renderGallery(); act(() => byLabel('Закрыть изображение').props.onPress());
     await act(async () => screen!.unmount()); screen = undefined;
     act(() => completion?.({ finished: true })); expect(stop).toHaveBeenCalled(); expect(props.onClose).not.toHaveBeenCalled();
+  });
+  test('web image downloads use a bounded menu at the triggering button; Escape dismisses that menu first',async()=>{
+    jest.replaceProperty(Platform,'OS','web');const oldWindow=Dimensions.get('window');Dimensions.set({window:{...oldWindow,width:1280,height:800}});
+    try{
+      props={attachments:[file,{...file,id:'photo-2',name:'Второй.jpg'}],initialIndex:0,resolve:props.resolve,onClose:jest.fn(),onError:props.onError};
+      await act(async()=>{screen=TestRenderer.create(React.createElement(HelpGallery,props),{createNodeMock:element=>element.props.testID==='help-gallery-download-anchor'?{measureInWindow:(done:any)=>done(1260,770,40,40)}:null});});
+      screen!.root.findAll(node=>node.props.testID==='help-gallery-download-anchor'&&node.instance).forEach(node=>{node.instance.measureInWindow=(done:any)=>done(1260,770,40,40);});
+      await act(async()=>byLabel('Скачать').props.onPress());
+      expect(StyleSheet.flatten(byId('help-gallery-download-menu').props.style)).toMatchObject({width:280,left:988,top:664});
+      await act(async()=>screen!.root.findByType(Modal).props.onRequestClose());
+      expect(screen!.root.findAllByProps({testID:'help-gallery-download-menu'})).toHaveLength(0);expect(props.onClose).not.toHaveBeenCalled();
+      await act(async()=>screen!.root.findByType(Modal).props.onRequestClose());expect(props.onClose).toHaveBeenCalledTimes(1);
+    }finally{await act(async()=>Dimensions.set({window:oldWindow}));}
   });
   test('multiple images open a compact current/all download menu', async () => {
     await renderGallery(); act(() => byLabel('Скачать').props.onPress());

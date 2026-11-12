@@ -10,7 +10,9 @@ jest.mock('../src/features/entityCards/entityCardActions',()=>({copyEntityCardLi
 import {HelpHeaderFrame,helpHeaderFrameHeight} from '../src/features/help/components/HelpHeaderFrame';
 import {HelpChatHeader,HelpMoreCloseButton} from '../src/features/help/components/HelpChatHeader';
 import {HelpViewerLayout,HELP_VIEWER_HEADER_HEIGHT} from '../src/features/help/components/HelpViewerLayout';
+import {HelpHeaderOverlay} from '../src/features/help/components/HelpHeaderOverlay';
 import {EntityCardViewer} from '../src/features/entityCards/EntityCardViewer';
+import {HelpViewerWindowContext} from '../src/features/help/helpViewerWindow';
 
 test('chat and viewing surface render the same header frame and menu control with their own content',async()=>{
  const back=jest.fn(),choose=jest.fn();let view!:TestRenderer.ReactTestRenderer;
@@ -20,11 +22,11 @@ test('chat and viewing surface render the same header frame and menu control wit
  });
  try{
   const frames=view.root.findAllByType(HelpHeaderFrame);expect(frames).toHaveLength(2);
-  expect(frames[0].props.title).toBeUndefined();expect(frames[1].props.title).toBe('Просмотр');
-  expect(frames[1].props.contentSurface).toBe('plain');expect(HELP_VIEWER_HEADER_HEIGHT).toBe(helpHeaderFrameHeight(true));
+  expect(frames[0].props.title).toBeUndefined();expect(frames[1].props.title).toBe('Помощь');
+  expect(frames[1].props.contentSurface).toBe(frames[0].props.contentSurface);expect(HELP_VIEWER_HEADER_HEIGHT).toBe(helpHeaderFrameHeight(true));
   const controls=view.root.findAllByType(HelpMoreCloseButton);expect(controls).toHaveLength(2);expect(controls[1].props.morphToClose).toBe(false);
   const surfaces=frames.map(frame=>frame.findByProps({testID:'help-search-surface'}));
-  expect(StyleSheet.flatten(surfaces[0].props.style).backgroundColor).toBe('#EEF2F7');expect(StyleSheet.flatten(surfaces[1].props.style).backgroundColor).toBe('transparent');
+  expect(StyleSheet.flatten(surfaces[1].props.style).backgroundColor).toBe(StyleSheet.flatten(surfaces[0].props.style).backgroundColor);
   const button=()=>view.root.findAll(node=>node.props?.testID==='example-menu-button'&&node.props.accessibilityRole==='button'&&typeof node.props.onPress==='function')[0];
   await act(async()=>button().props.onPress());expect(button().props.accessibilityState.expanded).toBe(true);
   const action=view.root.findAll(node=>node.props?.testID==='example-link'&&typeof node.props.onPress==='function')[0];
@@ -37,7 +39,31 @@ test('a linked profile mounts the real same viewer layout and header rather than
  await act(async()=>{view=TestRenderer.create(React.createElement(EntityCardViewer,{state,userId:121,onBack:back,onClose:jest.fn(),children:React.createElement(Text,null,'Профиль')}));});
  try{
   expect(view.root.findByType(HelpViewerLayout).props.testIDPrefix).toBe('entity-card');
-  const header=view.root.findByType(HelpHeaderFrame);expect(header.props.title).toBe('Просмотр');expect(header.props.contentSurface).toBe('plain');
+  expect(view.root.findByType(HelpHeaderOverlay).props.id).toBe('entity-card-viewer-header');
+  const header=view.root.findByType(HelpHeaderFrame);expect(header.props.title).toBe('Профиль сотрудника');expect(header.props.contentSurface).toBeUndefined();
   await act(async()=>header.props.onBack());expect(back).toHaveBeenCalledTimes(1);
  }finally{await act(async()=>view.unmount());}
+});
+
+test('page titles replace the generic label and long object names stay bounded',async()=>{
+ const title='Молоко PARMALAT '+ 'очень длинное описание '.repeat(12);let view!:TestRenderer.ReactTestRenderer;
+ await act(async()=>{view=TestRenderer.create(React.createElement(HelpViewerLayout,{title,onBack:jest.fn(),children:React.createElement(Text,null,title)}));});
+ try{const value=view.root.findByType(HelpHeaderFrame).props.title;expect(value).toContain('Молоко PARMALAT');expect(Array.from(value).length).toBeLessThanOrEqual(44);expect(value.endsWith('…')).toBe(true);expect(view.root.findAllByType(Text).some(node=>node.props.children===title)).toBe(true);}
+ finally{await act(async()=>view.unmount());}
+});
+
+test('desktop expand uses the same viewer header and modal close dismisses its menu first',async()=>{
+ let view!:TestRenderer.ReactTestRenderer,dismiss:(()=>boolean)|null=null;
+ const toggle=jest.fn(),registerMenuDismiss=jest.fn((handler:(()=>boolean)|null)=>{dismiss=handler;});
+ await act(async()=>{view=TestRenderer.create(React.createElement(HelpViewerWindowContext.Provider,{value:{expanded:false,onToggleExpanded:toggle,registerMenuDismiss}},React.createElement(HelpViewerLayout,{testIDPrefix:'window',onBack:jest.fn(),children:React.createElement(Text,null,'Карточка')})));});
+ try{
+  const button=(id:string)=>view.root.findAll(node=>node.props.testID===id&&typeof node.props.onPress==='function')[0];
+  expect(button('window-expand').props.accessibilityLabel).toBe('Развернуть страницу');
+  expect(dismiss!()).toBe(false);
+  await act(async()=>button('window-menu-button').props.onPress());
+  await act(async()=>expect(dismiss!()).toBe(true));
+  expect(button('window-menu-dismiss')).toBeUndefined();expect(dismiss!()).toBe(false);
+  await act(async()=>button('window-expand').props.onPress());expect(toggle).toHaveBeenCalledTimes(1);
+ }finally{await act(async()=>view.unmount());}
+ expect(registerMenuDismiss).toHaveBeenLastCalledWith(null);
 });

@@ -1,3 +1,8 @@
+import type {HelpMessage} from './helpApi';
+import type {HelpPending} from './helpDurableTypes';
+import {helpPendingMessage} from './helpPendingPresentation';
+import type {HelpTimelineRow} from './helpTimelineModel';
+
 export type HelpTailGeometry={content:number;margin:number;width:number;height:number};
 
 /** Versioned presentation policy. These values ship in OTA; the native owner
@@ -27,4 +32,35 @@ export function helpTailHistoryChange(previous:readonly string[],next:readonly s
   const known=new Set(previous),retained=next.findIndex(key=>known.has(key));
   if(retained<0)return true;
   return next.slice(0,retained).some(key=>key.startsWith('message:')||key.startsWith('client:'));
+}
+
+function tailMessageContent(message:HelpMessage){
+  const run=message.assistantRun;
+  const attachments=(rows:HelpMessage['attachments']|undefined)=>rows?.map(row=>[row.kind,row.name,row.mimeType,row.size,row.durationMs]);
+  // Identity/profile, dates, read receipts and provider metrics do not change
+  // the body. Replayed copies of the same answer must not arm arrival motion.
+  return JSON.stringify([message.kind,message.text,message.rating,message.itStatusChange,message.ticketStatusChange,
+    attachments(message.attachments),message.replyTo?.text,attachments(message.replyTo?.attachments),
+    run&&[run.status,run.step,run.completedSteps,run.phase,run.draftText,run.error,run.action,run.suggestions,run.questions,
+      run.activities?.map(activity=>[activity.id,activity.kind,activity.label,activity.status,activity.text])]]);
+}
+
+function pendingQuestionContent(pending:HelpPending|undefined) {
+  return pending?JSON.stringify([pending.key,pending.status,pending.error,tailMessageContent(helpPendingMessage(pending,0))]):undefined;
+}
+
+/** Initial history can keep measuring after reveal; only actual body changes start live motion. */
+export function helpTailContentChanged(previous:readonly HelpTimelineRow[],next:readonly HelpTimelineRow[]){
+  const content=(rows:readonly HelpTimelineRow[])=>rows.filter(row=>row.kind==='message'||row.kind==='pending');
+  const before=content(previous),after=content(next);
+  if(helpTailHistoryChange(before.map(row=>row.key),after.map(row=>row.key)))return false;
+  if(before.length!==after.length)return true;
+  const known=new Map(before.map(row=>[row.key,row]));
+  return after.some(row=>{
+    const previous=known.get(row.key);
+    return !previous||(previous.message!==row.message&&tailMessageContent(previous.message)!==tailMessageContent(row.message))
+      ||(previous.questionAnswer!==row.questionAnswer&&
+        (previous.questionAnswer&&tailMessageContent(previous.questionAnswer))!==(row.questionAnswer&&tailMessageContent(row.questionAnswer)))
+      ||pendingQuestionContent(previous.questionPending)!==pendingQuestionContent(row.questionPending);
+  });
 }

@@ -1,13 +1,15 @@
+import {Dimensions} from 'react-native';
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
-import { Animated, Modal, PanResponder, Pressable, StyleSheet } from 'react-native';
+import { Text, Animated, Modal, PanResponder, Platform, Pressable, StyleSheet } from 'react-native';
 const mockUseHelpTheme = jest.fn(() => ({surface:'#222222',text:'#ffffff',muted:'#999999',accent:'#3388ff',accentText:'#88bbff',outgoing:'#334455',elevated:'#333333',line:'#444444'}));
-jest.mock('@expo/vector-icons', () => ({Ionicons:'Ionicons'}));
+jest.mock('@expo/vector-icons', () => ({Ionicons:'Ionicons',MaterialCommunityIcons:'MaterialCommunityIcons'}));
 jest.mock('../src/features/help/helpTheme', () => ({useHelpReducedMotion:()=>false,useHelpTheme:()=>mockUseHelpTheme()}));
 jest.mock('../src/features/help/components/HelpPrimitives', () => ({HelpIcon:'HelpIcon',HelpAvatar:'HelpAvatar'}));
 jest.mock('../src/features/help/components/HelpMedia', () => ({HelpAudio:'HelpAudio',HelpImage:'HelpImage'}));
 import { HelpMessageBubble } from '../src/features/help/components/HelpMessageBubble';
 import { HelpPendingMessage } from '../src/features/help/components/HelpPendingMessage';
+import {HelpFileAttachment} from '../src/features/help/components/HelpFileAttachment';
 import { createHelpMessageLayoutCache, HelpMessageLayoutCacheContext } from '../src/features/help/helpMessageLayoutCache';
 
 describe('Help message native layout and reply gestures', () => {
@@ -23,6 +25,146 @@ describe('Help message native layout and reply gestures', () => {
   });
   afterEach(async () => { if(screen) await act(async()=>screen.unmount()); jest.restoreAllMocks(); });
   const node = (id:string) => screen.root.findAll(n=>n.props.testID===id)[0];
+  test.each(['web','android'] as const)('question exchange shows one full-width prompt/answer with original controls on %s',async platform=>{
+    jest.replaceProperty(Platform,'OS',platform);
+    const message={...props.message,text:'Какая ОС?\nОтвет: Windows 11',createdAt:new Date(clock).toISOString(),replyTo:{id:42,text:'Какая ОС?'},replyToId:42};
+    props={...props,message,questionExchange:{message,answers:[{questionId:'os',question:'Какая ОС?',answer:'Windows 11',skipped:false}]},selected:true,highlighted:true};
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpMessageBubble,props));});
+    expect(node('help-message-frame').props.style).toMatchObject({width:'100%',maxWidth:'100%'});
+    expect(node('help-message-1').props.style).toMatchObject({justifyContent:'flex-start',marginLeft:0,marginRight:0});
+    expect(node('help-message-bubble').props.style.backgroundColor).toBe('transparent');
+    expect(node('help-question-answer-os').props.children).toBe('Windows 11');
+    expect(screen.root.findAll(n=>n.type===Text&&n.props.children==='Ваш ответ')).toHaveLength(0);
+    expect(node('help-question-answer-os').props.numberOfLines).toBeUndefined();
+    expect(screen.root.findAll(n=>n.props.testID==='help-question-exchange-toggle')).toHaveLength(0);
+    expect(screen.root.findAll(n=>n.props.testID==='help-message-text')).toHaveLength(0);
+    expect(screen.root.findAll(n=>n.props.testID==='help-message-avatar-slot')).toHaveLength(0);
+    expect(screen.root.findAll(n=>n.type===Text&&n.props.children==='Какая ОС?')).toHaveLength(1);
+    expect(node('help-message-outline')).toBeTruthy();
+    expect(node('help-message-time')).toBeTruthy();
+    expect(node('help-message-receipt')).toBeTruthy();
+    const edit=screen.root.findByProps({label:'Редактировать'});
+    await act(async()=>edit.props.onPress());expect(props.onEdit).toHaveBeenCalledTimes(1);
+    const forward=screen.root.findAll(n=>n.props.accessibilityLabel==='Переслать'&&n.props.onPress)[0];
+    await act(async()=>forward.props.onPress());expect(props.onForward).toHaveBeenCalledTimes(1);
+  });
+  test('grouped exchange retains files/reactions and immediately updates the visible answer',async()=>{
+    const file={id:'file',kind:'FILE',name:'report.csv',mimeType:'text/csv',size:100,url:'/file'};
+    const message={...props.message,text:'Какая ОС?\nОтвет: См. вложение',attachments:[file],reactions:[{emoji:'👍',count:1,mine:true,userIds:[7]}]};
+    props={...props,message,questionExchange:{message,answers:[{questionId:'os',question:'Какая ОС?',answer:'См. вложение',skipped:false}]}};
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpMessageBubble,props));});
+    expect(screen.root.findByType(HelpFileAttachment).props.file).toBe(file);
+    const reaction=screen.root.findAll(n=>n.props.accessibilityLabel==='👍, 1, ваша реакция'&&n.props.onPress)[0];
+    await act(async()=>reaction.props.onPress());expect(props.onReaction).toHaveBeenCalledWith('👍');
+    props={...props,questionExchange:{...props.questionExchange,answers:[{questionId:'os',question:'Какая ОС?',answer:'',skipped:true}]}};
+    await act(async()=>screen.update(React.createElement(HelpMessageBubble,props)));
+    expect(node('help-question-answer-os').props.children).toBe('Вопрос пропущен');
+    expect(screen.root.findAll(n=>n.props.testID==='help-question-history-toggle')).toHaveLength(0);
+  });
+  test.each(['queued','sending','failed'] as const)('grouped pending answer retains %s status and retry action',async delivery=>{
+    const message={...props.message,text:'Какая ОС?\nОтвет: Windows 11'};
+    props={...props,message,delivery,onRetry:jest.fn(),questionExchange:{message,answers:[{questionId:'os',question:'Какая ОС?',answer:'Windows 11',skipped:false}]}};
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpMessageBubble,props));});
+    expect(node('help-question-answer-os').props.children).toBe('Windows 11');
+    expect(node('help-message-pending-clock').props.name).toBe(delivery==='failed'?'alert-circle-outline':'time-outline');
+    expect(screen.root.findAll(n=>n.props.testID==='help-message-receipt')).toHaveLength(0);
+    if(delivery==='failed'){
+      const retry=screen.root.findAll(n=>n.props.accessibilityLabel==='Не удалось отправить. Отправить снова'&&n.props.onPress)[0];
+      await act(async()=>retry.props.onPress());expect(props.onRetry).toHaveBeenCalledTimes(1);
+    }
+  });
+  test('web text is selectable and mouse selection is not owned by the reply swipe responder',async()=>{
+    const previous=Platform.OS;
+    try{
+      Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});
+      await act(async()=>{screen=TestRenderer.create(React.createElement(HelpMessageBubble,props));});
+      expect(node('help-message-text').props.selectable).toBe(true);
+      expect(node('help-message-text').props.children).toBe('Проверка');
+      expect(node('help-message-1').props.onMoveShouldSetPanResponderCapture).toBeUndefined();
+      expect(node('help-message-bubble').props.onLongPress).toBeUndefined();
+      const preventDefault=jest.fn();node('help-message-bubble').props.onContextMenu({preventDefault});
+      expect(props.onMenu).toHaveBeenCalledTimes(1);
+    }finally{Object.defineProperty(Platform,'OS',{configurable:true,value:previous});}
+  });
+  test('web message menu follows the pointer, measures its height and clamps all viewport edges',async()=>{
+    jest.replaceProperty(Platform,'OS','web');const oldWindow=Dimensions.get('window');
+    Dimensions.set({window:{...oldWindow,width:1280,height:800}});
+    try{
+      await act(async()=>{screen=TestRenderer.create(React.createElement(HelpMessageBubble,props));});
+      expect(node('help-message-bubble').props.tabIndex).toBe(0);
+      await act(async()=>node('help-message-bubble').props.onContextMenu({clientX:1270,clientY:795,preventDefault:jest.fn()}));
+      props={...props,selected:true};await act(async()=>screen.update(React.createElement(HelpMessageBubble,props)));
+      expect(node('help-message-menu').props.style).toMatchObject({left:948,top:692,marginTop:0});
+      await act(async()=>node('help-message-menu').props.onLayout({nativeEvent:{layout:{height:132}}}));
+      expect(node('help-message-menu').props.style.top).toBe(656);
+      props={...props,selected:false};await act(async()=>screen.update(React.createElement(HelpMessageBubble,props)));
+      await act(async()=>node('help-message-bubble').props.onKeyDown({key:'F10',shiftKey:true,preventDefault:jest.fn(),currentTarget:{getBoundingClientRect:()=>({left:100,top:40,bottom:120,width:200})}}));
+      props={...props,selected:true};await act(async()=>screen.update(React.createElement(HelpMessageBubble,props)));
+      expect(node('help-message-menu').props.style).toMatchObject({left:132,top:112});
+    }finally{await act(async()=>Dimensions.set({window:oldWindow}));}
+  });
+  test('desktop text width and timestamp expansion share the same bound while mobile and media retain their bounds',async()=>{
+    jest.replaceProperty(Platform,'OS','web');const oldWindow=Dimensions.get('window');
+    Dimensions.set({window:{...oldWindow,width:1440,height:900}});
+    try{
+      await act(async()=>{screen=TestRenderer.create(React.createElement(HelpMessageBubble,props));});
+      await act(async()=>{
+        node('help-message-1').props.onLayout({nativeEvent:{layout:{width:800}}});
+        node('help-text-layout').props.onLayout({nativeEvent:{layout:{width:600}}});
+        node('help-message-text').props.onTextLayout({nativeEvent:{lines:[{x:0,width:620}]}});
+        node('help-message-time').props.onLayout({nativeEvent:{layout:{width:70}}});
+      });
+      expect(node('help-message-frame').props.style).toMatchObject({maxWidth:'80%',minWidth:640});
+      props={...props,message:{...props.message,attachments:[{id:'portrait',kind:'IMAGE',name:'Screenshot',width:1080,height:2400}]}};
+      await act(async()=>screen.update(React.createElement(HelpMessageBubble,props)));
+      expect(node('help-message-frame').props.style).toMatchObject({maxWidth:'86%',width:640});
+      props={...props,message:{...props.message,attachments:[]}};
+      await act(async()=>{Dimensions.set({window:{...oldWindow,width:390,height:844}});screen.update(React.createElement(HelpMessageBubble,props));});
+      expect(node('help-message-frame').props.style.maxWidth).toBe('86%');
+    }finally{await act(async()=>Dimensions.set({window:oldWindow}));}
+  });
+  test('file-only messages place one timestamp in the last file metadata row',async()=>{
+    props.message={...props.message,text:'',attachments:[
+      {id:'excel',kind:'FILE',name:'Склад.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',size:2048,url:'/sheet'},
+      {id:'word',kind:'FILE',name:'Письмо.docx',mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',size:1024,url:'/document'},
+    ]};
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpMessageBubble,props));});
+    const files=screen.root.findAllByType(HelpFileAttachment);
+    expect(files).toHaveLength(2);expect(files[0].props.trailing).toBeUndefined();expect(files[1].props.trailing.props.testID).toBe('help-message-time');
+    const content=node('help-message-content');
+    expect(content.children.filter(child=>typeof child!=='string'&&child.props.testID==='help-message-time')).toHaveLength(0);
+  });
+  test.each(['sending','failed'])('file delivery %s keeps its delivery action outside the download button',async delivery=>{
+    props.delivery=delivery;props.onRetry=jest.fn();
+    props.message={...props.message,text:'',attachments:[{id:'sheet',kind:'FILE',name:'Report.xlsx',mimeType:'application/octet-stream',size:2048,url:'/sheet'}]};
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpMessageBubble,props));});
+    expect(screen.root.findByType(HelpFileAttachment).props.trailing).toBeUndefined();
+    const stamp=node('help-message-time');
+    const retry=stamp.findAll(n=>typeof n.props.onPress==='function'&&n.props.accessibilityRole==='button')[0];
+    expect(retry.props.disabled).toBe(delivery!=='failed');
+    if(delivery==='failed'){await act(async()=>retry.props.onPress());expect(props.onRetry).toHaveBeenCalledTimes(1);}
+    for(let parent=retry.parent;parent;parent=parent.parent)expect(parent.type).not.toBe(HelpFileAttachment);
+  });
+  test('IT join is a minimal system line with the actual specialist avatar',async()=>{
+    props.message={...props.message,kind:'SYSTEM',itStatusChange:'JOINED',authorId:9,author:{id:9,name:'Иванов Иван',avatarUrl:'/avatar9.jpg'},text:'Иванов Иван подключился'};
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpMessageBubble,props));});
+    const status=node('help-it-status-JOINED');
+    expect(StyleSheet.flatten(status.props.style).backgroundColor).toBeUndefined();
+    expect(screen.root.findByType('HelpAvatar' as any).props).toMatchObject({id:9,name:'Иванов Иван',uri:'/avatar9.jpg',size:24});
+    expect(screen.root.findAllByProps({testID:'help-message-bubble'})).toHaveLength(0);
+  });
+  test('messages no longer display the Helped action even for a solution',async()=>{
+    props.solution=true;
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpMessageBubble,props));});
+    expect(screen.root.findAllByType(Text).some(node=>node.props.children==='Помогло')).toBe(false);
+  });
+  test('IT leave keeps the recorded surname-first name and the real avatar',async()=>{
+    props.message={...props.message,kind:'SYSTEM',itStatusChange:'LEFT',authorId:9,author:{id:9,name:'Иванов Иван',avatarUrl:'/avatar9.jpg'},text:'Иванов Иван отключился'};
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpMessageBubble,props));});
+    expect(node('help-it-status-LEFT')).toBeTruthy();
+    expect(screen.root.findByType('HelpAvatar' as any).props).toMatchObject({id:9,name:'Иванов Иван',uri:'/avatar9.jpg'});
+    expect(screen.root.findAllByType(Text).some(node=>node.props.children==='Иванов Иван отключился')).toBe(true);
+  });
   test('photo outbox reserves the accepted album geometry before upload acknowledgement',async()=>{
     const files=[{uri:'file:///one.jpg',name:'one.jpg',mimeType:'image/jpeg',width:900,height:1600},{uri:'file:///two.jpg',name:'two.jpg',mimeType:'image/jpeg',width:1600,height:900}];
     const item:any={key:'media',ticketId:12,create:false,input:{text:'Подпись',clientMessageId:'media'},localFiles:files,createdAt:Date.now(),status:'sending'};
@@ -281,6 +423,30 @@ describe('Help message native layout and reply gestures', () => {
     expect(node('help-message-time').parent!.props.pointerEvents).toBe('none');
     expect(image.props.onAspectRatio).toBeUndefined();
     expect(image.parent!.props.style.width/image.parent!.props.style.height).toBeCloseTo(2);
+  });
+  test.each(['web','android'] as const)('photo caption uses the measured chat column on %s, not the portrait width',async platform=>{
+    jest.replaceProperty(Platform,'OS',platform);
+    props.message={...props.message,text:'Длинное описание фотографии. '.repeat(25),attachments:[{id:'portrait',kind:'IMAGE',name:'Screenshot',width:1080,height:2400}]};
+    await render();
+    for(const rowWidth of [876,366,296,720]){
+      await act(async()=>node('help-message-1').props.onLayout({nativeEvent:{layout:{width:rowWidth}}}));
+      const frame=StyleSheet.flatten(node('help-message-frame').props.style),album=StyleSheet.flatten(node('help-image-album').props.style);
+      expect(frame.width).toBeCloseTo(Math.min(640,rowWidth*.86));
+      expect(frame.width).toBeGreaterThan(album.width);
+      expect(album.height).toBeGreaterThan(350);
+      expect(album.width/album.height).toBeCloseTo(1080/2400);
+      expect(album.width).toBeLessThanOrEqual(frame.width);
+      expect(node('help-message-content').props.style.width).toBeUndefined();
+    }
+  });
+  test('incoming photo caption reserves the avatar and image-only keeps its natural frame',async()=>{
+    props.message={...props.message,authorId:9,text:'Подробная подпись '.repeat(20),attachments:[{id:'portrait',kind:'IMAGE',name:'Screenshot',width:1080,height:2400}]};
+    await render();await act(async()=>node('help-message-1').props.onLayout({nativeEvent:{layout:{width:600}}}));
+    expect(node('help-message-frame').props.style.width).toBe(564);
+    props={...props,message:{...props.message,text:''}};
+    await act(async()=>screen.update(React.createElement(HelpMessageBubble,props)));
+    expect(node('help-message-frame').props.style.width).toBeCloseTo(node('help-image-album').props.style.width);
+    expect(node('help-message-time').props.style.position).toBe('absolute');
   });
   test('short outgoing text keeps its first-paint timestamp through Android fractional row widths', async () => {
     props.message={...props.message,text:'132'};

@@ -3,7 +3,7 @@ import { getRoleDisplayName } from '@/utils/rbacLabels';
 
 export const profileSections = {
   personal: 'Личные данные', contacts: 'Контакты для клиентов', work: 'Работа и отделы',
-  security: 'Безопасность', notifications: 'Уведомления', tracking: 'Геолокация', about: 'О приложении', onec: 'Подключение 1С',
+  security: 'Безопасность', notifications: 'Уведомления', tracking: 'Геолокация', about: 'О приложении', onec: 'Подключения',
 } as const;
 export type ProfileSectionKey = keyof typeof profileSections;
 export function isProfileSection(value: unknown): value is ProfileSectionKey {

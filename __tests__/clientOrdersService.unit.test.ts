@@ -455,3 +455,19 @@ describe("clientOrdersService", () => {
     );
   });
 });
+
+describe('source-bound linked order reads',()=>{
+ const guid='b8b8cb5c-d9b9-11f1-9d3e-f6ac37589664';
+ beforeEach(()=>apiClientMock.mockReset());
+ it('pins the requesting account, source and cancellation while using the existing detail endpoint',async()=>{
+  const controller=new AbortController();apiClientMock.mockResolvedValue({ok:true,status:200,data:{guid,sourceBaseKey:'torg2026',readOnly:true,items:[],events:[]}} as any);
+  const result=await getClientOrder(guid,{baseKey:'torg2026',expectedUserId:121,signal:controller.signal});
+  expect(result.sourceBaseKey).toBe('torg2026');expect(apiClientMock).toHaveBeenCalledWith('/api/client-orders/'+guid+'?baseKey=torg2026',expect.objectContaining({expectedUserId:121,signal:controller.signal,networkRetryCount:0}));
+ });
+ it.each([{guid,sourceBaseKey:'other',readOnly:true},{guid,sourceBaseKey:'torg2026',readOnly:false},{guid:'11111111-1111-4111-8111-111111111111',sourceBaseKey:'torg2026',readOnly:true}])('rejects a different source/document or editable result without fallback: %j',async data=>{
+  apiClientMock.mockResolvedValue({ok:true,status:200,data} as any);await expect(getClientOrder(guid,{baseKey:'torg2026',expectedUserId:121})).rejects.toMatchObject({code:'CLIENT_ORDER_SOURCE_MISMATCH'});expect(apiClientMock).toHaveBeenCalledTimes(1);
+ });
+ it('preserves personal connection errors for the protected form',async()=>{
+  apiClientMock.mockResolvedValue({ok:false,status:422,backendErrorCode:'ONEC_AUTH_REQUIRED',message:'Нужно подключение 1С'} as any);await expect(getClientOrder(guid,{baseKey:'torg2026',expectedUserId:121})).rejects.toMatchObject({code:'ONEC_AUTH_REQUIRED'});
+ });
+});
