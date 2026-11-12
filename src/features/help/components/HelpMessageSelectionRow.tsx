@@ -40,6 +40,6 @@ export function HelpMessageSelectionRow(props:HelpMessageSelectionRowProps){
 const styles=StyleSheet.create({
  row:{width:'100%'},
  incoming:{paddingRight:36},
- checkboxPosition:{position:'absolute',left:16,top:0,bottom:0,justifyContent:'center'},
+ checkboxPosition:{position:'absolute',left:16,bottom:12},
  checkbox:{width:26,height:26,borderRadius:13,borderWidth:2,borderColor:'#FFFFFF',alignItems:'center',justifyContent:'center'},
 });

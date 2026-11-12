@@ -26,7 +26,7 @@ test('selection animates translation and checkbox with native180ms without chang
  expect(StyleSheet.flatten(node('help-message-selection-content').props.style)).toMatchObject({width:'100%'});
  expect(node('help-message-selection-content').props.pointerEvents).toBe('none');
  const checkbox=StyleSheet.flatten(node('help-message-selection-checkbox').props.style);
- expect(checkbox).toMatchObject({left:16,top:0,bottom:0});expect(value(checkbox.opacity)).toBe(1);
+ expect(checkbox).toMatchObject({left:16,bottom:12});expect(value(checkbox.opacity)).toBe(1);
  const circle=node('help-message-selection-checkbox').findAllByType(View).find(n=>StyleSheet.flatten(n.props.style)?.width===26)!;
  expect(StyleSheet.flatten(circle.props.style)).toMatchObject({height:26,borderWidth:2,borderColor:'#FFFFFF'});
 });
@@ -79,4 +79,23 @@ test('incoming text keeps the same available width through selection and exit, i
  await update({active:true});expect(geometry()).toEqual(before);expect(contentGeometry().maxWidth).toBeUndefined();
  await update({active:false});expect(geometry()).toEqual(before);
  await update({incoming:false});expect(geometry().paddingRight).toBeUndefined();
+});
+
+test('dock slides mounted composer down and actions up without replacing composer or changing measured height',async()=>{
+ const {HelpSelectionDock}=require('../src/features/help/components/HelpSelectionDock');
+ const p={active:false,canReply:true,canForward:true,onReply:jest.fn(),onForward:jest.fn(),children:React.createElement(View,{testID:'preserved-composer'})};
+ await act(async()=>{screen=TestRenderer.create(React.createElement(HelpSelectionDock,p));});
+ const child=node('preserved-composer');
+ await act(async()=>node('help-selection-composer').props.onLayout({nativeEvent:{layout:{height:112}}}));
+ await act(async()=>screen.update(React.createElement(HelpSelectionDock,{...p,active:true})));
+ expect(node('preserved-composer')).toBe(child);
+ expect(StyleSheet.flatten(node('help-selection-composer').props.style).height).toBe(112);
+ const motion=jobs.at(-1)!;expect(motion.config).toMatchObject({toValue:1,duration:220,useNativeDriver:true});
+ await act(async()=>motion.value.setValue(1));
+ expect(value(StyleSheet.flatten(node('help-selection-composer').props.style).transform[0].translateY)).toBe(124);
+ expect(value(StyleSheet.flatten(node('help-selection-actions').props.style).transform[0].translateY)).toBe(0);
+ const reply=screen.root.findAll(n=>n.props.accessibilityLabel==='Ответить на выбранное сообщение')[0];
+ expect(reply.props.disabled).toBe(false);await act(async()=>reply.props.onPress());expect(p.onReply).toHaveBeenCalledTimes(1);
+ await act(async()=>screen.update(React.createElement(HelpSelectionDock,p)));
+ expect(node('preserved-composer')).toBe(child);expect(node('help-selection-actions').props.pointerEvents).toBe('none');
 });
