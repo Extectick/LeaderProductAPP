@@ -99,3 +99,21 @@ test('dock slides mounted composer down and actions up without replacing compose
  await act(async()=>screen.update(React.createElement(HelpSelectionDock,p)));
  expect(node('preserved-composer')).toBe(child);expect(node('help-selection-actions').props.pointerEvents).toBe('none');
 });
+
+test('reply slides down for multiple selection and forward moves to the exact group center',async()=>{
+ const {HelpSelectionDock}=require('../src/features/help/components/HelpSelectionDock');
+ const p={active:true,canReply:true,canForward:true,onReply:jest.fn(),onForward:jest.fn(),children:React.createElement(View)};
+ await act(async()=>{screen=TestRenderer.create(React.createElement(HelpSelectionDock,p));});
+ const style=(id:string)=>StyleSheet.flatten(node(id).props.style);
+ expect(value(style('help-selection-reply-motion').transform[0].translateX)).toBe(-146);
+ expect(value(style('help-selection-forward-motion').transform[0].translateX)).toBe(-2);
+ await act(async()=>screen.update(React.createElement(HelpSelectionDock,{...p,canReply:false})));
+ const motion=jobs.at(-1)!;expect(motion.config).toMatchObject({toValue:0,duration:220,useNativeDriver:true});
+ await act(async()=>motion.value.setValue(0));
+ expect(value(style('help-selection-reply-motion').transform[1].translateY)).toBe(64);
+ expect(value(style('help-selection-reply-motion').opacity)).toBe(0);
+ expect(node('help-selection-reply-motion').props.pointerEvents).toBe('none');
+ expect(value(style('help-selection-forward-motion').transform[0].translateX)).toBe(-74);
+ await act(async()=>screen.update(React.createElement(HelpSelectionDock,p)));
+ const reverse=jobs.at(-1)!;expect(reverse.config.toValue).toBe(1);
+});
