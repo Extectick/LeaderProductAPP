@@ -22,7 +22,7 @@ test('chat and viewing surface render the same header frame and menu control wit
  });
  try{
   const frames=view.root.findAllByType(HelpHeaderFrame);expect(frames).toHaveLength(2);
-  expect(frames[0].props.title).toBeUndefined();expect(frames[1].props.title).toBe('Помощь');
+  expect(frames[0].props.title).toBeUndefined();expect(frames[1].props.title).toBe('ИИ ассистент');
   expect(frames[1].props.contentSurface).toBe(frames[0].props.contentSurface);expect(HELP_VIEWER_HEADER_HEIGHT).toBe(helpHeaderFrameHeight(true));
   const controls=view.root.findAllByType(HelpMoreCloseButton);expect(controls).toHaveLength(2);expect(controls[1].props.morphToClose).toBe(false);
   const surfaces=frames.map(frame=>frame.findByProps({testID:'help-search-surface'}));

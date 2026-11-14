@@ -6,7 +6,7 @@ export type SidebarScreenItem = {
 };
 export const sidebarScreens: SidebarScreenItem[] = [
   {name:'home',sidebar:{icon:'apps-outline',label:'Главная',path:'/services'}},
-  {name:'help',sidebar:{icon:'chatbubbles-outline',label:'Помощь',path:'/services/help'}},
+  {name:'help',sidebar:{icon:'help-ai',label:'ИИ ассистент',path:'/services/help'}},
   {name:'profile',sidebar:{icon:'person-outline',label:'Профиль',path:'/profile'}},
   {name:'admin',sidebar:{icon:'shield-checkmark-outline',label:'Администрирование',path:'/admin'}},
 ];

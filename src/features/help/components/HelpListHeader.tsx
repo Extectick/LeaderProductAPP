@@ -62,7 +62,7 @@ export function HelpListHeader({ search, onSearch, archived, onArchive, onBack, 
         style={({pressed})=>({width:HELP_LIST_META_WIDTH,height:48,borderRadius:24,backgroundColor:c.panel,alignItems:'center',justifyContent:'center',opacity:pressed?.65:1})}>
         <Ionicons {...appWebControlContentProps()} name="ellipsis-horizontal" size={24} color={archived?c.accentText:c.text}/>
       </Pressable>;
-  return <>{desktop ? <AppListPanelHeader title={archived?'Архив':scope==='queue'?'Очередь IT':'Помощь'} value={search} onChangeText={onSearch}
+  return <>{desktop ? <AppListPanelHeader title={archived?'Архив':scope==='queue'?'Очередь IT':'ИИ ассистент'} value={search} onChangeText={onSearch}
       searchLabel="Поиск обращений" renderToolbar={children=><HelpHeaderFrame connecting={connecting} connectionPhase={connectionPhase}
         onReconnect={onReconnect} trailing={menuControl}>{children}</HelpHeaderFrame>}/>
     : <HelpHeaderFrame connecting={connecting} connectionPhase={connectionPhase} onReconnect={onReconnect} onBack={onBack} trailing={menuControl}>

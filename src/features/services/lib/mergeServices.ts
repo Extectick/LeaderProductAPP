@@ -13,10 +13,11 @@ export function normalizeServiceItem(raw: PartialService, fallback?: ServiceAcce
   return {
     id: Number(raw?.id || fallback?.id || 0),
     key,
-    name: String(raw?.name || fallback?.name || key),
+    // Branding is client-owned; an older API/cache must not restore the old Help label.
+    name: key === 'help' ? 'ИИ ассистент' : String(raw?.name || fallback?.name || key),
     kind: normalizeKind(raw?.kind || fallback?.kind),
     route: raw?.route ?? fallback?.route ?? null,
-    icon: raw?.icon ?? fallback?.icon ?? null,
+    icon: key === 'help' ? 'help-ai' : raw?.icon ?? fallback?.icon ?? null,
     description: raw?.description ?? fallback?.description ?? null,
     gradientStart: raw?.gradientStart ?? fallback?.gradientStart ?? null,
     gradientEnd: raw?.gradientEnd ?? fallback?.gradientEnd ?? null,

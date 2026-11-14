@@ -4,6 +4,7 @@ import {serviceAccent} from '../lib/serviceAccent';
 import { servicesTokens, withOpacity } from '@/src/features/services/ui/servicesTokens';
 import type { ServiceKind } from '@/utils/servicesService';
 import { Ionicons } from '@expo/vector-icons';
+import { HelpAiIcon } from '@/src/features/help/components/HelpAiIcon';
 import React, { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, type TextStyle, View, type ViewStyle } from 'react-native';
 
@@ -43,7 +44,7 @@ export default function ServiceRow({ icon, name, size, onPress, description, gra
     style={({ pressed }) => [styles.row, { width: '100%', paddingHorizontal: servicesTokens.row.paddingHorizontal + Math.max(0, (size - servicesTokens.row.maxContentWidth) / 2), backgroundColor: pressed || hovered ? withOpacity(accent, 0.07) : backgroundColor ?? 'transparent', opacity: disabled ? 0.55 : 1 }, containerStyle]}
   >
     <View style={[styles.icon, { backgroundColor: withOpacity(accent, 0.1) }]}>
-      <Ionicons name={icon as any} size={iconSize} color={disabled ? secondary : accent}/>
+      {icon === 'help-ai' ? <HelpAiIcon size={iconSize} color={disabled ? secondary : accent}/> : <Ionicons name={icon as any} size={iconSize} color={disabled ? secondary : accent}/>}
     </View>
     <View style={styles.copy}>
       <Text {...appWebControlContentProps()} numberOfLines={2} style={[styles.title, { color: textColor ?? themeText }, textStyle]}>{name}</Text>

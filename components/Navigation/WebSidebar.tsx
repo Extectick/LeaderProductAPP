@@ -1,6 +1,7 @@
 import React, {useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
 import {Image, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions} from 'react-native';
 import {Ionicons} from '@expo/vector-icons';
+import {HelpAiIcon} from '@/src/features/help/components/HelpAiIcon';
 import {usePathname, useRouter} from 'expo-router';
 import {useAppSurfaceTheme} from '@/components/ui/appSurfaceTokens';
 import {appWebControlProps,appWebControlContentProps} from '@/components/ui/appWebInteraction';
@@ -104,7 +105,7 @@ function SidebarButton({item,collapsed,active,disabled,onPress,onTooltip,onHideT
     onHoverIn={show} onHoverOut={()=>onHideTooltip(item.key)} onFocus={show} onBlur={()=>onHideTooltip(item.key)} onPress={onPress}
     style={({pressed,hovered}:any)=>[styles.item,{opacity:disabled ? .48 : 1,backgroundColor:active?withOpacity(accent,.12):pressed||hovered?panel:'transparent'}]}>
     <View style={styles.icon}><View testID={`sidebar-icon-${item.key}`} style={item.service?{width:40,height:40,borderRadius:12,alignItems:'center',justifyContent:'center'}:undefined}>
-      <Ionicons {...(item.service?{}:appWebControlContentProps())} name={item.icon as any} size={23} color={disabled?muted:item.service||active?accent:muted}/>
+      {item.key==='help' ? <HelpAiIcon size={23} color={disabled?muted:accent}/> : <Ionicons {...(item.service?{}:appWebControlContentProps())} name={item.icon as any} size={23} color={disabled?muted:item.service||active?accent:muted}/>}
     </View></View>
     {!collapsed?<Text {...appWebControlContentProps()} numberOfLines={1} style={{color:active?accent:text,fontSize:14,fontWeight:active?'600':'500',flex:1}}>{item.label}</Text>:null}
   </Pressable>;

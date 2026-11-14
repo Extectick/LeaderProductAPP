@@ -23,7 +23,7 @@ export function PublicationDialog({ client, preview, busy, error, valid, onClose
         <RadioButton.Item value="selected" label="Выбранным сотрудникам и отделам" disabled={busy} position="leading" labelStyle={{ textAlign: 'left', fontSize: 15 }} />
         <RadioButton.Item value="everyone" label="Всем сотрудникам" disabled={busy} position="leading" labelStyle={{ textAlign: 'left', fontSize: 15 }} />
       </RadioButton.Group>
-      {mode === 'everyone' ? <Text style={{ padding: 12, borderRadius: 12, backgroundColor: colors.secondaryContainer }}>Материал увидят все сотрудники, которым доступен сервис «Помощь».</Text> : null}
+      {mode === 'everyone' ? <Text style={{ padding: 12, borderRadius: 12, backgroundColor: colors.secondaryContainer }}>Материал увидят все сотрудники, которым доступен сервис «ИИ ассистент».</Text> : null}
       {mode === 'selected' ? <><Divider /><View style={{ flexDirection: 'row', gap: 8 }}>{(['department','user'] as const).map(kind => <Button key={kind} disabled={busy} mode={picker === kind ? 'contained-tonal' : 'text'} onPress={() => setPicker(kind)}>{kind === 'department' ? `Отделы (${departmentIds.length})` : `Сотрудники (${userIds.length})`}</Button>)}</View>
         <AudiencePicker key={picker} client={client} kind={picker} ids={picker === 'user' ? userIds : departmentIds} onChange={picker === 'user' ? setUserIds : setDepartmentIds} disabled={busy} />
         {!allowed ? <Text style={{ color: colors.onSurfaceVariant }}>Выберите хотя бы один отдел или сотрудника.</Text> : null}

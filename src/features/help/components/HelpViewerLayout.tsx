@@ -18,7 +18,7 @@ type Props={children:React.ReactNode;title?:string;eyebrow?:string;onBack:()=>vo
 
 /** Shared viewing surface for HTML and all linked app/1C cards. Hosts own their
  * gesture engine and data; one component owns header, blur, body and actions. */
-export function HelpViewerLayout({children,title='Помощь',eyebrow,onBack,backLabel='Закрыть просмотр',actions=[],menuOpen,onMenuOpenChange,testIDPrefix='help-viewer',topInset=0,bottomInset=0,menuLabel='Действия просмотра'}:Props){
+export function HelpViewerLayout({children,title='ИИ ассистент',eyebrow,onBack,backLabel='Закрыть просмотр',actions=[],menuOpen,onMenuOpenChange,testIDPrefix='help-viewer',topInset=0,bottomInset=0,menuLabel='Действия просмотра'}:Props){
  const c=useHelpTheme(),target=useRef<View>(null),[localMenu,setLocalMenu]=useState(false);
  const windowControls=useContext(HelpViewerWindowContext);
  const open=menuOpen??localMenu;
