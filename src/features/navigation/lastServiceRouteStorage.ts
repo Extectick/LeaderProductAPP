@@ -1,10 +1,18 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { INSTALLED_SERVICE_ROUTES } from '../services/lib/serviceAvailability';
 
 const LAST_SERVICE_ROUTE_STORAGE_KEY = 'last_service_route_v1';
 const WEB_LAST_SERVICE_ROUTE_KEY = 'last_service_route_web_v1';
 const memoryCache = new Map<string, string>();
 const inflightReads = new Map<string, Promise<string | null>>();
 const clearedKeys = new Set<string>();
+const revisions = new Map<string, number>();
+const installedServiceRoots = new Set(Object.values(INSTALLED_SERVICE_ROUTES).filter(route => route.startsWith('/services/')));
+
+function invalidateReads(key: string) {
+  revisions.set(key, (revisions.get(key) ?? 0) + 1);
+  inflightReads.delete(key);
+}
 
 function hasUserId(userId?: number | string | null): boolean {
   return userId !== null && userId !== undefined && String(userId).trim().length > 0;
@@ -30,7 +38,7 @@ export function resolveServiceRootRoute(path: string | null | undefined): string
   }
 
   const route = `/services/${parts[1]}`;
-  return route;
+  return installedServiceRoots.has(route) ? route : null;
 }
 
 export async function getLastServiceRoute(userId?: number | string | null): Promise<string | null> {
@@ -53,13 +61,20 @@ export async function getLastServiceRoute(userId?: number | string | null): Prom
     return inflight;
   }
 
+  const revision = revisions.get(key) ?? 0;
+  const fallbackRevision = revisions.get(LAST_SERVICE_ROUTE_STORAGE_KEY) ?? 0;
+  const readIsCurrent = () => (revisions.get(key) ?? 0) === revision
+    && (revisions.get(LAST_SERVICE_ROUTE_STORAGE_KEY) ?? 0) === fallbackRevision;
   const read = AsyncStorage.getItem(key)
     .then(async (stored) => {
+      if (!readIsCurrent()) return null;
       const route = resolveServiceRootRoute(stored) || (
         hasUserId(userId)
           ? resolveServiceRootRoute(await AsyncStorage.getItem(LAST_SERVICE_ROUTE_STORAGE_KEY))
           : null
       );
+      // A recovery action or a newer navigation owns the route now.
+      if (!readIsCurrent()) return null;
       if (route) memoryCache.set(key, route);
       return route;
     })
@@ -67,7 +82,7 @@ export async function getLastServiceRoute(userId?: number | string | null): Prom
       return null;
     })
     .finally(() => {
-      inflightReads.delete(key);
+      if (inflightReads.get(key) === read) inflightReads.delete(key);
     });
 
   inflightReads.set(key, read);
@@ -130,6 +145,8 @@ export async function saveLastServiceRoute(
   if (!route) return;
 
   const key = getLastServiceRouteStorageKey(userId);
+  invalidateReads(key);
+  if (key !== LAST_SERVICE_ROUTE_STORAGE_KEY) invalidateReads(LAST_SERVICE_ROUTE_STORAGE_KEY);
   clearedKeys.delete(key);
   clearedKeys.delete(LAST_SERVICE_ROUTE_STORAGE_KEY);
   memoryCache.set(key, route);
@@ -145,6 +162,8 @@ export async function saveLastServiceRoute(
 
 export async function clearLastServiceRoute(userId?: number | string | null): Promise<void> {
   const key = getLastServiceRouteStorageKey(userId);
+  invalidateReads(key);
+  if (key !== LAST_SERVICE_ROUTE_STORAGE_KEY) invalidateReads(LAST_SERVICE_ROUTE_STORAGE_KEY);
   clearedKeys.add(key);
   clearedKeys.add(LAST_SERVICE_ROUTE_STORAGE_KEY);
   memoryCache.delete(key);

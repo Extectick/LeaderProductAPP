@@ -1,14 +1,27 @@
-import { AnimatedButton } from '@/components/AnimatedButton';
+import { useContext } from 'react';
+import { AuthContext } from '@/context/AuthContext';
+import { clearLastServiceRoute } from '@/src/features/navigation/lastServiceRouteStorage';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { IconSymbol } from '@/components/ui/IconSymbol';
 import { Colors } from '@/constants/Colors';
 import { useRouter } from 'expo-router';
-import { Platform, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 export default function NotFoundScreen() {
   const router = useRouter();
-  const defaultMainRoute = Platform.OS === 'web' ? '/home' : '/services';
+  const auth = useContext(AuthContext);
+  const openServices = () => {
+    // Memory is cleared synchronously; a slow native storage write must not trap
+    // the user on this page. No drafts, credentials or other app data are erased.
+    void clearLastServiceRoute(auth?.profile?.id);
+    router.replace('/services');
+  };
+  const goBack = () => {
+    void clearLastServiceRoute(auth?.profile?.id);
+    if (router.canGoBack()) router.back();
+    else router.replace('/services');
+  };
 
   return (
     <ThemedView style={styles.container}>
@@ -28,16 +41,14 @@ export default function NotFoundScreen() {
         </ThemedText>
 
         <View style={styles.actions}>
-          <AnimatedButton
-            onPress={() => router.replace(defaultMainRoute as any)}
-            style={StyleSheet.flatten([styles.button, styles.primary])}
-            title="На главную"
-          />
-          <AnimatedButton
-            onPress={() => router.back()}
-            style={StyleSheet.flatten([styles.button, styles.secondary])}
-            title="Назад"
-          />
+          <Pressable accessibilityRole="button" onPress={openServices}
+            style={({ pressed }) => [styles.button, styles.primary, pressed && { opacity: 0.75 }]}>
+            <Text style={[styles.buttonText, { color: '#fff' }]}>На главную</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={goBack}
+            style={({ pressed }) => [styles.button, styles.secondary, pressed && { opacity: 0.75 }]}>
+            <Text style={styles.buttonText}>Назад</Text>
+          </Pressable>
         </View>
       </View>
     </ThemedView>
@@ -112,6 +123,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
   },
+  buttonText: { fontSize: 18, fontWeight: '600', textAlign: 'center', color: '#0068D9' },
   primary: {
     backgroundColor: '#0ea5e9',
   },
