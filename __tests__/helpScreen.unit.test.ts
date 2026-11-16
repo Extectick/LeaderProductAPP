@@ -603,7 +603,7 @@ describe('Help screen integration with service boundary', () => {
     mockService.tickets=[ticket];mockService.messages=[{id:81,ticketId:7,sequence:1,authorId:9,authorRole:'IT',text:'Ответ',kind:'TEXT',attachments:[],reactions:[],createdAt:new Date().toISOString()}];
     await render();await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
     expect(composer().props.focusKey).toBe(0);
-    await act(async()=>screen.root.findByType('HelpMessageBubble' as any).props.onReply());
+    await act(async()=>screen.root.findAllByType('HelpMessageBubble' as any)[0].props.onReply());
     expect(composer().props.focusKey).toBeGreaterThan(0);
     await act(async()=>button('Назад').props.onPress());
     await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
@@ -898,27 +898,89 @@ describe('Help screen integration with service boundary', () => {
     expect(header().findAllByType('HelpBlurSurface' as any)).toHaveLength(1);
     expect(screen.root.findByProps({testID:'help-ticket-list'})).toBe(list);
   });
+  test('selection includes AI, copies in timeline order and clears on cancel',async()=>{
+    const {HelpMessageSelectionRow}=require('../src/features/help/components/HelpMessageSelectionRow');
+    const human={id:91,ticketId:7,sequence:1,text:'Пользователь',authorId:5,authorRole:'USER',createdAt:new Date().toISOString(),kind:'TEXT',attachments:[],reactions:[]} as any;
+    const ai={...human,id:92,sequence:2,text:'Ответ ИИ',authorId:null,assistantRun:{runId:'selection-run',status:'completed',activityVersion:1}};
+    mockService.tickets=[ticket];mockService.messages=[human,ai];
+    await render();await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
+    const row=(id:number)=>screen.root.findAllByType(HelpMessageSelectionRow).find(node=>node.props.messageId===id)!;
+    await act(async()=>row(92).props.onStart());
+    expect(row(91).props.active).toBe(true);expect(row(92).props.selected).toBe(true);
+    await act(async()=>row(91).props.onToggle());
+    await act(async()=>button('Копировать выбранные сообщения').props.onPress());
+    expect(require('expo-clipboard').setStringAsync).toHaveBeenLastCalledWith('Пользователь\n\nОтвет ИИ');
+    expect(mockService.sendMessage).not.toHaveBeenCalled();
+    await act(async()=>button('Отменить выделение').props.onPress());
+    expect(row(91).props.active).toBe(false);expect(screen.root.findAllByProps({testID:'help-message-selection-toolbar'})).toHaveLength(0);
+  });
+  test('forwarding selected messages resumes after a partial failure without duplicating accepted rows',async()=>{
+    const {HelpMessageSelectionRow}=require('../src/features/help/components/HelpMessageSelectionRow');
+    const {HelpForwardSheet}=require('../src/features/help/components/HelpForwardSheet');
+    const first={id:91,ticketId:7,sequence:1,text:'Первый',authorId:5,authorRole:'USER',createdAt:new Date().toISOString(),kind:'TEXT',attachments:[],reactions:[]} as any;
+    const second={...first,id:92,sequence:2,text:'Второй'};mockService.tickets=[ticket];mockService.messages=[first,second];
+    await render();await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
+    const row=(id:number)=>screen.root.findAllByType(HelpMessageSelectionRow).find(node=>node.props.messageId===id)!;
+    await act(async()=>row(91).props.onStart());await act(async()=>row(92).props.onToggle());
+    await act(async()=>button('Переслать выбранные сообщения').props.onPress());
+    const forward=screen.root.findByType(HelpForwardSheet).props.onForward,destination={...ticket,id:8};
+    mockService.sendMessage.mockResolvedValueOnce(detail).mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(detail);
+    await act(async()=>{await expect(forward(destination)).rejects.toThrow('offline');});
+    await act(async()=>forward(destination));
+    expect(mockService.sendMessage.mock.calls.map((call:any)=>call[1].forwardedFromId)).toEqual([91,92,92]);
+    expect(mockService.sendMessage.mock.calls[1][1].clientMessageId).toBe(mockService.sendMessage.mock.calls[2][1].clientMessageId);
+    for(const call of mockService.sendMessage.mock.calls)expect(call.slice(2)).toEqual([[],{waitForDelivery:true}]);
+  });
+  test.each([['account',1],['account',2],['navigation',1],['navigation',2],['overlay',1],['unmount',1]] as const)('ordered forwarding stops after %s changes with %s selected without clearing a new selection',async(change,count)=>{
+    const {HelpMessageSelectionRow}=require('../src/features/help/components/HelpMessageSelectionRow');
+    const {HelpForwardSheet}=require('../src/features/help/components/HelpForwardSheet');
+    const first={id:91,ticketId:7,sequence:1,text:'First',authorId:5,authorRole:'USER',createdAt:new Date().toISOString(),kind:'TEXT',attachments:[],reactions:[]} as any;
+    mockService.tickets=[ticket];mockService.messages=[first,{...first,id:92,sequence:2,text:'Second'}];
+    await render();await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
+    const row=(id:number)=>screen.root.findAllByType(HelpMessageSelectionRow).find(node=>node.props.messageId===id)!;
+    await act(async()=>row(91).props.onStart());if(count===2)await act(async()=>row(92).props.onToggle());
+    await act(async()=>button('Переслать выбранные сообщения').props.onPress());
+    const oldForward=screen.root.findByType(HelpForwardSheet).props.onForward;
+    let delivered!:(value:any)=>void;mockService.sendMessage.mockReturnValueOnce(new Promise(resolve=>{delivered=resolve;}));
+    let work!:Promise<void>;await act(async()=>{work=oldForward({...ticket,id:8});});
+    expect(mockService.sendMessage).toHaveBeenCalledTimes(1);
+    if(change==='account'){
+      mockService.userId=9;await act(async()=>screen.update(React.createElement(HelpScreen)));
+      await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
+      await act(async()=>row(92).props.onStart());
+    }else if(change==='navigation'){
+      await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
+      await act(async()=>row(92).props.onStart());
+    }else if(change==='overlay'){
+      await act(async()=>screen.root.findByType(HelpForwardSheet).props.onClose());
+      await act(async()=>button('Отменить выделение').props.onPress());
+      await act(async()=>row(92).props.onStart());
+    }else await act(async()=>screen.unmount());
+    await act(async()=>{delivered(detail);await work;});
+    expect(mockService.sendMessage).toHaveBeenCalledTimes(1);
+    if(change!=='unmount')expect(row(92).props.selected).toBe(true);
+  });
   test('typing preserves timeline data, renderers and chrome while row actions use the current draft',async()=>{
     const message={id:91,ticketId:7,sequence:1,text:'Первый текст',authorId:5,authorRole:'USER',createdAt:new Date().toISOString(),kind:'TEXT',attachments:[],reactions:[]} as any;
     const pending={key:'queued-photo',ticketId:7,create:false,createdAt:1,status:'queued',input:{text:'Фото',clientMessageId:'queued-photo'},localFiles:[{uri:'file://photo.jpg',name:'photo.jpg',mimeType:'image/jpeg'}]};
     mockService.tickets=[ticket];mockService.messages=[message];mockService.pendingMessages=[pending];
     await render();await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
     const before=mockTimelineProps;
-    const previousRow=before.renderMessage(message);
+    const previousRow=screen.root.findAllByType('HelpMessageBubble' as any).find(node=>node.props.message.id===message.id)!.props;
     await act(async()=>composer().props.onChange('Новый черновик'));
     for(const key of ['messages','pendingMessages','renderMessage','renderPending','header','footer'])expect(mockTimelineProps[key]).toBe(before[key]);
     // A retained row callback must capture the draft at invocation, not at render.
-    await act(async()=>previousRow.props.onEdit());
+    await act(async()=>previousRow.onEdit());
     expect(composer().props.mode).toBe('edit');
     await act(async()=>composer().props.onCancelMode());
     expect(composer().props.value).toBe('Новый черновик');
     const previousRenderer=mockTimelineProps.renderMessage;
-    await act(async()=>mockTimelineProps.renderMessage(message).props.onMenu());
+    await act(async()=>screen.root.findAllByType('HelpMessageBubble' as any).find(node=>node.props.message.id===message.id)!.props.onMenu());
     expect(mockTimelineProps.renderMessage).not.toBe(previousRenderer);
-    expect(mockTimelineProps.renderMessage(message).props.selected).toBe(true);
+    expect(screen.root.findAllByProps({testID:'help-message-selection-toggle'})[0].props.accessibilityState.checked).toBe(true);
     mockService.selectedTicket={...ticket,members:[{userId:6,lastReadSequence:1}]};
     await act(async()=>screen.update(React.createElement(HelpScreen)));
-    expect(mockTimelineProps.renderMessage(message).props.readByOthers).toBe(true);
+    expect(screen.root.findAllByType('HelpMessageBubble' as any).find(node=>node.props.message.id===message.id)!.props.readByOthers).toBe(true);
     mockService.messages=[{...message,clientMessageId:'queued-photo'}];
     await act(async()=>screen.update(React.createElement(HelpScreen)));
     expect(mockTimelineProps.pendingMessages).toHaveLength(0);
@@ -1357,7 +1419,7 @@ describe('Help screen integration with service boundary', () => {
     await act(async () => button('Отправить ответы').props.onPress());
     expect(mockService.sendMessage).toHaveBeenCalledWith(7, { text: 'Какая ОС?\nОтвет: Windows 11', attachmentIds: [], replyToId: 32 });
   });
-  test.each([null,32])('restored questionnaire answers share the AI row and retain original actions (reply=%s)',async replyToId=>{
+  test.each([null,32])('restored questionnaire answers keep independent stable selection rows and retain original actions (reply=%s)',async replyToId=>{
     await openWithMessage();
     const base=mockService.messages[0];
     const question={...base,id:32,sequence:2,authorId:0,authorRole:'SYSTEM',kind:'TEXT',assistantRun:{runId:'restored-question',status:'completed',questions:[{id:'os',header:'Система',question:'Какая ОС?',multiSelect:false,options:[]}]}};
@@ -1368,16 +1430,18 @@ describe('Help screen integration with service boundary', () => {
     expect(mockTimelineProps.messages).toEqual([question,answer]);
     expect(mockTimelineProps.questionExchanges.get(32).message).toBe(answer);
     expect(assistant.props.questionState).toBe('answered');
-    expect(assistant.props.questionReply.props.message).toBe(answer);
-    expect(assistant.props.questionReply.props.questionExchange.answers[0].answer).toBe('Windows 11');
-    expect(screen.root.findAllByType('HelpMessageBubble' as any)).toHaveLength(0);
-    await act(async()=>assistant.props.questionReply.props.onReply());
+    const answerRow=screen.root.findByType('HelpMessageBubble' as any);
+    expect(answerRow.props.message).toBe(answer);
+    expect(answerRow.props.questionExchange.answers[0].answer).toBe('Windows 11');
+    await act(async()=>answerRow.props.onMenu());
+    expect(screen.root.findByType('HelpMessageBubble' as any)).toBe(answerRow);
+    await act(async()=>button('Ответить на выбранное сообщение').props.onPress());
     expect(composer().props.quote.text).toBe(answer.text);
     // Editing out the questionnaire grammar must reveal the original record.
     mockService.messages=[question,{...answer,text:'Другое сообщение',editedAt:new Date().toISOString()}];
     await act(async()=>screen.update(React.createElement(HelpScreen)));
     expect(mockTimelineProps.questionExchanges.size).toBe(0);
-    expect(screen.root.findByType('HelpMessageBubble' as any).props.message.id).toBe(33);
+    expect(screen.root.findAllByType('HelpMessageBubble' as any)[0].props.message.id).toBe(33);
   });
   test('pending questionnaire stays inside the AI row through failure and server acknowledgement',async()=>{
     await openWithMessage();
@@ -1399,10 +1463,11 @@ describe('Help screen integration with service boundary', () => {
     mockService.messages=[question,answer];
     await act(async()=>screen.update(React.createElement(HelpScreen)));
     expect(mockTimelineProps.pendingQuestionExchanges.size).toBe(0);
-    expect(assistant().props.questionReply.props.message).toBe(answer);
-    expect(assistant().props.questionReply.type).toBe(pendingType);
-    expect(assistant().props.questionReply.props.resolve).toBe(pendingResolver);
-    expect(assistant().props.questionReply.props.delivery).toBeUndefined();
+    const committed=screen.root.findByType('HelpMessageBubble' as any);
+    expect(committed.props.message).toBe(answer);
+    expect(committed.type).toBe(pendingType);
+    expect(committed.props.resolve).toBe(pendingResolver);
+    expect(committed.props.delivery).toBeUndefined();
     expect(mockTimelineProps.pendingMessages).toEqual([]);
   });
   test('AI IT button opens confirmation; cancelling leaves the ticket with AI and double confirmation sends once', async () => {

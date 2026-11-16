@@ -22,6 +22,7 @@ jest.mock('../src/features/services/hooks/useServicesData',()=>({useServicesData
 jest.mock('../src/features/navigation/lastServiceRouteStorage',()=>({saveWebCachedLastServiceRoute:(route:string)=>mockCache(route)}));
 jest.mock('../src/features/services/ui/ServiceStateViews',()=>({ServicesEmptyView:'Empty',ServicesLoadingView:'Loading',ServicesErrorView:'Error'}));
 jest.mock('@expo/vector-icons',()=>({Ionicons:'Icon'}));
+jest.mock('react-native-svg',()=>({__esModule:true,default:'Svg',Path:'Path'}));
 
 import ServicesCatalogScreen from '../src/features/services/ui/ServicesCatalogScreen';
 let tree:Renderer.ReactTestRenderer|undefined;

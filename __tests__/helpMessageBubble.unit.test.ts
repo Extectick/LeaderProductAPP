@@ -31,7 +31,7 @@ describe('Help message native layout and reply gestures', () => {
     props={...props,message,questionExchange:{message,answers:[{questionId:'os',question:'Какая ОС?',answer:'Windows 11',skipped:false}]},selected:true,highlighted:true};
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpMessageBubble,props));});
     expect(node('help-message-frame').props.style).toMatchObject({width:'100%',maxWidth:'100%'});
-    expect(node('help-message-1').props.style).toMatchObject({justifyContent:'flex-start',marginLeft:0,marginRight:0});
+    expect(node('help-message-1').props.style).toMatchObject({justifyContent:'flex-start',marginLeft:16,marginRight:16});
     expect(node('help-message-bubble').props.style.backgroundColor).toBe('transparent');
     expect(node('help-question-answer-os').props.children).toBe('Windows 11');
     expect(screen.root.findAll(n=>n.type===Text&&n.props.children==='Ваш ответ')).toHaveLength(0);

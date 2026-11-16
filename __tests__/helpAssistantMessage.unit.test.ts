@@ -58,7 +58,7 @@ test('reasoning becomes the answer in one message with a single AI identity',asy
   expect(text()).not.toContain('ИИ рассуждает');
   expect(view.root.findAllByProps({testID:'help-assistant-avatar-loading-1043'})).toHaveLength(0);
   expect(text()).toContain('ИИ ассистент');
-  expect(view.root.findByProps({testID:'help-ai-work-toggle'}).props.accessibilityState.expanded).toBe(false);
+  expect(view.root.findByProps({testID:'help-ai-work-toggle'}).props.accessibilityState.expanded).toBe(true);
   expect(view.root.findByProps({testID:'help-ai-accessible-role'}).props.style.opacity).toBe(0);
   expect(view.root.findAllByProps({testID:'help-assistant-step-loader'})).toHaveLength(0);
   expect(text()).not.toContain('тестовый сценарий');
@@ -97,8 +97,6 @@ test('analysis is visible before completion, then removed, and suggestions submi
   await act(async()=>{view=TestRenderer.create(React.createElement(HelpAssistantMessage,{message,onSuggestion:reply}));});
   const texts=()=>JSON.stringify(view.toJSON());
   try{
-    expect(texts()).not.toContain('Проверю подключение.');
-    await act(async()=>view.root.findByProps({testID:'help-ai-work-toggle'}).props.onPress());
     expect(texts()).toContain('Проверю подключение.');expect(texts()).not.toContain('Изучаю описание проблемы');
     const partial={...message,assistantRun:{...message.assistantRun,status:'streaming' as const,draftText:'Откройте настройки.'}};
     await act(async()=>view.update(React.createElement(HelpAssistantMessage,{message:partial,onSuggestion:reply})));

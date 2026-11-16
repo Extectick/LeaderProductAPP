@@ -601,14 +601,18 @@ export function useHelpService(isFocused = true) {
     finally { void dispatchHelpPending(userId,item).then(detail=>{if(current(account))applyDetail(detail,true);}).catch(error=>{if(current(account))report(error);}); }
     return item;
   }, [identity,userId,current,prepareFileMessage,applyDetail,report]);
-  const sendMessage = useCallback(async(id:number,input:HelpMessageInput,files:HelpLocalFile[]=[]):Promise<HelpDetail>=>{
+  const sendMessage = useCallback(async(id:number,input:HelpMessageInput,files:HelpLocalFile[]=[],options?:{waitForDelivery?:boolean}):Promise<HelpDetail>=>{
+    if(!current(identity))throw new Error('Учётная запись изменилась');
     const ticket=selectedRef.current?.id===id?selectedRef.current:ticketsRef.current.find(row=>row.id===id);if(!ticket)throw new Error('Обращение не открыто');
     const account=identity,navigation=detailGeneration.current,interaction=interactionRevision.current;
     const capturedInput=withHelpClientContext(input,`${API_BASE_URL}:${userId}`);
     const clientMessageId=input.clientMessageId||helpClientId();
     const source=input.replyToId?messagesRef.current.find(message=>message.ticketId===id&&message.id===input.replyToId):undefined;
     const draftItem:HelpPending={key:clientMessageId,ticketId:id,create:false,createdAt:Date.now(),status:'queued',input:{...capturedInput,clientMessageId},...(source?{replyTo:{id:source.id,text:source.text,author:source.author,attachments:source.attachments}}:{})};
-    const item=await prepareFileMessage(draftItem,files);
+    // Forward retries keep the same durable operation and original context.
+    const previous=options?.waitForDelivery&&input.clientMessageId?(await readHelpPending(userId)).find(item=>item.key===clientMessageId&&item.ticketId===id):undefined;
+    if(!current(account))throw new Error('Учётная запись изменилась');
+    const item=previous??await prepareFileMessage(draftItem,files);
     if(!current(account))throw new Error('Учётная запись изменилась');
     setPendingMessages(old=>[...old.filter(row=>row.key!==item.key),item]);
     let accepted=false;
@@ -626,7 +630,11 @@ export function useHelpService(isFocused = true) {
       }
     };
     // Acceptance means durable local enqueue. Delivery continues beyond this screen.
-    void dispatchHelpPending(userId,item,delivered).then(delivered).catch(error=>{if(current(account))report(error);});
+    const delivery=dispatchHelpPending(userId,item,delivered).then(detail=>{delivered(detail);return detail;});
+    // Ordered forwarding waits for the server receipt and durable acknowledgement.
+    // Ordinary composition still releases immediately after local enqueue.
+    if(options?.waitForDelivery)return delivery;
+    void delivery.catch(error=>{if(current(account))report(error);});
     return {...(pageRef.current??{}),ticket,messages:messagesRef.current.filter(message=>message.ticketId===id),queued:true};
   },[userId,current,identity,report,prepareFileMessage,applyDetail,issueNavigation]);
   const stopAssistant=useCallback((id:number,runId:string)=>mutate(()=>helpApi.stopAssistant(id,runId)),[mutate,helpApi]);

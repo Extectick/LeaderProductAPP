@@ -99,6 +99,31 @@ describe('Help accepted sends and history replay',()=>{
     await act(async()=>{done(accepted);});
     expect(service.messages.map(row=>row.id)).toEqual([100]);expect(service.navigationTarget?.kind).toBe('latest');expect(service.hasNewer).toBe(false);
   });
+  test('forward delivery option keeps a sequential caller waiting until durable delivery completes',async()=>{
+    await open();let first!:(value:any)=>void,second!:(value:any)=>void;
+    outbox.dispatchHelpPending.mockImplementationOnce(()=>new Promise(resolve=>{first=resolve;})).mockImplementationOnce(()=>new Promise(resolve=>{second=resolve;}));
+    const finished=jest.fn();let work!:Promise<void>;
+    await act(async()=>{work=(async()=>{
+      await service.sendMessage(7,{text:'First',forwardedFromId:11,clientMessageId:'forward-first'},[],{waitForDelivery:true});
+      await service.sendMessage(7,{text:'Second',forwardedFromId:12,clientMessageId:'forward-second'},[],{waitForDelivery:true});
+      finished();
+    })();});
+    expect(outbox.dispatchHelpPending).toHaveBeenCalledTimes(1);
+    expect(storage.saveHelpPending).toHaveBeenCalledWith(5,expect.objectContaining({key:'forward-first'}));
+    expect(finished).not.toHaveBeenCalled();
+    await act(async()=>first(accepted));
+    expect(outbox.dispatchHelpPending).toHaveBeenCalledTimes(2);expect(finished).not.toHaveBeenCalled();
+    await act(async()=>{second(accepted);await work;});expect(finished).toHaveBeenCalledTimes(1);
+  });
+  test('forward delivery failure preserves its durable operation and retry reuses the original payload',async()=>{
+    await open();const pending={key:'forward-retry',ticketId:7,createdAt:42,create:false,status:'queued',attempts:2,input:{text:'Original',forwardedFromId:11,clientMessageId:'forward-retry'}};
+    storage.readHelpPending.mockResolvedValue([pending]);
+    outbox.dispatchHelpPending.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(accepted);
+    await act(async()=>{await expect(service.sendMessage(7,{text:'Edited later',forwardedFromId:11,clientMessageId:'forward-retry'},[],{waitForDelivery:true})).rejects.toThrow('offline');});
+    await act(async()=>{await service.sendMessage(7,{text:'Edited later',forwardedFromId:11,clientMessageId:'forward-retry'},[],{waitForDelivery:true});});
+    expect(storage.saveHelpPending).not.toHaveBeenCalled();
+    expect(outbox.dispatchHelpPending.mock.calls.map((call:any)=>call[1])).toEqual([pending,pending]);
+  });
   test('file message releases the composer after durable enqueue while the network is pending',async()=>{
     await open();let done!:(value:any)=>void;
     outbox.dispatchHelpPending.mockReturnValue(new Promise(resolve=>{done=resolve;}));

@@ -49,6 +49,7 @@ type Props = {
   hideStickyDate?: boolean;
   /** Defer offscreen work until the parent scene finishes its entrance. */
   entrySettled?: boolean;
+  suppressTailMotion?:boolean;
   onHistoryScroll?: (towardOlder:boolean) => void;
   onStickyDateChange?: (date: string | null) => void;
   onDatePresentationChange?: (presentation:HelpDatePresentation|null) => void;
@@ -494,7 +495,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     if(tailGeometry.current&&(Math.abs(tailGeometry.current.width-next.width)>.5||Math.abs(tailGeometry.current.height-next.height)>.5))resetTailMotion();
     // Geometry, not text/type or a receipt timer, owns this motion. Late image
     // dimensions, voice controls and streamed text all lift the same viewport.
-    const delta=helpTailDisplacement(tailGeometry.current,next,{active:!hasNativeAtomicTailMotion&&HELP_TAIL_MOTION.enabled&&liveTailStarted.current&&live.current.entrySettled!==false&&live.current.active&&readyRef.current&&followingRef.current&&!inNavigation.current&&!dragging.current&&!momentum.current&&!live.current.hasNewer&&!live.current.loadingOlder&&!live.current.loadingNewer&&!reduced,liveGrowth:!tailRevision.current.history});
+    const delta=helpTailDisplacement(tailGeometry.current,next,{active:!hasNativeAtomicTailMotion&&HELP_TAIL_MOTION.enabled&&liveTailStarted.current&&live.current.entrySettled!==false&&!live.current.suppressTailMotion&&live.current.active&&readyRef.current&&followingRef.current&&!inNavigation.current&&!dragging.current&&!momentum.current&&!live.current.hasNewer&&!live.current.loadingOlder&&!live.current.loadingNewer&&!reduced,liveGrowth:!tailRevision.current.history});
     tailGeometry.current=next;
     if(!delta)return;
     // Position the real scroll range first, then ease only its presentation.

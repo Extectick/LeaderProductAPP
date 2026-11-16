@@ -24,6 +24,7 @@ jest.mock('../src/features/services/hooks/useServicesData',()=>({useServicesData
 jest.mock('../src/shared/network/useServerStatus',()=>({useServerStatus:()=>({isReachable:mockReachable})}));
 jest.mock('../src/features/navigation/lastServiceRouteStorage',()=>({saveWebCachedLastServiceRoute:(route:string)=>mockSaveService(route)}));
 jest.mock('@expo/vector-icons',()=>({Ionicons:'Icon'}));
+jest.mock('react-native-svg',()=>({__esModule:true,default:'Svg',Path:'Path'}));
 
 import Navigation from '../components/Navigation/Navigation';
 import HomeScreen from '../app/(main)/home';
