@@ -1,22 +1,21 @@
 import { useRouter } from 'expo-router';
-import { useContext } from 'react';
+import { useContext, useEffect, useRef } from 'react';
 import { AuthContext } from '@/context/AuthContext';
-import { NotFoundView } from '@/components/NotFoundView';
 import { clearLastServiceRoute } from '@/src/features/navigation/lastServiceRouteStorage';
 
+/** Unknown routes recover automatically without exposing a dead-end screen. */
 export default function NotFoundScreen() {
   const router = useRouter();
   const auth = useContext(AuthContext);
-  const openServices = async () => {
-    // Root 404 is outside the main navigator. Do not restore a stale service
-    // when the main navigator mounts again after this explicit recovery action.
-    await clearLastServiceRoute(auth?.profile?.id);
+  const userId = auth?.profile?.id;
+  const recovered = useRef<{userId: number | undefined} | null>(null);
+  useEffect(() => {
+    if (recovered.current?.userId === userId && recovered.current !== null) return;
+    recovered.current = {userId};
+    // Clear the synchronous restore cache before navigation. Disk persistence
+    // may finish later and must not keep the user on an unknown route.
+    void clearLastServiceRoute(userId);
     router.replace('/services');
-  };
-  const goBack = () => {
-    if (router.canGoBack()) router.back();
-    else return openServices();
-  };
-
-  return <NotFoundView onServices={openServices} onBack={goBack} />;
+  }, [router, userId]);
+  return null;
 }
