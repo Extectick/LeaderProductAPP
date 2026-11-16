@@ -24,29 +24,28 @@ beforeEach(async () => {
 });
 afterEach(async () => {if(tree) await act(async () => tree!.unmount()); tree=undefined;});
 const deferred = <T,>() => {let resolve!: (value:T)=>void;const promise=new Promise<T>(r=>{resolve=r;});return {promise,resolve};};
-const buttons = () => tree!.root.findAll(node => node.props.accessibilityRole === 'button' && typeof node.props.onPress === 'function');
 
-test('recovery navigates and clears memory even while native removal is stalled', async () => {
+test('missing page automatically returns home and clears memory even while native removal is stalled', async () => {
   await mockStorage.saveLastServiceRoute(4242, '/services/stock_balances');
   const removal = deferred<void>();
   jest.spyOn(AsyncStorage, 'multiRemove').mockImplementationOnce(() => removal.promise);
   await act(async () => {tree = Renderer.create(React.createElement(NotFoundScreen));});
-  act(() => buttons()[0].props.onPress());
+  expect(tree!.toJSON()).toBeNull();
   expect(mockRouter.replace).toHaveBeenCalledWith('/services');
   expect(mockStorage.getCachedLastServiceRoute(4242)).toBeNull();
   expect(mockStorage.getCachedLastServiceRoute()).toBeNull();
   removal.resolve();
 });
 
-test.each([false, true])('back recovers without history and clears stale state (history=%s)', async hasHistory => {
+test.each([false, true])('missing page replaces itself instead of returning to possibly broken history (history=%s)', async hasHistory => {
   await mockStorage.saveLastServiceRoute(4242, '/services/client_orders');
   mockRouter.canGoBack.mockReturnValue(hasHistory);
   await act(async () => {tree=Renderer.create(React.createElement(NotFoundScreen));});
-  await act(async () => buttons()[1].props.onPress());
   expect(mockStorage.getCachedLastServiceRoute(4242)).toBeNull();
-  expect(mockRouter.back).toHaveBeenCalledTimes(hasHistory ? 1 : 0);
-  expect(mockRouter.replace).toHaveBeenCalledTimes(hasHistory ? 0 : 1);
-  if(!hasHistory) expect(mockRouter.replace).toHaveBeenCalledWith('/services');
+  expect(mockRouter.back).not.toHaveBeenCalled();
+  expect(mockRouter.replace).toHaveBeenCalledTimes(1);
+  expect(mockRouter.replace).toHaveBeenCalledWith('/services');
+  expect(tree!.toJSON()).toBeNull();
 });
 
 test('late disk read cannot resurrect a cleared remembered route', async () => {

@@ -5,8 +5,8 @@ contain. Opening such a service and persisting it as the last route can trap the
 user on the old not-found page across restarts. Its Home action used to restore
 the same route; Back had no fallback when there was no navigation history.
 
-The recovery actions now clear only the remembered service and navigate without
-waiting for native storage. Late reads cannot reinstate the cleared route. Only
+The missing-page route now automatically clears only the remembered service and navigates without
+waiting for native storage or user interaction. It renders no error page. Late reads cannot reinstate the cleared route. Only
 installed service roots are persisted; unavailable screens remain visibly disabled
 with an update explanation in the catalog. Native dependencies, SDK57 and runtime
 0.1.38 remain unchanged. This hotfix is isolated from the SDK58 production branch.
