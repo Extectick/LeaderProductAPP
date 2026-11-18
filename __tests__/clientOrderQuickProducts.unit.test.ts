@@ -1,6 +1,6 @@
 import React from 'react';
 import Renderer, {act} from 'react-test-renderer';
-jest.mock('@mui/material', () => Object.fromEntries(['Alert','Box','Button','CircularProgress','ClickAwayListener','Stack','TextField','Typography'].map(name => [name, name])));
+jest.mock('@mui/material', () => Object.fromEntries(['Alert','Box','Button','CircularProgress','Skeleton','ClickAwayListener','Stack','TextField','Typography'].map(name => [name, name])));
 jest.mock('@expo/vector-icons', () => ({Ionicons: 'Icon'}));
 jest.mock('../src/features/clientOrders/components/ProductImageGalleryDialog', () => ({WebProductImage: 'ProductImage', PRODUCT_IMAGE_PLACEHOLDER_URI: 'fixture-image'}));
 import {ClientOrderQuickProducts} from '../src/features/clientOrders/screen/desktop/ClientOrderQuickProducts';
@@ -54,7 +54,7 @@ test('search is scoped and Enter transfers an explicit positive quantity then re
   await act(async () => {tree=Renderer.create(render());});
   expect(workspace.searchProducts).not.toHaveBeenCalled();
   await searchFor();
-  expect(workspace.searchProducts).toHaveBeenCalledWith(expect.objectContaining({search:'молоко',organizationGuid:'organization',counterpartyGuid:'customer',warehouseGuid:'warehouse',agreementGuid:'agreement',priceTypeGuid:'price',limit:12}));
+  expect(workspace.searchProducts).toHaveBeenCalledWith(expect.objectContaining({search:'молоко',organizationGuid:'organization',counterpartyGuid:'customer',warehouseGuid:'warehouse',agreementGuid:'agreement',priceTypeGuid:'price',limit:12}), {signal: expect.any(AbortSignal), onRefresh: expect.any(Function)});
   await act(async () => qty().props.onChange({target:{value:'12'}}));
   await act(async () => qty().props.onKeyDown(enter()));
   expect(workspace.addProduct).toHaveBeenCalledWith(product,{quantity:'12'});
@@ -76,6 +76,7 @@ test('a late old-client response never enables adding in the new client context'
   await act(async () => {tree=Renderer.create(render());}); await searchFor();
   workspace={...workspace,draft:{...workspace.draft,counterpartyGuid:'other-customer'}};
   await act(async () => tree.update(render()));
+  expect(workspace.searchProducts.mock.calls[0][1].signal.aborted).toBe(true);
   await act(async () => old.resolve({items:[product]}));
   expect(add().props.disabled).toBe(true);
   await act(async () => {jest.advanceTimersByTime(180);});
@@ -88,8 +89,42 @@ test('a late old-client response never enables adding in the new client context'
 test('a response for an older query is ignored even when it resolves after the new query', async () => {
   const old=deferred();workspace.searchProducts.mockReturnValueOnce(old.promise).mockResolvedValueOnce({items:[]});
   await act(async () => {tree=Renderer.create(render());}); await searchFor('молоко'); await searchFor('сыр');
+  expect(workspace.searchProducts.mock.calls[0][1].signal.aborted).toBe(true);
+  expect(workspace.searchProducts.mock.calls[1][1].signal.aborted).toBe(false);
   await act(async () => old.resolve({items:[product]}));
   expect(add().props.disabled).toBe(true);expect(search().props.value).toBe('сыр');
+});
+
+test('unknown commercial data in new search results does not replace an existing line price', async () => {
+  const existing = {...buildNewItem(product), key: 'existing', quantity: '2', manualPrice: '125'};
+  workspace.draft.items = [existing];
+  workspace.searchProducts.mockResolvedValue({items: [{...product, basePrice: null, stock: null}]});
+  await act(async () => {tree=Renderer.create(render());}); await searchFor();
+  await act(async () => qty().props.onKeyDown(enter()));
+  expect(workspace.setItemPatch).toHaveBeenCalledWith('existing', {quantity: '3'});
+  expect(workspace.addProduct).not.toHaveBeenCalled();
+  expect(existing).toMatchObject({basePrice: 100, manualPrice: '125', quantity: '2'});
+});
+
+test('unmount aborts the active product request', async () => {
+  const pending = deferred(); workspace.searchProducts.mockReturnValue(pending.promise);
+  await act(async () => {tree=Renderer.create(render());}); await searchFor();
+  const signal = workspace.searchProducts.mock.calls[0][1].signal;
+  await act(async () => tree.unmount());
+  expect(signal.aborted).toBe(true);
+});
+
+test('background refresh preserves keyboard selection and only updates current displayed results', async () => {
+  const second = {...product, guid: 'second', name: 'Второй товар'};
+  workspace.searchProducts.mockResolvedValue({items: [product, second]});
+  await act(async () => {tree=Renderer.create(render());}); await searchFor();
+  const refresh = workspace.searchProducts.mock.calls[0][1].onRefresh;
+  await act(async () => refresh({items: [second, {...product, basePrice: 150}]}));
+  expect(workspace.addProduct).not.toHaveBeenCalled(); expect(workspace.setItemPatch).not.toHaveBeenCalled();
+  await act(async () => qty().props.onKeyDown(enter()));
+  expect(workspace.addProduct).toHaveBeenCalledWith(expect.objectContaining({guid: product.guid, basePrice: 150}), {quantity: '1'});
+  await act(async () => refresh({items: [second]}));
+  expect(search().props.value).toBe('');
 });
 
 test.each(['mutationLocked','loadingDefaults','loadingDetail','readOnly'])('%s fences live and retained stale add handlers', async flag => {
@@ -98,4 +133,37 @@ test.each(['mutationLocked','loadingDefaults','loadingDetail','readOnly'])('%s f
   workspace={...workspace,[flag]:true};await act(async () => tree.update(render()));
   await act(async () => previousClick());
   expect(workspace.addProduct).not.toHaveBeenCalled();
+});
+
+
+test('background refresh removes a suppressed active product and clamps selection to remaining permitted rows', async () => {
+  const second = {...product, guid: 'second', name: 'Второй товар'};
+  workspace.searchProducts.mockResolvedValue({items: [product, second]});
+  await act(async () => {tree=Renderer.create(render());}); await searchFor();
+  const refresh = workspace.searchProducts.mock.calls[0][1].onRefresh;
+  await act(async () => refresh({items: [second]}));
+  expect(tree.root.findAll(node => node.props.role === 'option')).toHaveLength(1);
+  await act(async () => qty().props.onKeyDown(enter()));
+  expect(workspace.addProduct).toHaveBeenCalledWith(expect.objectContaining({guid: 'second'}), {quantity: '1'});
+});
+
+test('background refresh with no permitted rows disables add instead of keeping old cards', async () => {
+  await act(async () => {tree=Renderer.create(render());}); await searchFor();
+  const refresh = workspace.searchProducts.mock.calls[0][1].onRefresh;
+  await act(async () => refresh({items: []}));
+  expect(add().props.disabled).toBe(true);
+  expect(tree.root.findAll(node => node.props.role === 'option')).toHaveLength(0);
+});
+
+
+test('unknown pending price/stock skeletons settle to values or missing, with no blink of known values', async () => {
+  const freshness = {source: 'local-read-model', commercialPending: true, priceStatus: 'unknown', stockStatus: 'unknown'};
+  workspace.searchProducts.mockResolvedValue({items: [{...product, basePrice: null, stock: null, freshness}]});
+  await act(async () => {tree=Renderer.create(render());}); await searchFor();
+  expect(tree.root.findAllByType('Skeleton' as any)).toHaveLength(2);
+  const refresh = workspace.searchProducts.mock.calls[0][1].onRefresh;
+  await act(async () => refresh({items: [{...product, stock: {available: 0}, freshness: {...freshness, priceStatus: 'snapshot', stockStatus: 'snapshot'}}]}));
+  expect(tree.root.findAllByType('Skeleton' as any)).toHaveLength(0);
+  await act(async () => refresh({items: [{...product, basePrice: null, stock: null, freshness: {...freshness, commercialPending: false}}]}));
+  expect(tree.root.findAllByType('Skeleton' as any)).toHaveLength(0);
 });

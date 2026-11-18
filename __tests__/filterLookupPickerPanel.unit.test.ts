@@ -56,3 +56,23 @@ it('reuses the order selector with checkboxes, search, reset and explicit apply;
   act(() => buttons[1].props.onPress()); expect(onApply).toHaveBeenCalledTimes(1);
   act(() => view.unmount());
 });
+
+it('aborts old remote filter searches on typing and close, leaving their late results hidden', async () => {
+  jest.useFakeTimers(); let view!: TestRenderer.ReactTestRenderer;
+  try {
+    let finish!: (result: any) => void;
+    const search = jest.fn().mockReturnValueOnce(new Promise(resolve => {finish = resolve;})).mockResolvedValue({items: []});
+    await act(async () => {view = TestRenderer.create(React.createElement(FilterLookupPickerPanel, {
+      title: 'Клиенты', icon: 'account', topInset: 0, bottomInset: 0, placeholder: 'Клиент', search,
+      onSelect: jest.fn(), onApply: jest.fn(), onReset: jest.fn(), onClose: jest.fn(),
+    }));});
+    await act(async () => {await jest.advanceTimersByTimeAsync(0);});
+    const firstSignal = search.mock.calls[0][1].signal;
+    await act(async () => view.root.findByType('Searchbar' as any).props.onChangeText('новый'));
+    expect(firstSignal.aborted).toBe(true);
+    await act(async () => {finish({items: [{guid: 'old', name: 'Старый'}]}); await jest.advanceTimersByTimeAsync(520);});
+    expect(view.root.findAllByType('Text' as any).some(node => node.props.children === 'Старый')).toBe(false);
+    const secondSignal = search.mock.calls[1][1].signal;
+    await act(async () => view.unmount()); expect(secondSignal.aborted).toBe(true);
+  } finally {jest.useRealTimers();}
+});

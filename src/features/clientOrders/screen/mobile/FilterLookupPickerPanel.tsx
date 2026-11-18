@@ -39,7 +39,7 @@ export function FilterLookupPickerPanel<T extends { guid: string; name: string }
   renderSearch?: (props: any) => React.ReactNode;
   status?: React.ReactNode;
   placeholder: string;
-  search?: (args: { search: string; limit: number; offset: number }) => Promise<{ items: T[] }>;
+  search?: (args: { search: string; limit: number; offset: number }, options?: {signal?: AbortSignal}) => Promise<{ items: T[] }>;
   onSelect: (item: T) => void;
   onApply: () => void;
   onReset: () => void;
@@ -60,11 +60,12 @@ export function FilterLookupPickerPanel<T extends { guid: string; name: string }
       setLoading(false); return;
     }
     if (!search) return;
+    const controller = new AbortController();
     const loadingTimer = setTimeout(() => {
       if (requestRef.current === requestId) setLoading(true);
     }, query.trim() ? 260 : 0);
     const requestTimer = setTimeout(() => {
-      void search({ search: query.trim(), limit: 40, offset: 0 })
+      void search({ search: query.trim(), limit: 40, offset: 0 }, {signal: controller.signal})
         .then((result) => {
           if (requestRef.current !== requestId) return;
           setItems(Array.isArray(result.items) ? result.items : []);
@@ -79,6 +80,7 @@ export function FilterLookupPickerPanel<T extends { guid: string; name: string }
     }, query.trim() ? 520 : 0);
     return () => {
       requestRef.current++;
+      controller.abort();
       clearTimeout(loadingTimer);
       clearTimeout(requestTimer);
     };

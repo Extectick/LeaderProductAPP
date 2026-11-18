@@ -1,11 +1,12 @@
 import React from 'react';
-import {Alert, Box, Button, CircularProgress, ClickAwayListener, Stack, TextField, Typography} from '@mui/material';
+import {Alert, Box, Button, CircularProgress, Skeleton, ClickAwayListener, Stack, TextField, Typography} from '@mui/material';
 import {Ionicons} from '@expo/vector-icons';
 import type {ClientOrderProduct} from '@/utils/clientOrdersService';
 import {WebProductImage, PRODUCT_IMAGE_PLACEHOLDER_URI} from '../../components/ProductImageGalleryDialog';
 import {formatMoney, isCancelledDraftItem} from '../../lib/clientOrdersShared';
 import {formatStockLabel, getPackageDisplayText, unitLabel} from '../../lib/clientOrdersUi';
 import {findQuickProductLine, quickProductAddition, quickProductScopeKey, quickProductTemplate} from './clientOrderQuickProductsModel';
+import {mergeRefreshedProductPage, productFreshnessLabel, productMetricFreshness, productMetricPending} from '../../lib/productFreshness';
 
 type SearchSnapshot = {scope: string; query: string; items: ClientOrderProduct[]};
 
@@ -34,6 +35,7 @@ export function ClientOrderQuickProducts({workspace, onOpenCatalog}: {workspace:
   const hasContext = !!workspace.draft.organizationGuid && !!workspace.draft.counterpartyGuid;
   const results = snapshot?.scope === scope && snapshot.query === queryText ? snapshot.items : [];
   const activeProduct = results[activeIndex];
+  const displayRef = React.useRef({snapshot, activeIndex}); displayRef.current = {snapshot, activeIndex};
   const activeLine = React.useMemo(() => activeProduct ? quickProductTemplate(activeProduct, workspace.draft.items) : null, [activeProduct, workspace.draft.items]);
   const existingLine = activeProduct ? findQuickProductLine(activeProduct, workspace.draft.items) : undefined;
   const listId = `quick-products-${React.useId().replace(/:/g, '')}`;
@@ -46,22 +48,35 @@ export function ClientOrderQuickProducts({workspace, onOpenCatalog}: {workspace:
     const id = ++request.current;
     setSnapshot(null); setActiveIndex(0); setSearchError(false); setQuantityError(null);
     if (!hasContext || disabled || !queryText) {setLoading(false); return;}
+    const controller = new AbortController();
     setLoading(true);
+    const updateResults = (result: {items: ClientOrderProduct[]}) => {
+      if (controller.signal.aborted || id !== request.current || scope !== currentScope.current || queryText !== currentQuery.current) return;
+      setSnapshot({scope, query: queryText, items: result?.items || []}); setLoading(false);
+    };
+    const refreshResults = (result: {items: ClientOrderProduct[]}) => {
+      if (controller.signal.aborted || id !== request.current || scope !== currentScope.current || queryText !== currentQuery.current) return;
+      const current = displayRef.current.snapshot;
+      if (current?.scope !== scope || current.query !== queryText) return;
+      const oldIndex = displayRef.current.activeIndex;
+      const selectedGuid = current.items[oldIndex]?.guid;
+      const items = mergeRefreshedProductPage(current.items, new Set(current.items.map(item => item.guid)), result.items);
+      const retainedIndex = items.findIndex(item => item.guid === selectedGuid);
+      setActiveIndex(retainedIndex >= 0 ? retainedIndex : Math.max(0, Math.min(oldIndex, items.length - 1)));
+      setSnapshot({...current, items});
+    };
     const timer = setTimeout(() => {
       const w = latest.current, d = w.draft;
       Promise.resolve().then(() => w.searchProducts({search: queryText, organizationGuid: d.organizationGuid,
         counterpartyGuid: d.counterpartyGuid, agreementGuid: d.agreementGuid || undefined,
         warehouseGuid: d.warehouseGuid || undefined, priceTypeGuid: d.priceTypeGuid || undefined,
         inStockOnly: false, limit: 12, offset: 0,
-      })).then(result => {
-        if (id !== request.current || scope !== currentScope.current || queryText !== currentQuery.current) return;
-        setSnapshot({scope, query: queryText, items: result?.items || []}); setLoading(false);
-      }, () => {
+      }, {signal: controller.signal, onRefresh: refreshResults})).then(updateResults, () => {
         if (id !== request.current || scope !== currentScope.current || queryText !== currentQuery.current) return;
         setSearchError(true); setLoading(false);
       });
     }, 180);
-    return () => {clearTimeout(timer); request.current++;};
+    return () => {clearTimeout(timer); request.current++; controller.abort();};
   }, [scope, queryText, hasContext, disabled, retry]);
 
   const add = () => {
@@ -133,9 +148,14 @@ export function ClientOrderQuickProducts({workspace, onOpenCatalog}: {workspace:
                 bgcolor: index === activeIndex ? 'var(--co-soft)' : 'transparent', opacity: cancelled ? 0.5 : 1, '&:hover': {bgcolor: 'var(--co-soft)'}}}>
               <WebProductImage src={product.imageThumbUrl || product.images?.[0]?.thumbUrl || PRODUCT_IMAGE_PLACEHOLDER_URI} alt="" sx={{width: 40, height: 44, flexShrink: 0, borderRadius: 1}} />
               <Box sx={{flex: 1, minWidth: 0}}><Typography sx={{fontSize: 14, fontWeight: 600}}>{product.name}</Typography>
-                <Typography sx={{fontSize: 12, color: 'var(--co-muted)'}}>{[product.code || product.article, formatStockLabel(product.stock, product.baseUnit), cancelled ? 'Строка отменена' : existing ? `В заказе: ${existing.quantity} ${getPackageDisplayText(existing)}` : null].filter(Boolean).join(' · ')}</Typography>
+                <Typography sx={{fontSize: 12, color: 'var(--co-muted)'}}>{product.code || product.article ? `${product.code || product.article} · ` : ''}
+                  {productMetricPending(product, 'stock') ? <Skeleton component="span" width={64} height={16} aria-label="Остаток: загружается" aria-busy="true" sx={{display: 'inline-block', verticalAlign: 'middle'}} />
+                    : productMetricFreshness(product, 'stock', 'Остаток', formatStockLabel(product.stock, product.baseUnit) || '—').value}
+                  {[productFreshnessLabel(product), cancelled ? 'Строка отменена' : existing ? `В заказе: ${existing.quantity} ${getPackageDisplayText(existing)}` : null].filter(Boolean).map(text => ` · ${text}`)}
+                </Typography>
               </Box>
-              <Box sx={{textAlign: 'right', flexShrink: 0}}><Typography sx={{fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap'}}>{formatMoney(product.basePrice, product.currency)}</Typography>
+              <Box sx={{textAlign: 'right', flexShrink: 0}}><Typography title={productMetricFreshness(product, 'price', 'Цена продажи', formatMoney(product.basePrice, product.currency)).title} sx={{fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap'}}>{productMetricPending(product, 'price') ? <Skeleton component="span" width={70} height={20} aria-label="Цена продажи: загружается" aria-busy="true" sx={{display: 'inline-block'}} />
+                  : productMetricFreshness(product, 'price', 'Цена продажи', formatMoney(product.basePrice, product.currency)).value}</Typography>
                 {product.baseUnit ? <Typography sx={{fontSize: 12, color: 'var(--co-muted)'}}>за {unitLabel(product.baseUnit)}</Typography> : null}</Box>
             </Box>;
           })}

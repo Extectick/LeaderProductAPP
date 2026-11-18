@@ -47,6 +47,12 @@ export function persistedOrderSubmissionError(order?: ClientOrder | null, option
   if (!message) return null;
   if (details?.draftSaved === true) message = `Черновик сохранён. ${message}`;
   const version = submittedVersionOf(order);
-  return options?.includeSubmittedVersion !== false && version?.number1c
-    ? `Заказ уже в 1С: ${version.number1c}. Последние изменения не отправлены.\n${message}` : message;
+  if (options?.includeSubmittedVersion === false || !version?.number1c) return message;
+  // A confirmed write can still carry a posting error. That does not mean its
+  // contents were rejected or that a newer local amendment exists.
+  if (order.origin !== 'device' && order.syncState === 'SYNCED'
+    && !order.lastExportError && !failure && !review) {
+    return `Заказ сохранён в 1С: ${version.number1c}.\n${message}`;
+  }
+  return `Заказ уже в 1С: ${version.number1c}. Последние изменения не отправлены.\n${message}`;
 }

@@ -1,3 +1,5 @@
+import { refreshPendingSnapshot } from '@/utils/refreshPendingSnapshot';
+import { useNewItemPricing } from './lib/useNewItemPricing';
 import { AuthContext } from '@/context/AuthContext';
 import { addMonitoringBreadcrumb } from '@/src/shared/monitoring';
 import { offlineSyncStage, reportOfflineSyncFailure } from '@/src/shared/storage/offlineSyncDiagnostics';
@@ -32,6 +34,8 @@ import {
   updateClientOrder,
   updateClientOrderSettings,
   type ClientOrder,
+  type ClientOrderReadState,
+  type ClientOrderDefaults,
   type ClientOrderInvoice,
   type ClientOrderAgreementOption,
   type ClientOrderContractOption,
@@ -260,6 +264,8 @@ function sanitizeTodaySummary(value: unknown, expectedDate: string): ClientOrder
     currency: 'RUB',
     calculatedAt: raw.calculatedAt,
     stale: raw.stale === true,
+    ...(typeof raw.fetchedAt === 'string' && Number.isFinite(Date.parse(raw.fetchedAt)) ? {fetchedAt: raw.fetchedAt} : {}),
+    ...(typeof raw.refreshPending === 'boolean' ? {refreshPending: raw.refreshPending} : {}),
   };
 }
 
@@ -268,7 +274,7 @@ function sanitizeTodaySummaryCacheEntry(value: unknown, expectedDate: string): T
   const raw = value as Partial<TodaySummaryCacheEntry>;
   if (raw.date !== expectedDate) return null;
   const summary = sanitizeTodaySummary(raw.summary, expectedDate);
-  return summary ? { date: expectedDate, summary } : null;
+  return summary ? { date: expectedDate, summary: {...summary, stale: true, refreshPending: false} } : null;
 }
 
 async function readStoredTodaySummary(storageKey: string, date: string) {
@@ -887,6 +893,7 @@ function getOfflineDraftFailureStatus(error: unknown): OfflineDraftStatus {
   if (integrityKind.startsWith('ORDER_')) return 'NEEDS_EDIT';
   const code = String((error as { backendErrorCode?: string } | null)?.backendErrorCode || '');
   if (code === 'PRICE_REVIEW_REQUIRED') return 'PRICE_REVIEW';
+  if ((error as {terminalSubmission?: boolean})?.terminalSubmission) return 'NEEDS_EDIT';
   if (code === 'STOCK_SHORTAGE' || code === 'REFERENCE_STALE') return 'NEEDS_EDIT';
   return 'SEND_ERROR';
 }
@@ -894,6 +901,7 @@ function getOfflineDraftFailureStatus(error: unknown): OfflineDraftStatus {
 function orderListContentSignature(order: ClientOrder) {
   return JSON.stringify([
     order.guid,
+    order.readState,
     order.appGuid,
     order.documentGuid,
     order.clientOrderId,
@@ -912,6 +920,14 @@ function orderListContentSignature(order: ClientOrder) {
     order.date1c,
     order.deliveryDate,
     order.totalAmount,
+    order.profit,
+    order.profitAvailable,
+    order.profitBasisAmount,
+    order.profitabilityPercent,
+    order.missingReceiptPriceCount,
+    order.profitFreshness?.status,
+    order.profitFreshness?.checkedAt,
+    order.profitFreshness?.refreshPending,
     order.currency,
     order.itemsCount,
     order.counterparty?.guid,
@@ -960,7 +976,9 @@ function mergeOrderListMetadata(current: ClientOrder, summary: ClientOrder): Cli
     || ['AVAILABLE', 'SENT', 'PARTIAL', 'ERROR'].includes(summary.invoiceState || '');
   return {
     ...current,
-    revision: Math.max(current.revision || 0, summary.revision || 0),
+    revision: current.revision,
+    readConflict: summary.readConflict ?? current.readConflict,
+    readState: summary.readState ?? current.readState,
     appGuid: summary.appGuid ?? current.appGuid,
     documentGuid: summary.documentGuid ?? current.documentGuid,
     number1c: summary.number1c ?? current.number1c,
@@ -1326,6 +1344,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     offset: number;
     hasMore?: boolean;
     statusCounts: Record<string, number>;
+    readState?: ClientOrderReadState;
+    pending?: boolean;
+    totalIsEstimate?: boolean;
+    incomplete?: boolean;
   }>({ total: 0, limit: ORDERS_PAGE_SIZE, offset: 0, statusCounts: {} });
   const [filters, setFilters] = React.useState<ClientOrdersFilters>(emptyFilters());
   const [filtersHydrated, setFiltersHydrated] = React.useState(false);
@@ -1347,6 +1369,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const [loadingOrders, setLoadingOrders] = React.useState(false);
   const [loadingMoreOrders, setLoadingMoreOrders] = React.useState(false);
   const [loadingDetail, setLoadingDetail] = React.useState(false);
+  const [pendingDetail, setPendingDetail] = React.useState<{guid: string; readState: ClientOrderReadState} | null>(null);
+  const [detailRefreshEpoch, setDetailRefreshEpoch] = React.useState(0);
+  const [defaultsReadState, setDefaultsReadState] = React.useState<ClientOrderReadState | null>(null);
   const [loadingReceiptPrices, setLoadingReceiptPrices] = React.useState(false);
   const [loadingDefaults, setLoadingDefaults] = React.useState(false);
   const [loadingSettings, setLoadingSettings] = React.useState(false);
@@ -1431,8 +1456,42 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const invoiceSettledPollGuidRef = React.useRef<string | null>(null);
   const queueRefreshInFlightRef = React.useRef(false);
   const invoiceStatusesInFlightRef = React.useRef(false);
+  const readControllers = React.useRef<Record<'orders' | 'silentOrders' | 'detail' | 'defaults' | 'enums' | 'invoices' | 'invoiceStatuses' | 'today' | 'todayRefresh' | 'detailRefresh' | 'listRefresh' | 'settings', AbortController | null>>({
+    orders: null, silentOrders: null, detail: null, defaults: null, enums: null, invoices: null, invoiceStatuses: null, today: null, todayRefresh: null, detailRefresh: null, listRefresh: null, settings: null,
+  });
+  const beginRead = React.useCallback((kind: keyof typeof readControllers.current) => {
+    readControllers.current[kind]?.abort();
+    const controller = new AbortController(); readControllers.current[kind] = controller;
+    return controller;
+  }, []);
+  React.useEffect(() => () => {
+    for (const controller of Object.values(readControllers.current)) controller?.abort();
+    invoicePollingRef.current = false; invoiceStatusesInFlightRef.current = false;
+  }, [offlineUserId]);
+
+  const previousReadAccountRef = React.useRef(offlineUserId);
+  React.useLayoutEffect(() => {
+    if (previousReadAccountRef.current === offlineUserId) return;
+    previousReadAccountRef.current = offlineUserId;
+    for (const controller of Object.values(readControllers.current)) controller?.abort();
+    selectedGuidRef.current = null; documentStartedRef.current = false; dirtyRef.current = false;
+    settingsRequestIdRef.current += 1; detailRequestIdRef.current += 1; defaultsRequestIdRef.current += 1;
+    const editVersion = ++draftEditVersionRef.current;
+    setAppliedDraftEditVersion(editVersion);
+    setSelectedGuid(null); setSelectedOrder(null); setPendingDetail(null); setDetailRefreshEpoch(0);
+    setDraft(emptyDraft()); setSelections(emptySelections()); setDirty(false); setDocumentStarted(false);
+    setLoadingDetail(false); setLoadingDefaults(false); setDefaultsReadState(null); setError(null);
+    settingsRef.current = null; setSettings(null); setPaymentFormOptions([]); setDeliveryMethodOptions([]);
+    apiOrdersRef.current = []; setOrders([]); deviceDraftEntriesRef.current = []; setDeviceDraftEntries([]);
+    const meta = {total: 0, limit: ORDERS_PAGE_SIZE, offset: 0, statusCounts: {}};
+    ordersMetaRef.current = meta; setOrdersMeta(meta);
+    // Durable drafts/journals remain under the originating account's storage key.
+  }, [offlineUserId]);
+
   const todaySummaryRequestIdRef = React.useRef(0);
   const todaySummaryInFlightRef = React.useRef<Promise<ClientOrdersTodaySummary | null> | null>(null);
+  const todaySummaryForceQueued = React.useRef<Promise<ClientOrdersTodaySummary | null> | null>(null);
+  const todaySummaryRequestForced = React.useRef(false);
   const todaySummaryRef = React.useRef<ClientOrdersTodaySummary | null>(null);
   const previousServerReachableRef = React.useRef(serverStatus.isReachable);
 
@@ -1448,12 +1507,30 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     setOrdersInitialLoadDone(true);
   }, []);
 
-  const refreshTodaySummary = React.useCallback((options: { force?: boolean } = {}): Promise<ClientOrdersTodaySummary | null> => {
+  const refreshTodaySummary = React.useCallback(function runRefresh(options: { force?: boolean } = {}): Promise<ClientOrdersTodaySummary | null> {
     if (!getServerStatus().isReachable) {
       setLoadingTodaySummary(false);
       return Promise.resolve(todaySummaryRef.current);
     }
-    if (todaySummaryInFlightRef.current) return todaySummaryInFlightRef.current;
+    if (todaySummaryInFlightRef.current) {
+      if (!options.force || todaySummaryRequestForced.current) return todaySummaryInFlightRef.current;
+      if (!todaySummaryForceQueued.current) {
+        setCalculatingTodayProfit(true);
+        const queuedController = readControllers.current.today;
+        todaySummaryForceQueued.current = todaySummaryInFlightRef.current.then(() => {
+          todaySummaryForceQueued.current = null;
+          if (queuedController?.signal.aborted || activeOfflineUserRef.current !== offlineUserId || getOmskDateKey() !== todayDateKey) return null;
+          return runRefresh({force: true});
+        });
+      }
+      return todaySummaryForceQueued.current;
+    }
+    const controller = beginRead('today');
+    if (options.force) {
+      readControllers.current.todayRefresh?.abort();
+      setTodaySummary(previous => previous?.refreshPending ? {...previous, refreshPending: false} : previous);
+    }
+    todaySummaryRequestForced.current = options.force === true;
     const requestId = ++todaySummaryRequestIdRef.current;
     if (!todaySummaryRef.current) setLoadingTodaySummary(true);
     if (options.force) setCalculatingTodayProfit(true);
@@ -1461,7 +1538,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
     const task = (async () => {
       try {
-        const result = await getClientOrdersTodaySummary(options);
+        const result = await getClientOrdersTodaySummary({...options, signal: controller.signal, expectedUserId: Number(offlineUserId) > 0 ? Number(offlineUserId) : undefined});
+        if (controller.signal.aborted || activeOfflineUserRef.current !== offlineUserId) return null;
         const currentDate = getOmskDateKey();
         if (currentDate !== todayDateKey) {
           setTodayDateKey(currentDate);
@@ -1477,28 +1555,54 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         }
         return normalized;
       } catch (error) {
-        if (todaySummaryRequestIdRef.current === requestId) {
+        if (!controller.signal.aborted && todaySummaryRequestIdRef.current === requestId) {
           setTodaySummaryError(userErrorMessage(error, 'Не удалось обновить статистику заказов за сегодня.'));
         }
         return null;
       } finally {
         if (todaySummaryRequestIdRef.current === requestId) setLoadingTodaySummary(false);
         if (todaySummaryRequestIdRef.current === requestId) setCalculatingTodayProfit(false);
-        todaySummaryInFlightRef.current = null;
+        if (todaySummaryRequestIdRef.current === requestId) {todaySummaryInFlightRef.current = null; todaySummaryRequestForced.current = false;}
       }
     })();
     todaySummaryInFlightRef.current = task;
     return task;
-  }, [todayDateKey, todaySummaryStorageKey]);
+  }, [beginRead, offlineUserId, todayDateKey, todaySummaryStorageKey]);
+
+  React.useEffect(() => {
+    if (!todaySummary?.refreshPending || !ordersPollingEnabled || !offlineUserId) return;
+    const controller = beginRead('todayRefresh');
+    const isCurrent = () => !controller.signal.aborted && activeOfflineUserRef.current === offlineUserId
+      && getOmskDateKey() === todayDateKey && (!AppState.currentState || AppState.currentState === 'active');
+    void refreshPendingSnapshot(todaySummary, value => value.refreshPending === true,
+      value => ({...value, refreshPending: false}), async () => {
+        if (!isCurrent()) throw new Error('Inactive summary');
+        try { return await getClientOrdersTodaySummary({signal: controller.signal, expectedUserId: Number(offlineUserId) > 0 ? Number(offlineUserId) : undefined}); }
+        catch (error) {
+          if (isCurrent() && [401, 403].includes(Number((error as {status?: number})?.status))) {
+            controller.abort(); todaySummaryRef.current = null; setTodaySummary(null);
+          }
+          throw error;
+        }
+      }, value => {
+        if (!isCurrent()) return;
+        const normalized = sanitizeTodaySummary(value, todayDateKey);
+        if (!normalized) return;
+        todaySummaryRef.current = normalized; setTodaySummary(normalized);
+        if (todaySummaryStorageKey) void writeStoredTodaySummary(todaySummaryStorageKey, {date: todayDateKey, summary: normalized});
+      }, controller.signal);
+    return () => controller.abort();
+  }, [beginRead, offlineUserId, ordersPollingEnabled, todayDateKey, todaySummary?.refreshPending, todaySummaryStorageKey]);
 
   const draftMode = !draft.guid;
   const filtersSignature = React.useMemo(() => ordersFilterSignature(filters), [filters]);
+  const verificationRequired = !!pendingDetail || !!selectedOrder?.readState?.verificationRequired;
   // Unsaved drafts and unsent packets both have null server IDs. They are not
   // the same document: a previous packet's SENDING state must not lock a new form.
   const selectedDeviceStatus = selectedGuid
     ? deviceDraftEntries.find(entry => entry.order.guid === selectedGuid || entry.serverGuid === selectedGuid)?.status
     : undefined;
-  const readOnly = !!selectedOrder?.readOnly || !!selectedOrder?.hasRealization || ['SENDING','API_ACCEPTED'].includes(selectedDeviceStatus || '');
+  const readOnly = !!pendingDetail || !!selectedOrder?.readConflict || !!selectedOrder?.readOnly || !!selectedOrder?.hasRealization || ['SENDING','API_ACCEPTED'].includes(selectedDeviceStatus || '');
   const mutationLocked = saving || submitting || copying || cancelling || deletingDraft;
   const selectedOrderQueued = isQueuedClientOrder(selectedOrder);
   const selectedOrderSynced = !!selectedOrder && (
@@ -1577,7 +1681,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     settings?.deliveryDateIssueMessage,
   ]);
   const canSubmitOrder =
-    validation.canSubmit &&
+    !readOnly && (!verificationRequired || isAsyncOrderOutboxEnabled()) && validation.canSubmit &&
     (!(selectedOrder?.origin === 'device' && (selectedOrder as any).offlineDraftStatus === 'READY_TO_SEND') || dirty) &&
     (!selectedOrderQueued || dirty || selectedOrderHas1cError) &&
     (!selectedOrderSynced || dirty || selectedOrderHas1cError);
@@ -1622,13 +1726,15 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     ];
   }, [visibleApiOrders, visibleDeviceOrders]);
   const latestDraftOrder = React.useMemo(() => sortedOrders.find((item) => item.status === 'DRAFT') || null, [sortedOrders]);
-  const pendingInvoiceIdentifiers = React.useMemo(
-    () => Array.from(new Set(sortedOrders
-      .filter((order) => hasPendingClientOrderInvoice(order))
-      .map((order) => getClientOrderInvoiceIdentifier(order))
-      .filter((identifier): identifier is string => !!identifier))),
-    [sortedOrders]
-  );
+  const selectedInvoiceIdentifier = invoicePollingEnabled && selectedOrder?.guid === selectedGuid
+    ? getClientOrderInvoiceIdentifier(selectedOrder)?.toLowerCase() : null;
+  const pendingInvoiceIdentifiersKey = Array.from(new Set(sortedOrders
+    .filter(order => hasPendingClientOrderInvoice(order))
+    .map(order => getClientOrderInvoiceIdentifier(order))
+    .filter((identifier): identifier is string => !!identifier && identifier.toLowerCase() !== selectedInvoiceIdentifier)))
+    .sort().join('\n');
+  const pendingInvoiceIdentifiers = React.useMemo(() => pendingInvoiceIdentifiersKey ? pendingInvoiceIdentifiersKey.split('\n') : [], [pendingInvoiceIdentifiersKey]);
+
   const hasQueuedOrders = React.useMemo(
     () => sortedOrders.some((order) => isQueuedClientOrder(order))
       || isQueuedClientOrder(selectedOrder),
@@ -1689,14 +1795,6 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   React.useEffect(() => {
     dirtyRef.current = dirty;
   }, [dirty]);
-
-  React.useEffect(() => {
-    if (!readOnly || !dirty) return;
-    dirtyRef.current = false;
-    setDirty(false);
-    setAutosaveState('idle');
-    setAutosaveError(null);
-  }, [dirty, readOnly]);
 
   React.useEffect(() => {
     selectedGuidRef.current = selectedGuid;
@@ -1783,6 +1881,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     let cancelled = false;
     todaySummaryRequestIdRef.current += 1;
     todaySummaryInFlightRef.current = null;
+    todaySummaryForceQueued.current = null;
+    readControllers.current.today?.abort(); readControllers.current.todayRefresh?.abort();
     todaySummaryRef.current = null;
     setTodaySummary(null);
     setTodaySummaryError(null);
@@ -1815,13 +1915,18 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [filters, filtersHydrated, filtersStorageKey]);
 
   const resetDraftToBase = React.useCallback((nextSettings?: ClientOrderSettings | null) => {
+    readControllers.current.detail?.abort(); readControllers.current.detailRefresh?.abort();
+    setPendingDetail(null); setDefaultsReadState(null);
     const effectiveSettings = nextSettings ?? settingsRef.current;
     const base = buildDraftBase(effectiveSettings);
     selectedGuidRef.current = null;
     documentStartedRef.current = false;
     contextRefreshSignatureRef.current = '';
     defaultsRequestIdRef.current += 1;
+    readControllers.current.defaults?.abort();
     enumOptionsRequestIdRef.current += 1;
+    readControllers.current.enums?.abort();
+    readControllers.current.detail?.abort();
     deliveryAddressManualVersionRef.current += 1;
     setDraft(normalizeDraftOrder({ ...emptyDraft(), ...base }));
     setSelections({
@@ -2053,22 +2158,19 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       const next = mergeOrderListMetadata(prev, order);
       return orderListContentSignature(prev) === orderListContentSignature(next) ? prev : next;
     });
-    setDraft((prev) => {
-      if (prev.guid !== order.guid) return prev;
-      const serverRevision = Number(order.revision || 0);
-      if (!Number.isFinite(serverRevision) || serverRevision <= (prev.revision || 0)) return prev;
-      return normalizeDraftOrder({ ...prev, revision: serverRevision }, prev);
-    });
   }, []);
 
   const refreshSelectedOrderInvoices = React.useCallback(async () => {
     const guid = selectedGuidRef.current;
-    if (!guid || isDeviceDraftGuid(guid) || invoicePollingRef.current) return;
+    if (!guid || selectedOrder?.guid !== guid || isDeviceDraftGuid(guid) || invoicePollingRef.current) return false;
+    const controller = beginRead('invoices');
+    const requestUser = activeOfflineUserRef.current;
     const invoiceIdentifier = getClientOrderInvoiceIdentifier(selectedOrder) || guid;
     invoicePollingRef.current = true;
     try {
-      const invoices = await getClientOrderInvoices(invoiceIdentifier);
-      if (selectedGuidRef.current !== guid) return;
+      const invoices = await getClientOrderInvoices(invoiceIdentifier, {signal: controller.signal, expectedUserId: Number(requestUser) > 0 ? Number(requestUser) : undefined});
+      if (controller.signal.aborted || activeOfflineUserRef.current !== requestUser || selectedGuidRef.current !== guid
+        || (AppState.currentState && AppState.currentState !== 'active')) return;
       setSelectedOrder((prev) => {
         if (prev?.guid !== guid) return prev;
         const next = mergeOrderInvoices(prev, invoices);
@@ -2085,12 +2187,13 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         });
         return changed ? next : prev;
       });
+      return true;
     } catch {
       // Polling is opportunistic: regular detail refresh remains the fallback.
     } finally {
-      invoicePollingRef.current = false;
+      if (readControllers.current.invoices === controller) invoicePollingRef.current = false;
     }
-  }, [selectedOrder?.appGuid]);
+  }, [beginRead, selectedOrder?.appGuid, selectedOrder?.guid]);
 
   const applyInvoiceRequestResult = React.useCallback((identifier: string, invoices: ClientOrderInvoice[]) => {
     const apply = (order: ClientOrder | null) => {
@@ -2113,6 +2216,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, []);
 
   const loadEnumOptionsForContext = React.useCallback(async (organizationGuid?: string | null, counterpartyGuid?: string | null) => {
+    const controller = beginRead('enums');
+    const requestUser = activeOfflineUserRef.current;
     const requestId = ++enumOptionsRequestIdRef.current;
     if (!organizationGuid || !counterpartyGuid) {
       setPaymentFormOptions([]);
@@ -2120,8 +2225,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       return;
     }
     try {
-      const defaults = await getClientOrderDefaults({ organizationGuid, counterpartyGuid });
-      if (enumOptionsRequestIdRef.current !== requestId) return;
+      const defaults = await getClientOrderDefaults({ organizationGuid, counterpartyGuid }, {signal: controller.signal, expectedUserId: Number(requestUser) > 0 ? Number(requestUser) : undefined});
+      if (controller.signal.aborted || activeOfflineUserRef.current !== requestUser || enumOptionsRequestIdRef.current !== requestId) return;
+      const applyEnums = (defaults: ClientOrderDefaults) => {
+        if (controller.signal.aborted || activeOfflineUserRef.current !== requestUser || enumOptionsRequestIdRef.current !== requestId) return;
+        setDefaultsReadState(defaults.readState ?? null);
+      if (defaults.pending || defaults.readState?.verificationRequired) return;
       setPaymentFormOptions(defaults.paymentForms || []);
       setDeliveryMethodOptions(defaults.deliveryMethods || []);
       setSelections((current) => {
@@ -2148,17 +2257,28 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
           },
         };
       });
+      };
+      applyEnums(defaults);
+      if (defaults.readState?.refreshPending) void refreshPendingSnapshot(defaults,
+        value => !!value.readState?.refreshPending,
+        value => ({...value, readState: value.readState ? {...value.readState, refreshPending: false} : undefined}),
+        async () => {
+          if (controller.signal.aborted || activeOfflineUserRef.current !== requestUser
+            || (AppState.currentState && AppState.currentState !== 'active')) throw new Error('Inactive context');
+          return getClientOrderDefaults({organizationGuid, counterpartyGuid}, {signal: controller.signal, expectedUserId: Number(requestUser) > 0 ? Number(requestUser) : undefined});
+        }, applyEnums, controller.signal);
     } catch {
-      if (enumOptionsRequestIdRef.current !== requestId) return;
+      if (controller.signal.aborted || activeOfflineUserRef.current !== requestUser || enumOptionsRequestIdRef.current !== requestId) return;
     }
-  }, []);
+  }, [beginRead]);
 
   const applyOrderDetail = React.useCallback((
     order: ClientOrder,
     options?: { refreshCommercialData?: boolean }
   ) => {
-    const hasDebt = !!(order.hasDebt || order.counterparty?.hasDebt);
-    const shipmentProhibited = !!(order.shipmentProhibited || order.counterparty?.shipmentProhibited);
+    setPendingDetail(null);
+    const hasDebt = order.hasDebt ?? order.counterparty?.hasDebt ?? null;
+    const shipmentProhibited = order.shipmentProhibited ?? order.counterparty?.shipmentProhibited ?? null;
     const debtReason = order.debtReason || order.counterparty?.debtReason || null;
     const normalizedOrder: ClientOrder = {
       ...order,
@@ -2222,6 +2342,16 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     ]);
     deviceDraftEntriesRef.current = entries;
     setDeviceDraftEntries(entries);
+    setSelectedOrder(current => {
+      if (!current || current.origin !== 'device') return current;
+      const entry = entries.find(value => value.clientOrderId === current.clientOrderId && value.clientRevision === current.clientRevision);
+      if (!entry) return current;
+      const status = {offlineDraftStatus: entry.status,
+        lastExportError: entry.lastSyncError ?? entry.order.lastExportError, draftReview: entry.order.draftReview};
+      return JSON.stringify(status) === JSON.stringify({offlineDraftStatus: (current as any).offlineDraftStatus,
+        lastExportError: current.lastExportError, draftReview: current.draftReview})
+        ? current : {...current, ...status};
+    });
   }, [deviceDraftsStorageKey, offlineUserId]);
 
   const findDeviceDraftEntry = React.useCallback((guid?: string | null, clientOrderId?: string | null) => {
@@ -2574,14 +2704,13 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     if (!entries.length) return;
     const allowPriceReview = !!(syncOptions.draftId || syncOptions.orderGuid)
       && !!syncOptions.pricePolicy && syncOptions.pricePolicy !== 'ASK';
-    const dueEntries = entries.filter((entry) => {
+    let dueEntries = entries.filter((entry) => {
       if (!isDeviceDraftReadyForSend(entry, allowPriceReview)) return false;
       if (syncOptions.draftId && entry.id !== syncOptions.draftId) return false;
       if (syncOptions.orderGuid && entry.order.guid !== syncOptions.orderGuid && entry.serverGuid !== syncOptions.orderGuid) return false;
       return syncOptions.force || isDeviceDraftSyncDue(entry);
     });
     if (!dueEntries.length) return;
-
     deviceDraftSyncingRef.current = true;
     setSyncingDeviceDrafts(true);
     let nextEntries = entries;
@@ -2788,10 +2917,11 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [patchDraft]);
 
   const loadSettings = React.useCallback(async () => {
+    const controller = beginRead('settings');
     const requestId = ++settingsRequestIdRef.current;
     setLoadingSettings(true);
     let cachedSettings: ClientOrderSettings | null = null;
-    const isCurrent = () => requestId === settingsRequestIdRef.current && activeOfflineUserRef.current === offlineUserId;
+    const isCurrent = () => !controller.signal.aborted && requestId === settingsRequestIdRef.current && activeOfflineUserRef.current === offlineUserId;
     const applySettings = (nextSettings: ClientOrderSettings) => {
       if (!isCurrent()) return;
       settingsRef.current = nextSettings;
@@ -2811,12 +2941,20 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         applySettings(cachedSettings);
       }
       if (!getServerStatus().isReachable) return cachedSettings;
-      const loaded = await getClientOrderSettings();
+      const settingsOptions = {signal: controller.signal, expectedUserId: Number(offlineUserId) > 0 ? Number(offlineUserId) : undefined};
+      const loaded = await getClientOrderSettings(settingsOptions);
       if (!isCurrent()) return null;
       const nextSettings = applyLocalOrderOrganization(loaded, local.preference);
       await writeLocalOrderSettings(offlineUserId, nextSettings);
       if (!isCurrent()) return null;
       applySettings(nextSettings);
+      if (loaded.readState?.refreshPending) void refreshPendingSnapshot(loaded,
+        value => !!value.readState?.refreshPending,
+        value => ({...value, readState: value.readState ? {...value.readState, refreshPending: false} : undefined}),
+        async () => {
+          if (!isCurrent() || (AppState.currentState && AppState.currentState !== 'active')) throw new Error('Inactive settings');
+          return getClientOrderSettings(settingsOptions);
+        }, value => applySettings(applyLocalOrderOrganization(value, local.preference)), controller.signal);
       return nextSettings;
     } catch (e: any) {
       if (isCurrent() && !isNetworkUnavailableError(e)) setOrdersReadError(userErrorMessage(e, 'Не удалось загрузить настройки заказов клиентов.'));
@@ -2824,7 +2962,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     } finally {
       if (requestId === settingsRequestIdRef.current) setLoadingSettings(false);
     }
-  }, [offlineUserId]);
+  }, [beginRead, offlineUserId]);
 
   const loadOrders = React.useCallback(async (mode: 'reset' | 'append' = 'reset', loadOptions?: { silent?: boolean; probe?: boolean }) => {
     if (!getServerStatus().isReachable && !loadOptions?.probe) {
@@ -2840,10 +2978,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }
     if (mode === 'append' && ordersAppendLoadingRef.current) return;
     const silent = loadOptions?.silent === true;
+    const controller = beginRead(silent ? 'silentOrders' : 'orders');
+    if (!silent) readControllers.current.silentOrders?.abort();
     const offset = mode === 'append' ? ordersNextOffsetRef.current : 0;
     const requestId = silent ? ++silentOrdersRequestIdRef.current : ++ordersRequestIdRef.current;
     const mutationVersion = ordersMutationVersionRef.current;
-    const isContextStale = () => ordersMutationVersionRef.current !== mutationVersion
+    const isContextStale = () => controller.signal.aborted || ordersMutationVersionRef.current !== mutationVersion
       || activeOfflineUserRef.current !== offlineUserId
       || ordersFilterSignature(filtersRef.current) !== filtersSignature;
     if (mode === 'append') {
@@ -2877,7 +3017,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         itemsMax: filters.itemsMax || undefined,
         hasNumber1c: filters.hasNumber1c || undefined,
         onlyProblems: filters.onlyProblems || undefined,
-      });
+      }, {signal: controller.signal, expectedUserId: Number(offlineUserId) > 0 ? Number(offlineUserId) : undefined});
       const requestIsStale = silent
         ? silentOrdersRequestIdRef.current !== requestId
         : ordersRequestIdRef.current !== requestId;
@@ -2901,9 +3041,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         const next = preserveTransientInvoiceListState(current, summary);
         return orderListContentSignature(current) === orderListContentSignature(next) ? current : next;
       });
-      const fetchedNextOffset = offset + list.length;
+      const fetchedNextOffset = Number.isFinite(result.meta.nextOffset) && Number(result.meta.nextOffset) >= offset
+        ? Number(result.meta.nextOffset) : offset + list.length;
       const knownOrderKeys = new Set(currentOrders.flatMap(orderIdentityKeys));
-      const preserveLoadedWindow = mode === 'reset' && silent && currentOrders.length > list.length;
+      const preserveLoadedWindow = !result.meta.readState && mode === 'reset' && silent && currentOrders.length > list.length;
       const refreshedByKey = new Map(list.flatMap(order => orderIdentityKeys(order).map(key => [key, order] as const)));
       const nextOrders = mode !== 'append'
         ? [
@@ -2939,6 +3080,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         ? ordersNextOffsetRef.current
         : result.meta.total || 0;
       const nextMeta = {
+        readState: result.meta.readState, pending: result.meta.pending, totalIsEstimate: result.meta.totalIsEstimate, incomplete: result.meta.incomplete || result.meta.verificationIncomplete,
         total: nextTotal,
         limit: result.meta.limit || ORDERS_PAGE_SIZE,
         offset: result.meta.offset || offset,
@@ -2952,6 +3094,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
           && previous.limit === nextMeta.limit
           && previous.offset === nextMeta.offset
           && previous.hasMore === nextMeta.hasMore
+          && JSON.stringify(previous.readState) === JSON.stringify(nextMeta.readState)
+          && previous.pending === nextMeta.pending && previous.totalIsEstimate === nextMeta.totalIsEstimate && previous.incomplete === nextMeta.incomplete
           && sameCounts
           ? previous
           : nextMeta;
@@ -3006,7 +3150,22 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         setLoadingOrders(false);
       }
     }
-  }, [filters, filtersSignature, markOrdersInitialLoadDone, mergeServerRevisionIntoOpenDraft, offlineUserId, options.screenMode, options.autoSelectLatestDraft, ordersCacheStorageKey]);
+  }, [beginRead, filters, filtersSignature, markOrdersInitialLoadDone, mergeServerRevisionIntoOpenDraft, offlineUserId, options.screenMode, options.autoSelectLatestDraft, ordersCacheStorageKey]);
+
+  React.useEffect(() => {
+    if (!ordersMeta.readState?.refreshPending || !ordersPollingEnabled) return;
+    const controller = beginRead('listRefresh');
+    const requestUser = offlineUserId;
+    void refreshPendingSnapshot(ordersMeta, value => !!value.readState?.refreshPending,
+      value => ({...value, readState: value.readState ? {...value.readState, refreshPending: false} : undefined}),
+      async () => {
+        if (controller.signal.aborted || activeOfflineUserRef.current !== requestUser
+          || (AppState.currentState && AppState.currentState !== 'active')) throw new Error('Inactive list');
+        await loadOrders('reset', {silent: true});
+        return ordersMetaRef.current;
+      }, value => {if (!controller.signal.aborted) setOrdersMeta(value);}, controller.signal);
+    return () => controller.abort();
+  }, [beginRead, filtersSignature, loadOrders, offlineUserId, ordersMeta.readState?.refreshPending, ordersPollingEnabled]);
 
   const refreshQueueState = React.useCallback(async () => {
     if (queueRefreshInFlightRef.current || !getServerStatus().isReachable) return;
@@ -3055,9 +3214,13 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   const refreshInvoiceStates = React.useCallback(async () => {
     if (invoiceStatusesInFlightRef.current || !pendingInvoiceIdentifiers.length) return;
+    const controller = beginRead('invoiceStatuses');
+    const requestUser = activeOfflineUserRef.current;
     invoiceStatusesInFlightRef.current = true;
     try {
-      const statuses = await getClientOrderInvoiceStatuses(pendingInvoiceIdentifiers);
+      const statuses = await getClientOrderInvoiceStatuses(pendingInvoiceIdentifiers, {signal: controller.signal, expectedUserId: Number(requestUser) > 0 ? Number(requestUser) : undefined});
+      if (controller.signal.aborted || activeOfflineUserRef.current !== requestUser || !ordersPollingEnabledRef.current
+        || (AppState.currentState && AppState.currentState !== 'active')) return;
       const byIdentifier = new Map(statuses.map((item) => [item.identifier.trim().toLowerCase(), item.invoices]));
       setOrders((current) => {
         let changed = false;
@@ -3078,15 +3241,20 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         return next;
       });
     } catch (error) {
-      if (!isNetworkUnavailableError(error)) {
+      if (!controller.signal.aborted && !isNetworkUnavailableError(error)) {
         console.warn('[client-orders] invoice status refresh failed', error);
       }
     } finally {
-      invoiceStatusesInFlightRef.current = false;
+      if (readControllers.current.invoiceStatuses === controller) invoiceStatusesInFlightRef.current = false;
     }
-  }, [pendingInvoiceIdentifiers]);
+  }, [beginRead, pendingInvoiceIdentifiers]);
 
   const loadDetail = React.useCallback(async (guid: string) => {
+    const controller = beginRead('detail');
+    readControllers.current.detailRefresh?.abort();
+    setPendingDetail(null);
+    setDetailRefreshEpoch(0);
+    const requestUser = activeOfflineUserRef.current;
     const deviceEntry = findDeviceDraftEntry(guid);
     if (deviceEntry) {
       const order = preserveSubmittedVersion(deviceEntry.order, apiOrdersRef.current.find(item => isSameListOrder(item, deviceEntry.order)));
@@ -3098,21 +3266,74 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     setLoadingDetail(true);
     setError(null);
     try {
-      const order = await getClientOrder(guid);
-      if (detailRequestIdRef.current !== requestId || selectedGuidRef.current !== guid) return null;
+      const order = await getClientOrder(guid, {signal: controller.signal, expectedUserId: Number(requestUser) > 0 ? Number(requestUser) : undefined});
+      if (controller.signal.aborted || activeOfflineUserRef.current !== requestUser || detailRequestIdRef.current !== requestId || selectedGuidRef.current !== guid) return null;
       applyOrderDetail(order);
       return order;
     } catch (e: any) {
-      if (detailRequestIdRef.current !== requestId) return null;
+      if (controller.signal.aborted || activeOfflineUserRef.current !== requestUser || detailRequestIdRef.current !== requestId) return null;
+      if (e?.code === 'CLIENT_ORDER_READ_PENDING') {
+        documentStartedRef.current = true; setDocumentStarted(true);
+        setSelectedGuid(guid); setSelectedOrder(null);
+        setPendingDetail({guid, readState: e.readState});
+        return true;
+      }
       setError(userErrorMessage(e, 'Не удалось загрузить карточку заказа.'));
       return null;
     } finally {
       if (detailRequestIdRef.current === requestId) setLoadingDetail(false);
     }
-  }, [applyOrderDetail, findDeviceDraftEntry]);
+  }, [applyOrderDetail, beginRead, findDeviceDraftEntry]);
+
+  const detailNeedsRefresh = !!(pendingDetail?.readState.refreshPending || selectedOrder?.readState?.refreshPending);
+  React.useEffect(() => {
+    if (!selectedGuid || (!detailNeedsRefresh && detailRefreshEpoch === 0)) return;
+    const guid = selectedGuid;
+    const requestUser = activeOfflineUserRef.current;
+    const controller = beginRead('detailRefresh');
+    const initialEditVersion = draftEditVersionRef.current;
+    const isCurrent = () => !controller.signal.aborted && activeOfflineUserRef.current === requestUser
+      && selectedGuidRef.current === guid && (!AppState.currentState || AppState.currentState === 'active');
+    type Snapshot = {order: ClientOrder | null; readState: ClientOrderReadState};
+    const initial: Snapshot = {order: selectedOrder, readState: pendingDetail?.readState ?? selectedOrder?.readState
+      ?? {source: 'none', checkedAt: null, stale: true, refreshPending: true, verificationRequired: true}};
+    if (detailRefreshEpoch > 0) initial.readState = {...initial.readState, refreshPending: true};
+    void refreshPendingSnapshot(initial, value => value.readState.refreshPending,
+      value => ({...value, readState: {...value.readState, refreshPending: false}}), async () => {
+        if (!isCurrent()) throw new Error('Inactive document');
+        try {
+          const order = await getClientOrder(guid, {signal: controller.signal, expectedUserId: Number(requestUser) > 0 ? Number(requestUser) : undefined});
+          return {order, readState: order.readState ?? {source: 'verified-snapshot' as const, checkedAt: null, stale: false, refreshPending: false, verificationRequired: false}};
+        } catch (error: any) {
+          if (error?.code === 'CLIENT_ORDER_READ_PENDING') return {order: null, readState: error.readState};
+          if (isCurrent() && [401, 403].includes(Number(error?.status))) {
+            controller.abort(); setSelectedOrder(null);
+            setPendingDetail({guid, readState: {...initial.readState, source: 'none', refreshPending: false}});
+            setError('Нет доступа к заказу.');
+          }
+          throw error;
+        }
+      }, value => {
+        if (!isCurrent()) return;
+        if (!value.order) {setPendingDetail({guid, readState: value.readState}); return;}
+        const order = {...value.order, readState: value.readState};
+        if (dirtyRef.current || draftEditVersionRef.current !== initialEditVersion) {
+          // Preserve the original body, revision and content token while updating restrictions.
+          setSelectedOrder(current => current?.guid === guid
+            ? {...mergeOrderListMetadata(current, order), readState: {...value.readState,
+                verificationRequired: value.readState.verificationRequired || current.revision !== order.revision}}
+            : current);
+        } else applyOrderDetail(order);
+      }, controller.signal);
+    return () => controller.abort();
+  // Changes to the body/dirty flag must not restart the bounded timer sequence.
+  }, [applyOrderDetail, beginRead, detailNeedsRefresh, detailRefreshEpoch, offlineUserId, selectedGuid]);
 
   const cancelDetailLoading = React.useCallback(() => {
     detailRequestIdRef.current += 1;
+    readControllers.current.detail?.abort();
+    readControllers.current.detailRefresh?.abort();
+    setPendingDetail(null);
     selectedGuidRef.current = selectedGuid;
     setLoadingDetail(false);
   }, [selectedGuid]);
@@ -3126,13 +3347,29 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       contract?: ClientOrderContractOption | null;
     } = {}
   ) => {
+    const controller = beginRead('defaults');
+    readControllers.current.enums?.abort();
+    const requestUser = activeOfflineUserRef.current;
     if (!organizationGuid || !counterpartyGuid) return;
     const requestId = ++defaultsRequestIdRef.current;
     const deliveryAddressManualVersion = deliveryAddressManualVersionRef.current;
+    const editVersion = draftEditVersionRef.current;
     setLoadingDefaults(true);
     try {
-      const defaults = await getClientOrderDefaults({ organizationGuid, counterpartyGuid });
-      if (defaultsRequestIdRef.current !== requestId) return;
+      const defaults = await getClientOrderDefaults({ organizationGuid, counterpartyGuid }, {signal: controller.signal, expectedUserId: Number(requestUser) > 0 ? Number(requestUser) : undefined});
+      if (controller.signal.aborted || activeOfflineUserRef.current !== requestUser || defaultsRequestIdRef.current !== requestId) return;
+
+      const applyDefaults = (defaults: ClientOrderDefaults) => {
+        if (controller.signal.aborted || activeOfflineUserRef.current !== requestUser || defaultsRequestIdRef.current !== requestId) return;
+      setDefaultsReadState(defaults.readState ?? null);
+      if (draftEditVersionRef.current !== editVersion) return;
+      if (defaults.pending || defaults.readState?.verificationRequired) {
+        // These are suggestions, not a new authoritative context. In particular
+        // null does not revoke an agreement, warehouse or a manually entered price.
+        setPaymentFormOptions(current => current.length ? current : defaults.paymentForms || []);
+        setDeliveryMethodOptions(current => current.length ? current : defaults.deliveryMethods || []);
+        return;
+      }
 
       const agreement = overrides.agreement ?? defaults.agreement ?? null;
       const contract = overrides.contract ?? agreement?.contract ?? defaults.contract ?? null;
@@ -3184,14 +3421,24 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         warehouse,
         deliveryAddress: shouldApplyDeliveryAddress ? deliveryAddress : prev.deliveryAddress,
       }));
+      };
+      applyDefaults(defaults);
+      if (defaults.readState?.refreshPending) void refreshPendingSnapshot(defaults,
+        value => !!value.readState?.refreshPending,
+        value => ({...value, readState: value.readState ? {...value.readState, refreshPending: false} : undefined}),
+        async () => {
+          if (controller.signal.aborted || activeOfflineUserRef.current !== requestUser
+            || (AppState.currentState && AppState.currentState !== 'active')) throw new Error('Inactive defaults');
+          return getClientOrderDefaults({organizationGuid, counterpartyGuid}, {signal: controller.signal, expectedUserId: Number(requestUser) > 0 ? Number(requestUser) : undefined});
+        }, applyDefaults, controller.signal);
     } catch (e: any) {
-      if (defaultsRequestIdRef.current !== requestId) return;
+      if (controller.signal.aborted || activeOfflineUserRef.current !== requestUser || defaultsRequestIdRef.current !== requestId) return;
       if (isNetworkUnavailableError(e)) return;
       setError(userErrorMessage(e, 'Не удалось подставить значения по умолчанию.'));
     } finally {
       if (defaultsRequestIdRef.current === requestId) setLoadingDefaults(false);
     }
-  }, []);
+  }, [beginRead]);
 
   React.useEffect(() => {
     void loadSettings();
@@ -3200,6 +3447,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   React.useEffect(() => {
     if (!filtersHydrated || !ordersCacheHydrated) return;
     ordersRequestIdRef.current += 1;
+    readControllers.current.orders?.abort(); readControllers.current.silentOrders?.abort();
     setOrdersAppendError(null);
     setLoadingOrders(true);
   }, [filtersSignature, filtersHydrated, ordersCacheHydrated]);
@@ -3229,7 +3477,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     const timer = setInterval(() => {
       if (appIsActive()) void refreshInvoiceStates();
     }, PENDING_INVOICES_REFRESH_INTERVAL_MS);
-    return () => clearInterval(timer);
+    return () => { clearInterval(timer); readControllers.current.invoiceStatuses?.abort(); invoiceStatusesInFlightRef.current = false; };
   }, [filtersHydrated, ordersPollingEnabled, pendingInvoiceIdentifiers, refreshInvoiceStates]);
 
   React.useEffect(() => {
@@ -3425,9 +3673,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   React.useEffect(() => {
     if (!selectedGuid) return;
-    if (selectedOrder?.guid === selectedGuid) return;
+    if (selectedOrder?.guid === selectedGuid || pendingDetail?.guid === selectedGuid) return;
     void loadDetail(selectedGuid);
-  }, [loadDetail, selectedGuid, selectedOrder?.guid]);
+  }, [loadDetail, selectedGuid, selectedOrder?.guid, pendingDetail?.guid]);
 
   React.useEffect(() => {
     if (!selectedGuid) {
@@ -3439,20 +3687,29 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     // Always reconcile once when a document is opened. Continue polling only
     // while 1C/API is actually preparing a requested invoice.
     if (!invoicePending && invoiceSettledPollGuidRef.current === selectedGuid) return undefined;
-    if (!invoicePending) invoiceSettledPollGuidRef.current = selectedGuid;
+
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const poll = async () => {
       if (cancelled) return;
-      if (!AppState?.currentState || AppState.currentState === 'active') await refreshSelectedOrderInvoices();
+      if (!AppState?.currentState || AppState.currentState === 'active') {
+        const refreshed = await refreshSelectedOrderInvoices();
+        if (!cancelled && refreshed && !invoicePending) invoiceSettledPollGuidRef.current = selectedGuid;
+      }
       if (!cancelled && invoicePending) {
         timer = setTimeout(poll, OPEN_ORDER_INVOICES_REFRESH_INTERVAL_MS);
       }
     };
     void poll();
+    const subscription = typeof AppState?.addEventListener === 'function' ? AppState.addEventListener('change', state => {
+      if (state !== 'active' || cancelled || (!invoicePending && invoiceSettledPollGuidRef.current === selectedGuid)) return;
+      if (timer) {clearTimeout(timer); timer = null;}
+      void poll();
+    }) : null;
     return () => {
-      cancelled = true;
+      cancelled = true; subscription?.remove();
       if (timer) clearTimeout(timer);
+      readControllers.current.invoices?.abort(); invoicePollingRef.current = false;
     };
   }, [invoicePollingEnabled, refreshSelectedOrderInvoices, selectedGuid, selectedInvoicePending]);
 
@@ -3795,6 +4052,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     mergeServerRevisionIntoOpenDraft,
     mergeSavedOrderIntoDraft,
     readOnly,
+    verificationRequired,
     removeDeviceDraftEntry,
     replaceDeviceDraftEntries,
     saveDraftOnDevice,
@@ -3905,7 +4163,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       void saveDraft({ silent: true, reason: 'autosave', localOnly: true });
     }, 400);
     return () => clearTimeout(timer);
-  }, [dirty, draft.guid, findDeviceDraftEntry, readOnly, saveDraft, saving, serverStatus.isReachable, submitting]);
+  }, [verificationRequired, dirty, draft.guid, findDeviceDraftEntry, readOnly, saveDraft, saving, serverStatus.isReachable, submitting]);
 
   React.useEffect(() => {
     if (Platform.OS === 'web' || typeof AppState?.addEventListener !== 'function') return undefined;
@@ -3943,7 +4201,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   React.useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const beforeUnload = (event: BeforeUnloadEvent) => {
-      if (!dirty || readOnly) return;
+      if (!dirty) return;
       event.preventDefault();
       event.returnValue = '';
     };
@@ -3952,7 +4210,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [dirty, readOnly]);
 
   const confirmDiscardIfNeeded = React.useCallback(async () => {
-    if (!dirty || readOnly) return true;
+    if (!dirty) return true;
     let decision: DiscardDecision;
     if (confirmDiscard) {
       const result = await confirmDiscard({
@@ -4005,7 +4263,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     selectedGuidRef.current = guid;
     const order = await loadDetail(guid);
     if (!order) {
-      selectedGuidRef.current = selectedGuid;
+      if (selectedGuidRef.current === guid) selectedGuidRef.current = selectedGuid;
       return false;
     }
     return true;
@@ -4033,6 +4291,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   const resetPairDependentDraft = React.useCallback((patch: Partial<DraftOrder>) => {
     enumOptionsRequestIdRef.current += 1;
+    defaultsRequestIdRef.current += 1;
+    readControllers.current.enums?.abort(); readControllers.current.defaults?.abort();
+    setLoadingDefaults(false);
     patchDraft((prev) => ({
       ...prev,
       ...patch,
@@ -4101,17 +4362,18 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }
   }, [applyResolvedDefaults, draft.organizationGuid, resetPairDependentDraft]);
 
-  const searchCounterparties = React.useCallback((params?: Parameters<typeof searchClientOrderCounterparties>[0]) => (
+  const searchCounterparties = React.useCallback((params?: Parameters<typeof searchClientOrderCounterparties>[0], readOptions?: Parameters<typeof searchClientOrderCounterparties>[1]) => (
     searchClientOrderCounterparties({
       ...(params || {}),
       organizationGuid: params?.organizationGuid || draft.organizationGuid || undefined,
-    })
+    }, readOptions)
   ), [draft.organizationGuid]);
 
   const setAgreement = React.useCallback(async (agreement: ClientOrderAgreementOption | null) => {
     const organization = resolveEntityOrganization(agreement);
     // Do not let an older defaults request overwrite the user's explicit pair.
     defaultsRequestIdRef.current += 1;
+    readControllers.current.defaults?.abort();
     setLoadingDefaults(false);
     patchDraft((prev) => ({
       ...prev,
@@ -4141,6 +4403,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     const organization = resolveEntityOrganization(contract);
     // A manual contract choice must not re-apply defaults and reset agreement.
     defaultsRequestIdRef.current += 1;
+    readControllers.current.defaults?.abort();
     setLoadingDefaults(false);
     patchDraft({ contractGuid: contract?.guid || '' });
     setSelections((prev) => ({ ...prev, organization: organization ?? prev.organization, contract }));
@@ -4316,6 +4579,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     deliveryDate: loadingDefaults,
   }), [loadingDefaults]);
 
+  const queueNewItemPricing = useNewItemPricing(draft, offlineUserId, patchDraft);
+
   const addProduct = React.useCallback((product: ClientOrderProduct, options?: { quantity?: string | number }) => {
     addMonitoringBreadcrumb('order.product_add');
     const existing = draft.items.find((item) => item.productGuid === product.guid);
@@ -4325,8 +4590,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       if (prev.items.some((item) => item.productGuid === product.guid)) return prev;
       return { ...prev, items: [...prev.items, nextItem] };
     });
+    queueNewItemPricing(nextItem);
     return nextItem.key;
-  }, [draft.items, patchDraft]);
+  }, [draft.items, patchDraft, queueNewItemPricing]);
 
   const addDraftItem = React.useCallback((draftItem: DraftItem) => {
     const existing = draft.items.find((item) => item.productGuid === draftItem.productGuid);
@@ -4335,8 +4601,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       if (prev.items.some((item) => item.productGuid === draftItem.productGuid)) return prev;
       return { ...prev, items: [...prev.items, draftItem] };
     });
+    queueNewItemPricing(draftItem);
     return draftItem.key;
-  }, [draft.items, patchDraft]);
+  }, [draft.items, patchDraft, queueNewItemPricing]);
 
   const setItemPriceType = React.useCallback((lineKey: string, priceType: ClientOrderPriceTypeOption | null) => {
     const target = draft.items.find((item) => item.key === lineKey);
@@ -4553,6 +4820,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const submitOrderFromList = React.useCallback(async (target: ClientOrder) => {
     addMonitoringBreadcrumb('order.list_submit_requested');
     if (!target?.guid || submitting || submitActionInFlightRef.current || deviceDraftSyncingRef.current) return null;
+    if (target.readState?.verificationRequired || target.readOnly || target.hasRealization) {setOrdersError('Сначала проверьте актуальное состояние заказа в 1С.'); return null;}
     submitActionInFlightRef.current = true;
     let targetGuid = target.guid;
     let targetRevision = target.revision;
@@ -4652,6 +4920,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     let targetGuid = target?.guid || draft.guid || selectedGuid;
     let revision = target?.revision ?? draft.revision;
     if (!targetGuid) return null;
+    const actionOrder = target ? apiOrdersRef.current.find(order => order.guid === target.guid) : selectedOrder;
+    if ((!target && pendingDetail) || actionOrder?.readState?.verificationRequired) {setError('Сначала проверьте актуальное состояние заказа в 1С.'); return null;}
     if (!target && dirty) {
       const saved = await saveDraft({ silent: true, reason: 'manual' });
       if (!saved || isDeviceDraftGuid(saved.guid)) return null;
@@ -4674,12 +4944,14 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     } finally {
       setCancelling(false);
     }
-  }, [applyOrderDetail, applySavedOrderToList, dirty, draft.guid, draft.revision, saveDraft, selectedGuid]);
+  }, [pendingDetail, selectedOrder, applyOrderDetail, applySavedOrderToList, dirty, draft.guid, draft.revision, saveDraft, selectedGuid]);
 
   const restoreOrder = React.useCallback(async (target?: { guid: string; revision: number }) => {
     const targetGuid = target?.guid || draft.guid || selectedGuid;
     const revision = target?.revision ?? draft.revision;
     if (!targetGuid) return null;
+    const actionOrder = target ? apiOrdersRef.current.find(order => order.guid === target.guid) : selectedOrder;
+    if ((!target && pendingDetail) || actionOrder?.readState?.verificationRequired) {setError('Сначала проверьте актуальное состояние заказа в 1С.'); return null;}
     try {
       setCancelling(true);
       const order = await restoreClientOrder(targetGuid, revision);
@@ -4696,9 +4968,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     } finally {
       setCancelling(false);
     }
-  }, [applyOrderDetail, applySavedOrderToList, draft.guid, draft.revision, selectedGuid]);
+  }, [pendingDetail, selectedOrder, applyOrderDetail, applySavedOrderToList, draft.guid, draft.revision, selectedGuid]);
 
   const copyOrder = React.useCallback(async (_options?: { saveFirst?: boolean }) => {
+    if (pendingDetail) {setError('Сначала дождитесь данных заказа.'); return null;}
     const targetGuid = draft.guid || selectedGuid;
     const copyLocally = async () => {
       try { return await createDeviceCopyFromCurrentDraft(); }
@@ -4707,7 +4980,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         return null;
       }
     };
-    if (!targetGuid || dirty || isDeviceDraftGuid(targetGuid) || !!findDeviceDraftEntry(targetGuid)) {
+    if (!targetGuid || dirty || verificationRequired || isDeviceDraftGuid(targetGuid) || !!findDeviceDraftEntry(targetGuid)) {
       return copyLocally();
     }
     try {
@@ -4724,7 +4997,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     } finally {
       setCopying(false);
     }
-  }, [applyOrderDetail, applySavedOrderToList, createDeviceCopyFromCurrentDraft, dirty, draft.guid, draft.revision, findDeviceDraftEntry, selectedGuid]);
+  }, [pendingDetail, verificationRequired, applyOrderDetail, applySavedOrderToList, createDeviceCopyFromCurrentDraft, dirty, draft.guid, draft.revision, findDeviceDraftEntry, selectedGuid]);
 
   const copyOrderFromList = React.useCallback(async (target: ClientOrder) => {
     if (!target?.guid || copying) return null;
@@ -4817,6 +5090,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [applySavedOrderToList, copying, findDeviceDraftEntry, replaceDeviceDraftEntries]);
 
   const runCancel = React.useCallback(async (target?: { guid: string; revision: number }) => {
+    if (!target && readOnly) {setError('Сначала проверьте актуальное состояние заказа в 1С.'); return;}
     const targetGuid = target?.guid || draft.guid;
     const targetRevision = target?.revision ?? draft.revision;
     if (!targetGuid) {
@@ -4840,7 +5114,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     } finally {
       setCancelling(false);
     }
-  }, [applySavedOrderToList, draft.guid, draft.revision, resetDraftToBase, options.notifyCancelDenied]);
+  }, [readOnly, applySavedOrderToList, draft.guid, draft.revision, resetDraftToBase, options.notifyCancelDenied]);
 
   const deleteDraft = React.useCallback(async (guid?: string) => {
     const targetGuid = guid || draft.guid || selectedGuid;
@@ -4879,7 +5153,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     } finally {
       setDeletingDraft(false);
     }
-  }, [draft.guid, findDeviceDraftEntry, loadOrders, removeDeviceDraftEntry, resetDraftToBase, selectedGuid]);
+  }, [offlineUserId, draft.guid, findDeviceDraftEntry, loadOrders, removeDeviceDraftEntry, resetDraftToBase, selectedGuid]);
 
   const cancelOrder = React.useCallback(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -5014,6 +5288,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     ordersInitialLoadDone,
     loadingMoreOrders,
     loadingDetail,
+    pendingDetail,
+    defaultsReadState,
+    verificationRequired,
+    retryDetailVerification: () => setDetailRefreshEpoch(value => value + 1),
     loadingReceiptPrices,
     refreshDocumentProfit,
     cancelDetailLoading,

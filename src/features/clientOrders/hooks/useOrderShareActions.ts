@@ -17,6 +17,8 @@ export function useOrderShareActions(workspace: Workspace) {
   const copyLink = React.useCallback(async (guid?: string) => {
     const current = workspaceRef.current;
     if (copyingRef.current || current.mutationLocked || (guid === undefined && current.loadingDetail)) return;
+    const target = guid === undefined ? current.selectedOrder : current.orders?.find(order => order.guid === guid);
+    if ((guid === undefined && current.pendingDetail) || target?.readState?.verificationRequired) {setFeedback('Сначала проверьте актуальное состояние заказа в 1С.'); return;}
     copyingRef.current = true; setCopying(true); setFeedback('Копирую ссылку…');
     try {
       const { link } = await publishClientOrderShare(current, false, guid);

@@ -1,3 +1,6 @@
+import { ReadSnapshotLabel } from './components/ReadSnapshotLabel';
+import { orderProfitFreshnessHint, summaryFreshnessHint } from './lib/orderReadFreshness';
+import { fillUnknownSelectedProduct, mergeRefreshedProductPage } from './lib/productFreshness';
 ﻿import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 import { InvoiceRequestField } from './screen/mobile/InvoiceRequestField';
@@ -569,6 +572,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const [pickerScrollOffset, setPickerScrollOffset] = React.useState(0);
   const [pickerLoading, setPickerLoading] = React.useState(false);
   const [pickerLoadError, setPickerLoadError] = React.useState(false);
+  const [pickerReferencePending, setPickerReferencePending] = React.useState(false);
   const [pickerAppendLoading, setPickerAppendLoading] = React.useState(false);
   const [pickerHasLoadedOnce, setPickerHasLoadedOnce] = React.useState(false);
   const [selectedProducts, setSelectedProducts] = React.useState<ProductSelectionMap>(() => new Map());
@@ -658,6 +662,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const editorFocusedTargetRef = React.useRef<unknown>(null);
   const editorFocusTimersRef = React.useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const pickerRequestIdRef = React.useRef(0);
+  const pickerProductRequestRef = React.useRef<AbortController | null>(null);
   const pickerKindRef = React.useRef<PickerKind | null>(null);
   const pickerLoadSignatureRef = React.useRef('');
   const pickerAppendLoadingRef = React.useRef(false);
@@ -671,6 +676,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const pickerScrollYRef = React.useRef(0);
   const pickerScrollMetricsRef = React.useRef({ y: 0, contentHeight: 0, viewportHeight: 0 });
   const itemsSearchRequestIdRef = React.useRef(0);
+  const itemsSearchRequestRef = React.useRef<AbortController | null>(null);
   const itemsSearchLoadingMoreRef = React.useRef(false);
   const itemsSearchBlurTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const openingOrderRequestIdRef = React.useRef(0);
@@ -1160,6 +1166,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     // organization response can arrive between the tap on "Подбор товаров"
     // and the next effect, replacing the product rows with stale data.
     pickerRequestIdRef.current += 1;
+    pickerProductRequestRef.current?.abort();
     pickerKindRef.current = kind;
     clearEditorScrollRestoreTimers();
     editorScrollRestorePendingRef.current = mode === 'editor' && kind !== 'product';
@@ -1216,6 +1223,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const handlePickerSearchChange = React.useCallback((value: string) => {
     if (value === pickerSearch) return;
     pickerRequestIdRef.current += 1;
+    pickerProductRequestRef.current?.abort();
     productPickerSnapshotRef.current.invalidate();
     if (pickerProductHydrationTimerRef.current) {
       clearTimeout(pickerProductHydrationTimerRef.current);
@@ -1253,8 +1261,28 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     }
     pickerLoadSignatureRef.current = signature;
     const requestId = ++pickerRequestIdRef.current;
+    pickerProductRequestRef.current?.abort();
+    const controller = new AbortController();
+    pickerProductRequestRef.current = controller;
+    let referencePageGuids = new Set<string>();
+    setPickerReferencePending(false);
+    const referenceReadOptions = {signal: controller.signal, expectedUserId: Number(workspace.offlineUserId) > 0 ? Number(workspace.offlineUserId) : undefined,
+      onRefresh: (fresh: {items: any[]; meta: any}) => {
+        if (controller.signal.aborted || pickerRequestIdRef.current !== requestId) return;
+        setPickerReferencePending(!!fresh.meta.pending);
+        if (fresh.meta.accessDenied) {setPickerItems([]); setPickerHasMore(false); return;}
+        const previous = referencePageGuids;
+        referencePageGuids = new Set(fresh.items.map(item => item.guid));
+        setPickerItems(current => [...current.filter(item => !previous.has(item.guid)), ...fresh.items]);
+        setPickerOffset(offset + fresh.items.length);
+        setPickerHasMore(!fresh.meta.pending && (typeof fresh.meta.hasMore === 'boolean' ? fresh.meta.hasMore : hasMorePage(fresh.items.length, pageSize, offset, fresh.meta.total)));
+      }};
+
+    let refreshedPageGuids = new Set<string>();
     if (!append) productPickerSnapshotRef.current.invalidate();
     if (!append) setPickerItems([]);
+    else setPickerItems(current => current.map(item => item.freshness ? {...item,
+      freshness: {...item.freshness, commercialPending: false, receiptPricePending: false}} : item));
     setPickerLoadError(false);
     setPickerLoading(true);
     try {
@@ -1276,16 +1304,30 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         const all = workspace.settings?.organizations || [];
         const filtered = all.filter((item) => matchesTokenSearch(item, search));
         result = { items: filtered.slice(offset, offset + pageSize), meta: { total: filtered.length } };
-      } else if (kind === 'filterCounterparty' || kind === 'counterparty') result = await workspace.searchCounterparties({ search, limit: pageSize, offset, managerOnly: counterpartyManagerOnly });
-      else if (kind === 'agreement') result = await workspace.searchAgreements({ organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: pageSize, offset });
-      else if (kind === 'contract') result = await workspace.searchContracts({ organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: pageSize, offset });
-      else if (kind === 'warehouse') result = await workspace.searchWarehouses({ organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: pageSize, offset });
-      else if (kind === 'deliveryAddress') result = await workspace.searchDeliveryAddresses({ organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: pageSize, offset });
-      else if (kind === 'priceType') result = await workspace.searchPriceTypes({ search, limit: pageSize, offset });
-      else result = await workspace.searchProducts({ search, organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid, agreementGuid: workspace.draft.agreementGuid || undefined, warehouseGuid: workspace.draft.warehouseGuid || undefined, priceTypeGuid: workspace.draft.priceTypeGuid || undefined, inStockOnly, purchasedOnly, historyUserId: workspace.offlineUserId, historyFetchedAt: purchaseHistoryRevision || undefined, limit: pageSize, offset });
+      } else if (kind === 'filterCounterparty' || kind === 'counterparty') result = await workspace.searchCounterparties({ search, limit: pageSize, offset, managerOnly: counterpartyManagerOnly }, referenceReadOptions);
+      else if (kind === 'agreement') result = await workspace.searchAgreements({ organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: pageSize, offset }, referenceReadOptions);
+      else if (kind === 'contract') result = await workspace.searchContracts({ organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: pageSize, offset }, referenceReadOptions);
+      else if (kind === 'warehouse') result = await workspace.searchWarehouses({ organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: pageSize, offset }, referenceReadOptions);
+      else if (kind === 'deliveryAddress') result = await workspace.searchDeliveryAddresses({ organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: pageSize, offset }, referenceReadOptions);
+      else if (kind === 'priceType') result = await workspace.searchPriceTypes({ search, limit: pageSize, offset }, referenceReadOptions);
+      else result = await workspace.searchProducts({ search, organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid, agreementGuid: workspace.draft.agreementGuid || undefined, warehouseGuid: workspace.draft.warehouseGuid || undefined, priceTypeGuid: workspace.draft.priceTypeGuid || undefined, inStockOnly, purchasedOnly, historyUserId: workspace.offlineUserId, historyFetchedAt: purchaseHistoryRevision || undefined, limit: pageSize, offset }, {
+        signal: controller?.signal,
+        onRefresh: (fresh) => {
+          if (controller?.signal.aborted || pickerRequestIdRef.current !== requestId || pickerKindRef.current !== kind) return;
+          if (fresh.meta.accessDenied) { setPickerItems([]); setPickerHasMore(false); return; }
+          const freshByGuid = new Map(fresh.items.map(item => [item.guid, item]));
+          const previousPage = refreshedPageGuids;
+          refreshedPageGuids = new Set(fresh.items.map(item => item.guid));
+          setPickerItems(current => mergeRefreshedProductPage(current, previousPage, fresh.items));
+          setSelectedProducts(current => new Map([...current].map(([guid, item]) =>
+            [guid, freshByGuid.has(guid) ? fillUnknownSelectedProduct(item, freshByGuid.get(guid)!) : item])));
+        },
+      });
       if (pickerRequestIdRef.current !== requestId || pickerKindRef.current !== kind) return;
       const items = result?.items || [];
-      if (append && items.length === 0) {
+      if (kind !== 'product') {referencePageGuids = new Set(items.map((item: any) => item.guid)); setPickerReferencePending(!!result?.meta?.pending);}
+      refreshedPageGuids = new Set(items.map((item: ClientOrderProduct) => item.guid));
+      if (append && items.length === 0 && !(kind === 'product' && result?.meta?.hasMore === true && Number.isFinite(result?.meta?.nextOffset) && result.meta.nextOffset > offset)) {
         setPickerHasMore(false);
         return;
       }
@@ -1327,8 +1369,11 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           });
         }, 350);
       }
-      setPickerOffset(offset + items.length);
-      setPickerHasMore(hasMorePage(items.length, pageSize, offset, result?.meta?.total));
+      const nextOffset = kind === 'product' && Number.isFinite(result?.meta?.nextOffset) && result.meta.nextOffset > offset
+        ? result.meta.nextOffset : offset + items.length;
+      setPickerOffset(nextOffset);
+      setPickerHasMore(kind === 'product' && typeof result?.meta?.hasMore === 'boolean'
+        ? result.meta.hasMore : hasMorePage(items.length, pageSize, offset, result?.meta?.total));
     } catch {
       if (pickerRequestIdRef.current === requestId && pickerKindRef.current === kind) {
         setPickerLoadError(true);
@@ -1378,6 +1423,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     void loadPickerPage(pickerKind, pickerSearch, 0, false);
   }, [loadPickerPage, pickerKind, pickerSearch]);
   React.useEffect(() => () => {
+    pickerRequestIdRef.current += 1;
+    pickerProductRequestRef.current?.abort();
     if (pickerProductHydrationTimerRef.current) clearTimeout(pickerProductHydrationTimerRef.current);
   }, []);
   React.useEffect(() => {
@@ -1411,6 +1458,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   }, [clearPickerFocusTimers, pickerKind]);
 
   const closePicker = React.useCallback(() => {
+    pickerProductRequestRef.current?.abort();
     if (pickerProductHydrationTimerRef.current) {
       clearTimeout(pickerProductHydrationTimerRef.current);
       pickerProductHydrationTimerRef.current = null;
@@ -1464,7 +1512,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       setHeaderOverride({ hidden: true });
       setMode('orders');
     };
-    if (!workspace.dirty || workspace.readOnly) {
+    if (!workspace.dirty) {
       leaveDocument();
       return;
     }
@@ -1967,8 +2015,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     const isErrorRetry = !!workspace.selectedOrderHas1cError && !workspace.dirty;
     const isResubmit = isQueuedResubmit || isSyncedResubmit || isErrorRetry;
     if (!workspace.online || workspace.selectedOrder?.origin === 'device') {
-      setConfirmDialog({ title: 'Поставить в очередь на устройстве?',
-        message: 'Заказ останется на телефоне. Чтобы передать его в 1С, нажмите «Отправить документы» в списке при наличии сети.',
+      setConfirmDialog({ title: 'Поставить заказ в очередь?',
+        message: workspace.online
+          ? 'Заказ будет сохранён в очереди отправки. Ход обработки и результат проверки в 1С появятся в списке документов.'
+          : 'Заказ будет сохранён на телефоне. После восстановления связи проверьте статус отправки в списке документов.',
         confirmLabel: 'В очередь', onConfirm: () => workspace.submitOrder() });
       return;
     }
@@ -2131,6 +2181,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   React.useEffect(() => {
     const search = itemsSearch.trim();
     const requestId = ++itemsSearchRequestIdRef.current;
+    itemsSearchRequestRef.current?.abort();
+    itemsSearchRequestRef.current = null;
     const hasOrderContext = !!workspace.draft.organizationGuid && !!workspace.draft.counterpartyGuid;
     if (!search || !hasOrderContext) {
       setItemsSearchResults([]);
@@ -2142,6 +2194,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       setItemsSearchError(null);
       return undefined;
     }
+    const controller = new AbortController();
+    itemsSearchRequestRef.current = controller;
+    let refreshedPageGuids = new Set<string>();
     setItemsSearchError(null);
     const loadingTimer = setTimeout(() => {
       if (itemsSearchRequestIdRef.current === requestId) setItemsSearchLoading(true);
@@ -2157,13 +2212,21 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         inStockOnly,
         limit: ITEMS_SEARCH_PAGE_SIZE,
         offset: 0,
-      }).then((result) => {
+      }, { signal: controller.signal, onRefresh: (fresh) => {
+        if (controller.signal.aborted || itemsSearchRequestIdRef.current !== requestId) return;
+        if (fresh.meta.accessDenied) { setItemsSearchResults([]); setItemsSearchHasMore(false); return; }
+        const previousPage = refreshedPageGuids;
+        refreshedPageGuids = new Set(fresh.items.map(item => item.guid));
+        setItemsSearchResults(current => mergeRefreshedProductPage(current, previousPage, fresh.items));
+      } }).then((result) => {
         if (itemsSearchRequestIdRef.current !== requestId) return;
         const items = Array.isArray(result.items) ? result.items : [];
+        refreshedPageGuids = new Set(items.map(item => item.guid));
         const total = result?.meta?.total;
         setItemsSearchResults(items);
-        setItemsSearchOffset(items.length);
-        setItemsSearchHasMore(hasMorePage(items.length, ITEMS_SEARCH_PAGE_SIZE, 0, total));
+        setItemsSearchOffset(Number.isFinite(result.meta.nextOffset) && result.meta.nextOffset! > 0 ? result.meta.nextOffset! : items.length);
+        setItemsSearchHasMore(typeof result.meta.hasMore === 'boolean' ? result.meta.hasMore
+          : hasMorePage(items.length, ITEMS_SEARCH_PAGE_SIZE, 0, total));
       }).catch((error) => {
         if (itemsSearchRequestIdRef.current !== requestId) return;
         setItemsSearchResults([]);
@@ -2177,6 +2240,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     return () => {
       clearTimeout(loadingTimer);
       clearTimeout(requestTimer);
+      itemsSearchRequestIdRef.current += 1;
+      controller.abort();
     };
   }, [
     inStockOnly,
@@ -2192,6 +2257,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     const search = itemsSearch.trim();
     if (!search || !workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid || itemsSearchLoading || itemsSearchLoadingMore || itemsSearchLoadingMoreRef.current || !itemsSearchHasMore) return;
     const requestId = itemsSearchRequestIdRef.current;
+    const signal = itemsSearchRequestRef.current?.signal;
+    if (!signal || signal.aborted) return;
     const offset = itemsSearchOffset;
     itemsSearchLoadingMoreRef.current = true;
     setItemsSearchLoadingMore(true);
@@ -2205,19 +2272,21 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       inStockOnly,
       limit: ITEMS_SEARCH_PAGE_SIZE,
       offset,
-    }).then((result) => {
+    }, { signal }).then((result) => {
       if (itemsSearchRequestIdRef.current !== requestId) return;
       const items = Array.isArray(result.items) ? result.items : [];
       const total = result?.meta?.total;
-      if (!items.length) {
+      if (!items.length && !(result.meta.hasMore === true && Number.isFinite(result.meta.nextOffset) && result.meta.nextOffset! > offset)) {
         setItemsSearchHasMore(false);
         return;
       }
       setItemsSearchResults((prev) => {
         const known = new Set(prev.map((item) => item.guid));
         const merged = [...prev, ...items.filter((item) => !known.has(item.guid))];
-        setItemsSearchOffset(offset + items.length);
-        setItemsSearchHasMore(hasMorePage(items.length, ITEMS_SEARCH_PAGE_SIZE, offset, total));
+        setItemsSearchOffset(Number.isFinite(result.meta.nextOffset) && result.meta.nextOffset! > offset
+          ? result.meta.nextOffset! : offset + items.length);
+        setItemsSearchHasMore(typeof result.meta.hasMore === 'boolean' ? result.meta.hasMore
+          : hasMorePage(items.length, ITEMS_SEARCH_PAGE_SIZE, offset, total));
         return merged;
       });
     }).catch((error) => {
@@ -2676,8 +2745,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   ), [pickerMissingOrderContext]);
   const referencePickerEmpty = React.useMemo(() => {
     if (pickerResetLoading || pickerMissingOrderContext) return null;
-    return <Text style={styles.filtersLookupEmpty}>Ничего не найдено.</Text>;
-  }, [pickerMissingOrderContext, pickerResetLoading]);
+    return <Text style={styles.filtersLookupEmpty}>{pickerReferencePending ? 'Справочник ещё проверяется в 1С. Повторите обновление позже.' : 'Ничего не найдено.'}</Text>;
+  }, [pickerMissingOrderContext, pickerResetLoading, pickerReferencePending]);
   const referencePickerFooter = React.useMemo(() => (
     pickerFooterLoading
       ? <View style={styles.pickerFooter}><ActivityIndicator size="small" color="#2563EB" /><Text style={styles.pickerFooterText}>Загружаю...</Text></View>
@@ -2704,10 +2773,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const editorTopPadding = Math.max(topInset + DOCUMENT_HEADER_TABS_RESERVE, headerBottomOffset || 0);
   const ordersTopPadding = Platform.OS === 'web' ? 10 : Math.max(8, safeTop + 6);
   const pageTopPadding = mode === 'editor' ? editorTopPadding : ordersTopPadding;
-  const ordersBottomPanelReserve = Math.max(safeBottom, 8) + 166;
+  const ordersBottomPanelReserve = Math.max(safeBottom, 8) + 166 + (workspace.todaySummary?.stale ? 14 : 0);
   const showItemsSearchOverlay = mode === 'editor' && !workspace.readOnly && !workspace.mutationLocked && section === 'items' && !!itemsSearch.trim() && itemsSearchFocused;
   const itemsSearchOverlayTop = Math.max(topInset + 96, headerBottomOffset + 6);
-  const showDocumentOpenLoader = documentContentLoading;
+  const showDocumentOpenLoader = documentContentLoading || !!workspace.pendingDetail;
   const showDocumentDeleteOverlay = mode === 'editor' && deleteDocumentOverlayVisible;
   const productPickerBottomInset = !workspace.readOnly && !workspace.mutationLocked ? 50 : 0;
   const editorHeaderBottomPadding = editorKeyboardVisible
@@ -2858,12 +2927,15 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const orderListEmptyComponent = React.useMemo(() => (
     showOrdersInitialLoading
       ? <OrdersInitialLoadingState styles={styles} />
+      : showOrdersEmptyState && (workspace.ordersMeta.pending || workspace.ordersMeta.incomplete)
+        ? <Text accessibilityLiveRegion="polite" style={{padding: 24}}>{workspace.ordersMeta.readState?.refreshPending ? 'Список заказов проверяется в 1С.' : 'Данные списка неполные. Повторите обновление.'} Можно создать локальный черновик.</Text>
       : showOrdersEmptyState
         ? <OrdersEmptyState styles={styles} filtered={hasActiveOrderFilters} />
         : null
-  ), [hasActiveOrderFilters, showOrdersEmptyState, showOrdersInitialLoading]);
+  ), [hasActiveOrderFilters, showOrdersEmptyState, showOrdersInitialLoading, workspace.ordersMeta.pending, workspace.ordersMeta.incomplete, workspace.ordersMeta.readState?.refreshPending]);
   const orderListFooterComponent = React.useMemo(() => (
     <>
+      {workspace.orders.length > 0 && workspace.ordersMeta.readState?.stale ? <Text accessibilityLiveRegion="polite" style={{padding: 12}}>{workspace.ordersMeta.readState.refreshPending ? 'Данные списка уточняются в 1С…' : 'Данные списка неполные или устарели. Повторите обновление.'}</Text> : null}
       {showOrdersFooter ? (
         <OrdersPaginationFooter
           styles={styles}
@@ -2874,7 +2946,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       ) : null}
       <TabBarSpacer />
     </>
-  ), [showOrdersFooter, workspace.loadMoreOrders, workspace.loadingMoreOrders, workspace.ordersAppendError]);
+  ), [showOrdersFooter, workspace.loadMoreOrders, workspace.loadingMoreOrders, workspace.ordersAppendError, workspace.orders.length, workspace.ordersMeta.readState]);
 
   return (
     <View style={[styles.screen, { backgroundColor: background, paddingTop: pageTopPadding }]}>
@@ -2967,6 +3039,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           importantForAccessibility={mode === 'editor' ? 'auto' : 'no-hide-descendants'}
           style={[styles.editorStage, mode !== 'editor' && styles.editorStageHidden]}
         >
+          {workspace.verificationRequired && !workspace.pendingDetail ? <Pressable accessibilityRole="button" onPress={workspace.retryDetailVerification} style={{paddingHorizontal: 16, paddingVertical: 8}}><Text>Состояние заказа проверяется в 1С. Изменения сохраняются локально. Проверить снова</Text></Pressable> : null}
           {showDocumentOpenLoader ? (
             <ScrollView
               style={styles.editorPageScroll}
@@ -2982,7 +3055,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
                 },
               ]}
             >
-              <DocumentOpenSkeleton styles={styles} section={section} />
+              {workspace.pendingDetail ? <View accessibilityRole="summary" style={{padding: 20, gap: 12}}>
+                <Text accessibilityLiveRegion="polite">{workspace.pendingDetail.readState.refreshPending ? 'Загружаем заказ из 1С…' : 'Данные заказа пока недоступны. Повторите проверку.'}</Text>
+                <Pressable accessibilityRole="button" onPress={workspace.retryDetailVerification}><Text>Проверить снова</Text></Pressable>
+              </View> : <DocumentOpenSkeleton styles={styles} section={section} />}
             </ScrollView>
           ) : (
             <GestureDetector gesture={editorPageSwipeGesture}>
@@ -6585,12 +6661,13 @@ function OrdersBottomBar({
               label="Прибыль"
               labelSuffix={markupPercent === null ? null : formatMarkupPercent(markupPercent)}
               value={profit ?? 'Рассчитать'}
-              loading={loadingMetrics || calculatingProfit}
+              loading={loadingMetrics || (calculatingProfit && profit === null)}
               color={profitColor}
               action={profit === null && !loadingMetrics && !calculatingProfit ? onCalculateProfit : undefined}
             />
           </View>
         </View>
+        <ReadSnapshotLabel hint={summaryFreshnessHint(summary)} label={summary?.refreshPending ? 'Предыдущие данные · обновляются' : 'Предыдущие данные'} />
       </LiquidGlassSurface>
     </View>
   );
@@ -7685,6 +7762,7 @@ const OrderCard = React.memo(function OrderCard({
                   </Text>
                 </View>
               ) : null}
+              <ReadSnapshotLabel hint={orderProfitFreshnessHint(order)} label="Предыдущий расчёт" />
             </View>
           </View>
           {submittedVersion ? (

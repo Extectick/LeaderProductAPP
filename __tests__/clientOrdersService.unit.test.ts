@@ -12,6 +12,11 @@ import {
   putClientOrderByClientId,
   previewClientOrderAmendment,
   searchClientOrderCounterparties,
+  searchClientOrderAgreements,
+  searchClientOrderContracts,
+  searchClientOrderWarehouses,
+  searchClientOrderPriceTypes,
+  searchClientOrderDeliveryAddresses,
   searchClientOrderProducts,
   requestClientOrderInvoice,
   submitClientOrder,
@@ -19,6 +24,7 @@ import {
 import { apiClient } from "../utils/apiClient";
 import { setServerReachable, setServerUnavailable } from '../src/shared/network/serverStatus';
 import { readActiveOfflineEntityItems } from '../src/features/clientOrders/offline/offlineOrdersDatabase';
+import { searchCatalogProducts } from '@/src/features/productCatalog';
 
 jest.mock("../utils/apiClient", () => ({
   apiClient: jest.fn(),
@@ -37,6 +43,12 @@ jest.mock('@/src/features/clientOrders/offline/offlineOrdersDatabase', () => ({
 const apiClientMock = jest.mocked(apiClient);
 
 describe("clientOrdersService", () => {
+  it('requests authoritative detail using the server fresh parameter', async () => {
+    apiClientMock.mockResolvedValueOnce({ok: true, status: 200, data: {guid: 'fresh-guid', items: []}} as any);
+    await getClientOrder('fresh-guid', {requireFresh: true});
+    expect(apiClientMock.mock.calls[0][0]).toBe('/api/client-orders/fresh-guid?fresh=1');
+  });
+
   it('reads a fresh amendment preview without invoking the save or submit endpoint', async () => {
     const review = { orderGuid: 'order-guid', serverRevision: 3, baseContentToken: 'a'.repeat(64), changes: [], requiresConfirmation: false, number1c: 'НОУТ-126165' };
     apiClientMock.mockResolvedValueOnce({ ok: true, status: 200, data: review } as any);
@@ -45,10 +57,65 @@ describe("clientOrdersService", () => {
       method: 'POST', body: { clientRevision: 30, intent: 'SUBMIT', items: [] }, timeoutMs: 15_000, networkRetryCount: 0,
     });
   });
+  it('forwards product cancellation without serializing it or sharing another caller request', async () => {
+    const first = new AbortController(), second = new AbortController();
+    let finish!: (response: any) => void;
+    apiClientMock.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    apiClientMock.mockResolvedValueOnce({ ok: true, status: 200, data: { items: [] } } as any);
+    const pending = searchClientOrderProducts({ search: 'same search' }, { signal: first.signal });
+    const rejected = expect(pending).rejects.toMatchObject({ status: 499 });
+    const other = searchClientOrderProducts({ search: 'same search' }, { signal: second.signal });
+    first.abort();
+    finish({ ok: true, status: 200, data: { items: [{ guid: 'late' }] } });
+    await rejected;
+    expect((await other).items).toEqual([]);
+    expect(apiClientMock).toHaveBeenCalledTimes(2);
+    expect(apiClientMock.mock.calls[0][1]?.signal).toBe(first.signal);
+    expect(apiClientMock.mock.calls[1][1]?.signal).toBe(second.signal);
+    expect(apiClientMock.mock.calls[0][0]).not.toContain('signal');
+    expect(searchCatalogProducts).not.toHaveBeenCalled();
+  });
+
+  it('does not start online/offline work for an aborted product search', async () => {
+    const controller = new AbortController(); controller.abort();
+    await expect(searchClientOrderProducts({ search: 'cancelled' }, { signal: controller.signal })).rejects.toMatchObject({ status: 499 });
+    expect(apiClientMock).not.toHaveBeenCalled();
+    expect(searchCatalogProducts).not.toHaveBeenCalled();
+  });
+
+  it('does not replace a cancelled network error with offline commercial data', async () => {
+    const controller = new AbortController();
+    apiClientMock.mockImplementationOnce(async () => { controller.abort(); return { ok: false, status: 503 }; });
+    await expect(searchClientOrderProducts({ search: 'cancelled' }, { signal: controller.signal })).rejects.toMatchObject({ status: 499 });
+    expect(searchCatalogProducts).not.toHaveBeenCalled();
+  });
+
   it.each(['', ' ', '\n\t'])('omits cleared/whitespace list search %j', async search => {
     apiClientMock.mockResolvedValueOnce({ ok: true, status: 200, data: { items: [], total: 0 } } as any);
     await getClientOrders({ search });
     expect(apiClientMock.mock.calls[0][0]).not.toContain('search=');
+  });
+
+  it.each([searchClientOrderCounterparties, searchClientOrderAgreements, searchClientOrderContracts,
+    searchClientOrderWarehouses, searchClientOrderPriceTypes, searchClientOrderDeliveryAddresses])('cancels obsolete reference reads without falling back to offline data', async search => {
+    const controller = new AbortController();
+    apiClientMock.mockImplementationOnce(async () => {controller.abort(); return {ok: false, status: 503} as any;});
+    await expect(search({search: 'old'}, {signal: controller.signal, expectedUserId: 1})).rejects.toMatchObject({status: 499});
+    expect(apiClientMock).toHaveBeenCalledWith(expect.not.stringContaining('signal='), expect.objectContaining({signal: controller.signal, expectedUserId: 1}));
+    expect(readActiveOfflineEntityItems).not.toHaveBeenCalled();
+  });
+
+  it('defaults denied by the current server never use an offline agreement snapshot', async () => {
+    apiClientMock.mockResolvedValueOnce({ok: false, status: 403} as any);
+    await expect(getClientOrderDefaults({organizationGuid: 'org', counterpartyGuid: 'denied'}, {signal: new AbortController().signal})).rejects.toMatchObject({status: 403});
+    expect(readActiveOfflineEntityItems).not.toHaveBeenCalled();
+  });
+
+  it('an aborted defaults read cannot restore cached context', async () => {
+    const controller = new AbortController();
+    apiClientMock.mockImplementationOnce(async () => {controller.abort(); return {ok: false, status: 503} as any;});
+    await expect(getClientOrderDefaults({organizationGuid: 'org', counterpartyGuid: 'old'}, {signal: controller.signal})).rejects.toMatchObject({status: 499});
+    expect(readActiveOfflineEntityItems).not.toHaveBeenCalled();
   });
 
   beforeEach(() => {
@@ -229,7 +296,7 @@ describe("clientOrdersService", () => {
 
     expect(apiClientMock).toHaveBeenNthCalledWith(
       1,
-      "/api/client-orders/order-guid/invoices",
+      "/api/client-orders/order-guid/invoices", {},
     );
     expect(apiClientMock).toHaveBeenNthCalledWith(
       2,
@@ -352,6 +419,18 @@ describe("clientOrdersService", () => {
       "/api/client-orders/counterparties?search=beer&managerOnly=true&organizationGuid=org-guid&limit=25&offset=0&debtStatus=all",
       { timeoutMs: 65_000 },
     );
+  });
+
+  it('online-only automatic pricing never uses a previously cached value or offline fallback', async () => {
+    const payload = { productGuids: ['online-only-product'], counterpartyGuid: 'online-only-client' };
+    apiClientMock.mockResolvedValueOnce({ok: true, status: 200, data: {items: [{guid: 'online-only-product', basePrice: 50}]}} as any);
+    await getClientOrderProductsBatch(payload);
+    apiClientMock.mockResolvedValueOnce({ok: false, status: 503} as any);
+    await expect(getClientOrderProductsBatch(payload, {onlineOnly: true})).rejects.toMatchObject({status: 503});
+    expect(apiClientMock).toHaveBeenCalledTimes(2);
+    setServerUnavailable('test');
+    await expect(getClientOrderProductsBatch(payload, {onlineOnly: true})).rejects.toThrow('подключение');
+    expect(apiClientMock).toHaveBeenCalledTimes(2);
   });
 
   it("deduplicates product batch requests independently of guid order", async () => {
@@ -479,4 +558,23 @@ describe('source-bound linked order reads',()=>{
  it('preserves personal connection errors for the protected form',async()=>{
   apiClientMock.mockResolvedValue({ok:false,status:422,backendErrorCode:'ONEC_AUTH_REQUIRED',message:'Нужно подключение 1С'} as any);await expect(getClientOrder(guid,{baseKey:'torg2026',expectedUserId:121})).rejects.toMatchObject({code:'ONEC_AUTH_REQUIRED'});
  });
+});
+
+
+it('does not normalize HTTP202 pending detail into an empty order', async () => {
+  apiClientMock.mockResolvedValueOnce({ok: true, status: 202, data: {pending: true, item: null, readState: {source: 'none', refreshPending: true}}} as any);
+  await expect(getClientOrder('pending-order', {expectedUserId: 121})).rejects.toMatchObject({code: 'CLIENT_ORDER_READ_PENDING', readState: {source: 'none'}});
+});
+
+
+it('refreshes pending reference pages invisibly and clears them after access revocation', async () => {
+  jest.useFakeTimers();
+  const signal = new AbortController(); const onRefresh = jest.fn();
+  apiClientMock.mockResolvedValueOnce({ok:true,status:200,data:{items:[{guid:'old',name:'Old'}],pending:true,readState:{source:'local',stale:true,refreshPending:true,verificationRequired:true}}} as any)
+    .mockResolvedValueOnce({ok:false,status:403} as any);
+  const result = await searchClientOrderCounterparties({search:'old'}, {signal:signal.signal,onRefresh});
+  expect(result.meta.pending).toBe(true); expect(result.items[0].guid).toBe('old');
+  await jest.advanceTimersByTimeAsync(2000);
+  expect(onRefresh).toHaveBeenCalledWith({items:[],meta:{accessDenied:true}});
+  signal.abort(); jest.useRealTimers();
 });

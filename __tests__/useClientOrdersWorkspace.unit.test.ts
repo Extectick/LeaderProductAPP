@@ -1,3 +1,5 @@
+jest.mock('@/utils/apiClient', () => ({apiClient: jest.fn()}));
+
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -1913,7 +1915,7 @@ describe('useClientOrdersWorkspace', () => {
     await flush();
 
     expect(getClientOrder).toHaveBeenCalledTimes(1);
-    expect(getClientOrderInvoices).toHaveBeenCalledWith('order-guid');
+    expect(getClientOrderInvoices).toHaveBeenCalledWith('order-guid', expect.objectContaining({signal: expect.any(AbortSignal), expectedUserId: 1}));
     expect(workspace!.selectedOrder?.invoiceDownloadAvailable).toBe(true);
     expect(workspace!.selectedOrder?.invoiceState).toBe('AVAILABLE');
     expect(workspace!.selectedOrder?.queuePosition).toBe(1);
@@ -2411,7 +2413,7 @@ describe('useClientOrdersWorkspace', () => {
     expect(getClientOrders).toHaveBeenLastCalledWith(expect.objectContaining({
       statuses: ['DRAFT'],
       warehouseGuid: 'warehouse-a',
-    }));
+    }), expect.objectContaining({signal: expect.any(AbortSignal), expectedUserId: 1}));
     expect(workspace!.orders.map((order) => order.guid)).toEqual(['draft-guid']);
 
     await act(async () => {
@@ -2496,7 +2498,7 @@ describe('useClientOrdersWorkspace', () => {
     expect(getClientOrderDefaults).toHaveBeenCalledWith(expect.objectContaining({
       organizationGuid: 'org-guid',
       counterpartyGuid: 'counterparty-guid',
-    }));
+    }), expect.objectContaining({signal: expect.any(AbortSignal), expectedUserId: 1}));
     expect(workspace!.draft.paymentForm).toBeNull();
     expect(workspace!.draft.deliveryMethod).toBe('ДоКлиента');
     expect(workspace!.draft.invoiceRequested).toBe(true);
@@ -2994,5 +2996,242 @@ describe('useClientOrdersWorkspace', () => {
       renderer!.unmount();
     });
   });
+  async function auditedReadWorkspace() {
+    let current!: ReturnType<typeof useClientOrdersWorkspace>;
+    const Harness = () => {current = useClientOrdersWorkspace({autoSelectLatestDraft: false, confirmDiscard: async () => true}); return null;};
+    const render = (userId: number) => React.createElement(AuthContext.Provider, {value: {
+      isLoading: false, isAuthenticated: true, profile: {id: userId}, setAuthenticated: jest.fn(), setProfile: jest.fn(), signOut: jest.fn(),
+    } as any}, React.createElement(Harness));
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => {renderer = TestRenderer.create(render(1));}); await flush();
+    return {get current() {return current;}, renderer, changeUser: async (userId: number) => {await act(async () => renderer.update(render(userId)));}};
+  }
+
+  it('aborts superseded detail reads and a late old selection cannot cancel the new document', async () => {
+    jest.mocked(getClientOrders).mockResolvedValue({items: [], meta: {}} as any);
+    const harness = await auditedReadWorkspace();
+    let finish!: (order: any) => void;
+    jest.mocked(getClientOrder).mockReturnValueOnce(new Promise(resolve => {finish = resolve;}))
+      .mockResolvedValueOnce(queuedOrder(0, {guid: 'new', status: 'CONFIRMED', syncState: 'SYNCED', readOnly: true}));
+    let oldSelection!: Promise<boolean>;
+    await act(async () => {oldSelection = harness.current.selectOrder('old');});
+    const oldSignal = jest.mocked(getClientOrder).mock.calls[0][1]?.signal;
+    await act(async () => {await harness.current.selectOrder('new');});
+    expect(oldSignal?.aborted).toBe(true);
+    await act(async () => {finish(queuedOrder(0, {guid: 'old'})); await oldSelection;});
+    expect(harness.current.selectedGuid).toBe('new'); expect(harness.current.loadingDetail).toBe(false);
+    expect(getClientOrderInvoices).toHaveBeenCalledWith('new', expect.objectContaining({signal: expect.any(AbortSignal)}));
+    expect(jest.mocked(getClientOrderInvoices).mock.calls.some(call => call[0] === 'old')).toBe(false);
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('canceling the counterparty aborts slow defaults and prevents restoring the old context', async () => {
+    jest.mocked(getClientOrders).mockResolvedValue({items: [], meta: {}} as any);
+    const harness = await auditedReadWorkspace();
+    let finish!: (defaults: any) => void;
+    jest.mocked(getClientOrderDefaults).mockReturnValue(new Promise(resolve => {finish = resolve;}));
+    let first!: Promise<void>;
+    await act(async () => {first = harness.current.setCounterparty({guid: 'old-client', name: 'Old'} as any);});
+    const signal = jest.mocked(getClientOrderDefaults).mock.calls[0][1]?.signal;
+    await act(async () => {await harness.current.setCounterparty(null);});
+    expect(signal?.aborted).toBe(true);
+    await act(async () => {finish({agreement: {guid: 'old-agreement'}, counterparty: {guid: 'old-client'}}); await first;});
+    expect(harness.current.draft.counterpartyGuid).toBe(''); expect(harness.current.draft.agreementGuid).toBe('');
+    expect(harness.current.loadingDefaults).toBe(false);
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('open invoice polling owns its identifier and list metadata changes do not restart the batch', async () => {
+    const pending = queuedOrder(0, {guid: 'open', status: 'CONFIRMED', syncState: 'SYNCED', readOnly: true, invoiceState: 'WAITING', invoiceRequestPending: true});
+    const other = {...pending, guid: 'other'};
+    jest.mocked(getClientOrders).mockResolvedValue({items: [pending, other], meta: {}} as any);
+    jest.mocked(getClientOrder).mockResolvedValue(pending);
+    const harness = await auditedReadWorkspace();
+    await act(async () => {await jest.advanceTimersByTimeAsync(120); await harness.current.selectOrder('open');});
+    jest.mocked(getClientOrderInvoiceStatuses).mockClear();
+    await act(async () => {await jest.advanceTimersByTimeAsync(5000);});
+    expect(getClientOrderInvoiceStatuses).toHaveBeenCalledWith(['other'], expect.objectContaining({expectedUserId: 1}));
+    const count = jest.mocked(getClientOrderInvoiceStatuses).mock.calls.length;
+    await act(async () => {await harness.current.refreshOrders();});
+    expect(getClientOrderInvoiceStatuses).toHaveBeenCalledTimes(count);
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('late invoice batch responses from the previous account cannot update current rows', async () => {
+    const pending = queuedOrder(0, {status: 'CONFIRMED', syncState: 'SYNCED', invoiceState: 'WAITING', invoiceRequestPending: true});
+    jest.mocked(getClientOrders).mockResolvedValue({items: [pending], meta: {}} as any);
+    let finish!: (value: any) => void;
+    jest.mocked(getClientOrderInvoiceStatuses).mockReturnValueOnce(new Promise(resolve => {finish = resolve;})).mockResolvedValue([]);
+    const harness = await auditedReadWorkspace();
+    await act(async () => {await jest.advanceTimersByTimeAsync(120);});
+    const signal = jest.mocked(getClientOrderInvoiceStatuses).mock.calls[0][1]?.signal;
+    await harness.changeUser(2);
+    expect(signal?.aborted).toBe(true);
+    await act(async () => {finish([{identifier: pending.guid, invoices: [{id: 'revoked', state: 'AVAILABLE', downloadAvailable: true}]}]);});
+    expect(harness.current.orders.some(order => order.invoiceState === 'AVAILABLE')).toBe(false);
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('manual summary force waits for its own authoritative read after an ordinary snapshot request', async () => {
+    jest.mocked(getClientOrders).mockResolvedValue({items: [], meta: {}} as any);
+    const snapshot = {date: currentOmskDate(), ordersCount: 1, clientsCount: 1, totalAmount: 100, profit: 20,
+      profitAvailable: true, missingReceiptPriceCount: 0, currency: 'RUB', calculatedAt: new Date().toISOString(),
+      fetchedAt: new Date().toISOString(), stale: true, refreshPending: true};
+    let finish!: (value: any) => void;
+    jest.mocked(getClientOrdersTodaySummary).mockReturnValueOnce(new Promise(resolve => {finish = resolve;}))
+      .mockResolvedValue({...snapshot, profit: 30, stale: false, refreshPending: false} as any);
+    const harness = await auditedReadWorkspace();
+    let forced!: ReturnType<typeof harness.current.refreshTodaySummary>;
+    await act(async () => {forced = harness.current.refreshTodaySummary({force: true});});
+    expect(getClientOrdersTodaySummary).toHaveBeenCalledTimes(1);
+    await act(async () => {finish(snapshot); await forced;});
+    expect(getClientOrdersTodaySummary).toHaveBeenCalledTimes(2);
+    expect(getClientOrdersTodaySummary).toHaveBeenLastCalledWith(expect.objectContaining({force: true, signal: expect.any(AbortSignal), expectedUserId: 1}));
+    expect(harness.current.todaySummary).toMatchObject({profit: 30, stale: false, refreshPending: false, fetchedAt: snapshot.fetchedAt});
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('a pending cached summary refreshes in the background while preserving its known figures', async () => {
+    jest.mocked(getClientOrders).mockResolvedValue({items: [], meta: {}} as any);
+    const snapshot = {date: currentOmskDate(), ordersCount: 1, clientsCount: 1, totalAmount: 100, profit: 20,
+      profitAvailable: true, missingReceiptPriceCount: 0, currency: 'RUB', calculatedAt: new Date().toISOString(),
+      fetchedAt: new Date().toISOString(), stale: true, refreshPending: true};
+    jest.mocked(getClientOrdersTodaySummary).mockResolvedValueOnce(snapshot as any)
+      .mockResolvedValue({...snapshot, totalAmount: 150, stale: false, refreshPending: false} as any);
+    const harness = await auditedReadWorkspace();
+    expect(harness.current.todaySummary).toMatchObject({totalAmount: 100, stale: true, refreshPending: true});
+    expect(harness.current.loadingTodaySummary).toBe(false);
+    await act(async () => {await jest.advanceTimersByTimeAsync(2000);});
+    expect(harness.current.todaySummary).toMatchObject({totalAmount: 150, stale: false, refreshPending: false});
+    expect(getClientOrdersTodaySummary).toHaveBeenCalledTimes(2);
+    expect(harness.current.calculatingTodayProfit).toBe(false);
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('profit-only list updates and explicit absence survive stable document status and revision', async () => {
+    const order = queuedOrder(0, {status: 'CONFIRMED', syncState: 'SYNCED', profit: null, profitAvailable: false,
+      profitFreshness: {source: 'profit-snapshot', status: 'unknown', checkedAt: null, refreshPending: true}});
+    jest.mocked(getClientOrders).mockResolvedValue({items: [order], meta: {}} as any);
+    const harness = await auditedReadWorkspace();
+    await act(async () => {await jest.advanceTimersByTimeAsync(120);});
+    jest.mocked(getClientOrders).mockResolvedValue({items: [{...order, profit: 25, profitAvailable: true,
+      profitFreshness: {source: 'profit-snapshot', status: 'stale', checkedAt: new Date().toISOString(), refreshPending: true}}], meta: {}} as any);
+    await act(async () => {await harness.current.refreshOrders();});
+    expect(harness.current.orders[0]).toMatchObject({profit: 25, profitAvailable: true, profitFreshness: {status: 'stale'}});
+    jest.mocked(getClientOrders).mockResolvedValue({items: [order], meta: {}} as any);
+    await act(async () => {await harness.current.refreshOrders();});
+    expect(harness.current.orders[0]).toMatchObject({profit: null, profitAvailable: false});
+    expect(submitClientOrder).not.toHaveBeenCalled();
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('unmount cancels a queued forced summary read before it can start another request', async () => {
+    jest.mocked(getClientOrders).mockResolvedValue({items: [], meta: {}} as any);
+    let finish!: (value: any) => void;
+    jest.mocked(getClientOrdersTodaySummary).mockReturnValueOnce(new Promise(resolve => {finish = resolve;}));
+    const harness = await auditedReadWorkspace();
+    let forced!: ReturnType<typeof harness.current.refreshTodaySummary>;
+    await act(async () => {forced = harness.current.refreshTodaySummary({force: true});});
+    const signal = jest.mocked(getClientOrdersTodaySummary).mock.calls[0][0]?.signal;
+    await act(async () => harness.renderer.unmount());
+    expect(signal?.aborted).toBe(true);
+    await act(async () => {finish({}); expect(await forced).toBeNull();});
+    expect(getClientOrdersTodaySummary).toHaveBeenCalledTimes(1);
+  });
+
+  it('restored offline summary is explicitly stale and never resurrects an old pending refresh', async () => {
+    const cached = {date: currentOmskDate(), ordersCount: 2, clientsCount: 1, totalAmount: 100, profit: 0,
+      profitAvailable: true, missingReceiptPriceCount: 0, currency: 'RUB', calculatedAt: new Date().toISOString(),
+      fetchedAt: new Date().toISOString(), stale: false, refreshPending: true};
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async key => key.startsWith('client_orders_today_summary_cache_v1:')
+      ? JSON.stringify({date: cached.date, summary: cached}) : null);
+    setServerUnavailable('offline');
+    const harness = await auditedReadWorkspace();
+    expect(harness.current.todaySummary).toMatchObject({totalAmount: 100, profit: 0, stale: true,
+      refreshPending: false, fetchedAt: cached.fetchedAt});
+    await act(async () => {await jest.advanceTimersByTimeAsync(5000);});
+    expect(getClientOrdersTodaySummary).not.toHaveBeenCalled();
+    await act(async () => harness.renderer.unmount());
+  });
+
+  const pendingRead = {source: 'local' as const, checkedAt: null, stale: true, refreshPending: true, verificationRequired: true};
+  const freshRead = {source: 'verified-snapshot' as const, checkedAt: '2026-11-17T12:00:00Z', stale: false, refreshPending: false, verificationRequired: false};
+
+  it('opens a pending detail without inventing an empty order and replaces it when verified', async () => {
+    jest.mocked(getClientOrders).mockResolvedValue({items: [], meta: {}} as any);
+    const harness = await auditedReadWorkspace();
+    jest.mocked(getClientOrder).mockRejectedValueOnce(Object.assign(new Error('pending'), {code: 'CLIENT_ORDER_READ_PENDING', readState: {...pendingRead, source: 'none'}}))
+      .mockResolvedValue(queuedOrder(0, {guid: 'pending', status: 'DRAFT', syncState: 'DRAFT', readState: freshRead}));
+    await act(async () => {expect(await harness.current.selectOrder('pending')).toBe(true);});
+    expect(harness.current.selectedOrder).toBeNull();
+    expect(harness.current.pendingDetail?.guid).toBe('pending');
+    expect(harness.current.loadingDetail).toBe(false);
+    await act(async () => {await jest.advanceTimersByTimeAsync(2000);});
+    expect(harness.current.pendingDetail).toBeNull();
+    expect(harness.current.selectedOrder?.guid).toBe('pending');
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('keeps dirty body, revision and token when background verification discovers realization', async () => {
+    jest.mocked(getClientOrders).mockResolvedValue({items: [], meta: {}} as any);
+    const harness = await auditedReadWorkspace();
+    const original = queuedOrder(0, {guid: 'preview', status: 'DRAFT', syncState: 'DRAFT', revision: 3, contentToken: 'original', readState: pendingRead, comment: 'saved'});
+    jest.mocked(getClientOrder).mockResolvedValueOnce(original)
+      .mockResolvedValue({...original, revision: 4, contentToken: 'server-new', comment: 'remote', readState: freshRead, hasRealization: true, readOnly: true});
+    await act(async () => {await harness.current.selectOrder('preview');});
+    expect(harness.current.readOnly).toBe(false);
+    await act(async () => {await jest.advanceTimersByTimeAsync(1800);});
+    await act(async () => {harness.current.patchDraft({comment: 'my unsaved text'});});
+    await act(async () => {await jest.advanceTimersByTimeAsync(200);});
+    expect(harness.current.dirty).toBe(true);
+    expect(harness.current.draft.comment).toBe('my unsaved text');
+    expect(harness.current.draft.revision).toBe(3);
+    expect(harness.current.draft.contentToken).toBe('original');
+    expect(harness.current.readOnly).toBe(true);
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('aborts pending detail verification on account change and stops unknown detail after bounded polls', async () => {
+    jest.mocked(getClientOrders).mockResolvedValue({items: [], meta: {}} as any);
+    const harness = await auditedReadWorkspace();
+    jest.mocked(getClientOrder).mockRejectedValue(Object.assign(new Error('pending'), {code: 'CLIENT_ORDER_READ_PENDING', readState: {...pendingRead, source: 'none'}}));
+    await act(async () => {await harness.current.selectOrder('unknown');});
+    for (const ms of [2000, 5000, 10000, 30000]) await act(async () => {await jest.advanceTimersByTimeAsync(ms);});
+    expect({pending:harness.current.pendingDetail?.readState.refreshPending,calls:jest.mocked(getClientOrder).mock.calls.length}).toEqual({pending:false,calls:5});
+    const count = jest.mocked(getClientOrder).mock.calls.length;
+    await act(async () => {await jest.advanceTimersByTimeAsync(30000);});
+    expect(getClientOrder).toHaveBeenCalledTimes(count);
+    await harness.changeUser(2); await flush();
+    expect(harness.current.pendingDetail).toBeNull();
+    expect(harness.current.selectedOrder).toBeNull();
+    expect(harness.current.selectedGuid).toBeNull();
+    expect(jest.mocked(getClientOrder).mock.calls.at(-1)?.[1]?.signal?.aborted).toBe(true);
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('never clears selected defaults or manual values with a pending context response', async () => {
+    const harness = await editableWorkspace();
+    await act(async () => {harness.current.patchDraft(prev => ({...prev,agreementGuid: 'chosen', warehouseGuid: 'manual-warehouse',items:prev.items.map(item=>({...item,manualPrice:'123'}))}));});
+    jest.mocked(getClientOrderDefaults).mockResolvedValue({pending: true, readState: pendingRead, agreement: null, warehouse: null});
+    await act(async () => {await harness.current.setOrganization({guid: 'org-guid', name: 'Org'});});
+    expect(harness.current.draft.items[0].manualPrice).toBe('123');
+    expect(harness.current.defaultsReadState?.verificationRequired).toBe(true);
+    await act(async () => harness.renderer.unmount());
+  });
+
+
+  it('advances using the server cursor when a filtered incomplete page contains no rows', async () => {
+    jest.mocked(getClientOrders).mockResolvedValue({items: [], meta: {total: 80, limit: 20, offset: 0, nextOffset: 20,
+      hasMore: true, incomplete: true, totalIsEstimate: true, readState: {...pendingRead, refreshPending: false}}} as any);
+    const harness = await auditedReadWorkspace();
+    await act(async () => {await jest.advanceTimersByTimeAsync(200);});
+    expect(harness.current.ordersMeta.incomplete).toBe(true);
+    jest.mocked(getClientOrders).mockClear().mockResolvedValue({items: [], meta: {total: 80, limit: 20, offset: 20, nextOffset: 40,
+      hasMore: true, incomplete: true, totalIsEstimate: true, readState: {...pendingRead, refreshPending: false}}} as any);
+    await act(async () => {await harness.current.loadMoreOrders();});
+    expect(jest.mocked(getClientOrders).mock.calls[0][0]?.offset).toBe(20);
+    await act(async () => harness.renderer.unmount());
+  });
+
 });
 jest.mock('../src/shared/monitoring', () => ({ captureException: jest.fn(), addMonitoringBreadcrumb: jest.fn() }));

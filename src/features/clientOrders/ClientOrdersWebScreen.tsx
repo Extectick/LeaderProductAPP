@@ -1,3 +1,6 @@
+import { WebProductPickerMetrics } from './screen/desktop/WebProductPickerMetrics';
+import { loadWebProductPickerPage, productPickerPageProgress } from './screen/desktop/webProductPickerSearch';
+import { fillUnknownSelectedProduct, mergeRefreshedProductPage } from './lib/productFreshness';
 import {ClientOrderPriceGrid} from './screen/desktop/ClientOrderPriceGrid';
 import {ClientOrderCustomerStart} from './screen/desktop/ClientOrderCustomerStart';
 import { useServicesHeaderSlot } from '@/src/features/services/headerSlotContext';
@@ -837,14 +840,7 @@ function ProductPickerListItem(props: {
         </Typography>
         <Box sx={{ mt: 0.55, display: 'flex', alignItems: 'center', gap: 0.9, flexWrap: 'wrap', minWidth: 0 }}>
           <Typography sx={{ fontSize: 12, color: 'var(--co-muted)', fontWeight: 700 }}>{meta.code}</Typography>
-          <Typography component="div" sx={{ fontSize: 12, color: 'var(--co-muted)', fontWeight: 700, display: 'inline-flex', alignItems: 'center' }}>
-            <Box component="span" sx={iconSx}><Ionicons name="pricetag-outline" size={11} color="inherit" /></Box>
-            {meta.receiptPrice}
-          </Typography>
-          <Typography component="div" sx={{ fontSize: 12, color: stockAvailable > 0 ? 'var(--co-success)' : 'var(--co-success)', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>
-            <Box component="span" sx={iconSx}><Ionicons name="cube-outline" size={11} color="inherit" /></Box>
-            {meta.stock}
-          </Typography>
+          <WebProductPickerMetrics item={props.item} />
         </Box>
         {purchaseHistoryLabel(props.item.lastPurchasedDate) ? <Typography component="div" sx={{ mt: 0.35, fontSize: 12, color: 'var(--co-success)' }}><Ionicons name="time-outline" size={14} color="inherit" /> {purchaseHistoryLabel(props.item.lastPurchasedDate)}</Typography> : null}
         {props.note ? <Typography sx={{ mt: 0.35, fontSize: 12, color: 'var(--co-danger)', fontWeight: 600 }}>{props.note}</Typography> : null}
@@ -1263,6 +1259,7 @@ export default function ClientOrdersWebScreen() {
   const [pickerItems, setPickerItems] = React.useState<any[]>([]);
   const [pickerLoading, setPickerLoading] = React.useState(false);
   const [pickerLoadError, setPickerLoadError] = React.useState(false);
+  const [pickerReferencePending, setPickerReferencePending] = React.useState(false);
   const [pickerHasMore, setPickerHasMore] = React.useState(false);
   const [pickerOffset, setPickerOffset] = React.useState(0);
   const [selectedProducts, setSelectedProducts] = React.useState<ProductSelectionMap>(() => new Map());
@@ -1276,6 +1273,7 @@ export default function ClientOrdersWebScreen() {
     return resolveStoredBooleanDefaultTrue(window.localStorage.getItem(COUNTERPARTY_MANAGER_ONLY_STORAGE_KEY));
   });
   const pickerRequestIdRef = React.useRef(0);
+  const pickerProductRequestRef = React.useRef<AbortController | null>(null);
   const pickerAppendLoadingRef = React.useRef(false);
   const pickerLoadSignatureRef = React.useRef('');
   const [settingsDraft, setSettingsDraft] = React.useState({
@@ -1352,6 +1350,7 @@ export default function ClientOrdersWebScreen() {
 
   const closePickerImmediately = React.useCallback(() => {
     pickerRequestIdRef.current += 1;
+    pickerProductRequestRef.current?.abort();
     pickerAppendLoadingRef.current = false;
     pickerLoadSignatureRef.current = '';
     setPickerKind(null);
@@ -1540,6 +1539,7 @@ export default function ClientOrdersWebScreen() {
 
   const openPicker = React.useCallback((kind: PickerKind) => {
     pickerRequestIdRef.current += 1;
+    pickerProductRequestRef.current?.abort();
     pickerAppendLoadingRef.current = false;
     pickerLoadSignatureRef.current = '';
     setPickerKind(kind);
@@ -1567,7 +1567,26 @@ export default function ClientOrdersWebScreen() {
     if (append) pickerAppendLoadingRef.current = true;
     pickerLoadSignatureRef.current = signature;
     const requestId = ++pickerRequestIdRef.current;
+    pickerProductRequestRef.current?.abort();
+    const controller = new AbortController();
+    pickerProductRequestRef.current = controller;
+    let referencePageGuids = new Set<string>();
+    setPickerReferencePending(false);
+    const referenceReadOptions = {signal: controller.signal, expectedUserId: Number(workspace.offlineUserId) > 0 ? Number(workspace.offlineUserId) : undefined,
+      onRefresh: (fresh: {items: any[]; meta: any}) => {
+        if (controller.signal.aborted || pickerRequestIdRef.current !== requestId) return;
+        setPickerReferencePending(!!fresh.meta.pending);
+        if (fresh.meta.accessDenied) {setPickerItems([]); setPickerHasMore(false); return;}
+        const previous = referencePageGuids;
+        referencePageGuids = new Set(fresh.items.map(item => item.guid));
+        setPickerItems(current => [...current.filter(item => !previous.has(item.guid)), ...fresh.items]);
+        setPickerOffset(offset + fresh.items.length);
+        setPickerHasMore(!fresh.meta.pending && (typeof fresh.meta.hasMore === 'boolean' ? fresh.meta.hasMore : hasMorePage(fresh.items.length, pageSize, offset, fresh.meta.total)));
+      }};
+
     if (!append) setPickerItems([]);
+    else setPickerItems(current => current.map(item => item.freshness ? {...item,
+      freshness: {...item.freshness, commercialPending: false, receiptPricePending: false}} : item));
     setPickerLoadError(false);
     setPickerLoading(true);
     try {
@@ -1599,25 +1618,25 @@ export default function ClientOrdersWebScreen() {
       switch (kind) {
         case 'filterCounterparty':
         case 'counterparty':
-          result = await searchCounterparties({ search, limit: pageSize, offset, managerOnly: counterpartyManagerOnly });
+          result = await searchCounterparties({ search, limit: pageSize, offset, managerOnly: counterpartyManagerOnly }, referenceReadOptions);
           break;
         case 'agreement':
-          result = await searchAgreements({ organizationGuid: draftOrganizationGuid, counterpartyGuid: draftCounterpartyGuid, search, limit: pageSize, offset });
+          result = await searchAgreements({ organizationGuid: draftOrganizationGuid, counterpartyGuid: draftCounterpartyGuid, search, limit: pageSize, offset }, referenceReadOptions);
           break;
         case 'contract':
-          result = await searchContracts({ organizationGuid: draftOrganizationGuid, counterpartyGuid: draftCounterpartyGuid, search, limit: pageSize, offset });
+          result = await searchContracts({ organizationGuid: draftOrganizationGuid, counterpartyGuid: draftCounterpartyGuid, search, limit: pageSize, offset }, referenceReadOptions);
           break;
         case 'warehouse':
-          result = await searchWarehouses({ organizationGuid: draftOrganizationGuid, counterpartyGuid: draftCounterpartyGuid, search, limit: pageSize, offset });
+          result = await searchWarehouses({ organizationGuid: draftOrganizationGuid, counterpartyGuid: draftCounterpartyGuid, search, limit: pageSize, offset }, referenceReadOptions);
           break;
         case 'deliveryAddress':
-          result = await searchDeliveryAddresses({ organizationGuid: draftOrganizationGuid, counterpartyGuid: draftCounterpartyGuid, search, limit: pageSize, offset });
+          result = await searchDeliveryAddresses({ organizationGuid: draftOrganizationGuid, counterpartyGuid: draftCounterpartyGuid, search, limit: pageSize, offset }, referenceReadOptions);
           break;
         case 'priceType':
-          result = await searchPriceTypes({ search, limit: pageSize, offset });
+          result = await searchPriceTypes({ search, limit: pageSize, offset }, referenceReadOptions);
           break;
         case 'product':
-          result = await searchProducts({
+          result = await loadWebProductPickerPage({
             search,
             organizationGuid: draftOrganizationGuid,
             counterpartyGuid: draftCounterpartyGuid,
@@ -1630,6 +1649,15 @@ export default function ClientOrdersWebScreen() {
             historyFetchedAt: purchaseHistoryRevision || undefined,
             limit: pageSize,
             offset,
+          }, {searchProducts, signal: controller.signal,
+            isCurrent: () => pickerRequestIdRef.current === requestId,
+            onRefresh: (fresh, previousPage) => {
+              if (fresh.meta.accessDenied) {setPickerItems([]); setPickerHasMore(false); return;}
+              setPickerItems(current => mergeRefreshedProductPage(current, previousPage, fresh.items));
+              const freshByGuid = new Map(fresh.items.map(item => [item.guid, item]));
+              setSelectedProducts(current => new Map([...current].map(([guid, item]) =>
+                [guid, freshByGuid.has(guid) ? fillUnknownSelectedProduct(item, freshByGuid.get(guid)!) : item])));
+            },
           });
           break;
       }
@@ -1637,12 +1665,18 @@ export default function ClientOrdersWebScreen() {
       const nextItems = kind === 'deliveryAddress'
         ? sortDeliveryAddressOptions((result?.items || []) as ClientOrderDeliveryAddressOption[])
         : result?.items || [];
+      if (kind !== 'product') {referencePageGuids = new Set(nextItems.map((item: any) => item.guid)); setPickerReferencePending(!!result?.meta?.pending);}
       setPickerItems((prev) => {
         const merged = append ? [...prev, ...nextItems] : nextItems;
         return kind === 'deliveryAddress' ? sortDeliveryAddressOptions(merged as any[]) : merged;
       });
-      setPickerOffset(offset + nextItems.length);
-      setPickerHasMore(hasMorePage(nextItems.length, pageSize, offset, result?.meta?.total));
+      if (kind === 'product' && result) {
+        const progress = productPickerPageProgress(result as import('@/utils/clientOrdersService').PagedResult<ClientOrderProduct>, offset, pageSize);
+        setPickerOffset(progress.nextOffset); setPickerHasMore(progress.hasMore);
+      } else {
+        setPickerOffset(offset + nextItems.length);
+        setPickerHasMore(!result?.meta?.pending && hasMorePage(nextItems.length, pageSize, offset, result?.meta?.total));
+      }
     } catch {
       if (pickerRequestIdRef.current === requestId) {
         setPickerLoadError(true);
@@ -1650,7 +1684,7 @@ export default function ClientOrdersWebScreen() {
         pickerLoadSignatureRef.current = '';
       }
     } finally {
-      if (append) pickerAppendLoadingRef.current = false;
+      if (append && pickerRequestIdRef.current === requestId) pickerAppendLoadingRef.current = false;
       if (pickerRequestIdRef.current === requestId) {
         setPickerLoading(false);
       }
@@ -1660,7 +1694,10 @@ export default function ClientOrdersWebScreen() {
   React.useEffect(() => {
     if (!pickerKind) return;
     const timer = setTimeout(() => void loadPickerPage(pickerKind, pickerSearch, 0, false), pickerSearch ? 250 : 0);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer); pickerRequestIdRef.current += 1; pickerProductRequestRef.current?.abort();
+      pickerAppendLoadingRef.current = false; pickerLoadSignatureRef.current = '';
+    };
   }, [loadPickerPage, pickerKind, pickerSearch]);
 
   const handlePickerScroll = React.useCallback((event: React.UIEvent<HTMLDivElement>) => {
@@ -2628,6 +2665,7 @@ export default function ClientOrdersWebScreen() {
         {isSinglePane?<Paper ref={ordersPaneRef} elevation={0} sx={{ width: '100%', maxWidth: 1100, mx: 'auto', alignSelf: 'stretch', flexShrink: 0, minWidth: 0, height: '100%', borderRadius: 0, border: 0, borderRight: 0, display: showOrdersPane ? 'flex' : 'none', flexDirection: 'column', overflow: 'hidden', bgcolor: 'var(--co-background)' }}>
           <AppWorkspaceHeader colors={colors} title="Журнал" contentSurface="plain" trailing={workspace.hasEditableDocument ? <Button onClick={() => setResponsivePane('editor')} sx={{ whiteSpace: 'nowrap' }}>Продолжить заказ</Button> : undefined} leading={<IconButton aria-label="К сервисам" sx={{ width: 48, height: 48, bgcolor: colors.panel }} onClick={() => { void workspace.confirmDiscardIfNeeded().then((canLeave: boolean) => { if (canLeave) router.navigate('/services'); }); }}><Ionicons name="arrow-back" size={22} color={colors.text} /></IconButton>} />
           <Stack spacing={1.25} sx={{ px: 2, pb: 1.5 }}>
+            {workspace.ordersMeta.readState?.stale ? <Typography role="status" sx={{fontSize: 12, color: colors.muted}}>{workspace.ordersMeta.readState.refreshPending ? 'Данные списка уточняются в 1С…' : 'Данные списка неполные или устарели. Повторите обновление.'}</Typography> : null}
             <TextField fullWidth size="small" value={workspace.filters.search} placeholder="Клиент или номер заказа" onChange={event => workspace.setFilters(prev => ({ ...prev, search: event.target.value }))}
               slotProps={{ htmlInput: { 'aria-label': 'Поиск по клиенту или номеру' }, input: { startAdornment: <Ionicons name="search-outline" size={18} color={colors.muted} style={{ marginRight: 8 }} /> } }}
               sx={{ '& .MuiInputBase-root': { borderRadius: 24, bgcolor: colors.surface } }} />
@@ -2663,7 +2701,7 @@ export default function ClientOrdersWebScreen() {
           </Stack>
           <Box ref={ordersListScrollRef} onScroll={handleOrdersListScroll} sx={{ flex: 1, overflow: 'auto', px: 1, pb: 2, scrollbarGutter: 'stable' }}>
             {workspace.loadingOrders ? <Stack role="status" direction="row" spacing={1} sx={{ alignItems: 'center', px: 1.5, py: 2, color: colors.muted }}><CircularProgress size={18} /><Typography sx={{ fontSize: 13 }}>Обновляем заказы…</Typography></Stack> : null}
-            {!workspace.loadingOrders && !visibleOrders.length ? <Box role="status" sx={{ px: 2, py: 3, color: colors.muted }}><Typography sx={{ fontSize: 14, fontWeight: 600 }}>{attentionOnly ? 'Ошибок в загруженных заказах нет' : 'Заказы не найдены'}</Typography><Typography sx={{ mt: 0.75, fontSize: 13 }}>{attentionOnly ? 'Другие заказы могут ещё загружаться.' : 'Измените условия поиска или создайте новый заказ.'}</Typography></Box> : null}
+            {!workspace.loadingOrders && !visibleOrders.length ? <Box role="status" sx={{ px: 2, py: 3, color: colors.muted }}><Typography sx={{ fontSize: 14, fontWeight: 600 }}>{workspace.ordersMeta.pending || workspace.ordersMeta.incomplete ? 'Данные списка заказов уточняются' : attentionOnly ? 'Ошибок в загруженных заказах нет' : 'Заказы не найдены'}</Typography><Typography sx={{ mt: 0.75, fontSize: 13 }}>{workspace.ordersMeta.pending ? 'Можно создать локальный черновик или повторить обновление.' : attentionOnly ? 'Другие заказы могут ещё загружаться.' : 'Измените условия поиска или создайте новый заказ.'}</Typography></Box> : null}
             <Stack spacing={0.45}>
               {visibleOrders.map((order) => {
                 const selected = workspace.selectedGuid === order.guid;
@@ -2735,7 +2773,14 @@ export default function ClientOrdersWebScreen() {
         </Paper> : null}
 
         <Paper ref={editorPaneRef} elevation={0} sx={{ flex: 1, minWidth: 0, width: '100%', mx: 0, alignSelf: 'stretch', minHeight: 0, height: '100%', borderRadius: 0, border: 0, overflow: 'hidden', display: showEditorPane ? 'flex' : 'none', flexDirection: 'column', bgcolor: 'var(--co-surface)' }}>
-          {!workspace.hasEditableDocument ? (
+          {workspace.pendingDetail ? (
+            <Box role="status" sx={{p: 3, display: 'flex', flexDirection: 'column', gap: 2}}>
+              <Typography>{workspace.pendingDetail.readState.refreshPending ? 'Загружаем заказ из 1С…' : 'Данные заказа пока недоступны. Повторите проверку.'}</Typography>
+              {workspace.error ? <Alert severity="error">{workspace.error}</Alert> : null}
+              <Button onClick={workspace.retryDetailVerification}>Проверить снова</Button>
+              <Button onClick={() => setResponsivePane('orders')}>Вернуться к заказам</Button>
+            </Box>
+          ) : !workspace.hasEditableDocument ? (
             <Box sx={{ flex: 1, display: 'grid', placeItems: 'center', p: 2 }}>
               <Stack
                 spacing={1.2}
@@ -2811,7 +2856,9 @@ export default function ClientOrdersWebScreen() {
                   </Collapse>
                   {workspace.loadingDefaults ? <Typography role="status">Загрузка условий…</Typography> : null}
                   {!workspace.readOnly && draft.counterpartyGuid && !workspace.loadingDefaults && missingConditions.length ? <Button onClick={() => setDetailsExpanded(true)} sx={{ alignSelf: 'flex-start', p: 0, minHeight: 24, color: 'var(--co-warning)', textAlign: 'left' }}>Заполните условия: {missingConditions.join(', ').toLowerCase()}</Button> : null}
-                  {workspace.readOnly ? <Alert severity="info" sx={{ py: 0 }}>{workspace.selectedOrder?.readOnlyReason || 'Заказ доступен только для просмотра. Создайте копию, чтобы оформить новый заказ.'}</Alert> : null}
+                  {workspace.verificationRequired ? <Alert severity="info" sx={{py: 0}} action={<Button onClick={workspace.retryDetailVerification}>Проверить</Button>}>Состояние заказа проверяется в 1С. Изменения сохраняются локально; результат проверки и проведения появится отдельно.</Alert> : null}
+                  {workspace.readOnly && !workspace.verificationRequired ? <Alert severity="info" sx={{ py: 0 }}>{workspace.selectedOrder?.readOnlyReason || 'Заказ доступен только для просмотра. Создайте копию, чтобы оформить новый заказ.'}</Alert> : null}
+                  {workspace.defaultsReadState?.verificationRequired ? <Alert severity="info" sx={{py: 0}}>Условия контрагента ещё проверяются. Текущие значения сохранены.</Alert> : null}
                   {workspace.error ? <Alert severity="error" sx={{ py: 0 }}>{workspace.error}</Alert> : null}
                   <Collapse in={detailsExpanded} id="client-order-details">
                   <Box
@@ -3369,7 +3416,7 @@ export default function ClientOrdersWebScreen() {
               <Typography sx={{ px: 2, py: 1.5, color: 'var(--co-muted)', borderBottom: '1px solid var(--co-line)' }}>Сначала выберите организацию и контрагента.</Typography>
             ) : null}
             {!pickerLoading && !pickerLoadError && !(pickerKind === 'product' && purchasedOnly && !purchaseHistory.ready) && pickerItems.length === 0 && !(pickerNeedsOrderContext(pickerKind) && !hasOrderContext) ? (
-              <Typography sx={{ px: 2, py: 1.5, color: 'var(--co-muted)', borderBottom: '1px solid var(--co-line)' }}>Ничего не найдено.</Typography>
+              <Typography sx={{ px: 2, py: 1.5, color: 'var(--co-muted)', borderBottom: '1px solid var(--co-line)' }}>{pickerReferencePending ? 'Справочник ещё проверяется в 1С. Повторите обновление позже.' : 'Ничего не найдено.'}</Typography>
             ) : null}
             {pickerDisplayItems.map((item: any, index) => {
               if (isWarehousePickerGroupRow(item)) {

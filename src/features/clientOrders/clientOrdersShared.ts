@@ -352,7 +352,7 @@ export function mapOnecOrderStatus(value?: string | null) {
   return null;
 }
 
-export function getOrderDisplayStatus(order?: Pick<ClientOrder, 'status' | 'number1c' | 'origin' | 'status1c' | 'currentState1c' | 'documentStatus1c' | 'shipmentProhibited' | 'isPostedIn1c' | 'submittedVersion'> | null) {
+export function getOrderDisplayStatus(order?: Pick<ClientOrder, 'status' | 'number1c' | 'origin' | 'status1c' | 'currentState1c' | 'documentStatus1c' | 'shipmentProhibited' | 'isPostedIn1c' | 'submittedVersion' | 'readState'> | null) {
   if (!order) return 'DRAFT';
   if (order.shipmentProhibited && !order.isPostedIn1c && !order.submittedVersion?.isPostedIn1c) return 'DEBT';
   const onecText = order.currentState1c || order.status1c;
@@ -363,7 +363,7 @@ export function getOrderDisplayStatus(order?: Pick<ClientOrder, 'status' | 'numb
   return order.status || mapOnecOrderStatus(onecText) || 'DRAFT';
 }
 
-export function getOrderDisplayStatusLabel(order?: Pick<ClientOrder, 'status' | 'number1c' | 'origin' | 'status1c' | 'currentState1c' | 'documentStatus1c' | 'shipmentProhibited' | 'isPostedIn1c'> | null) {
+export function getOrderDisplayStatusLabel(order?: Pick<ClientOrder, 'status' | 'number1c' | 'origin' | 'status1c' | 'currentState1c' | 'documentStatus1c' | 'shipmentProhibited' | 'isPostedIn1c' | 'readState'> | null) {
   if (!order) return STATUS_LABELS.DRAFT;
   const amendmentLabel = amendmentStatusLabel(order as ClientOrder);
   if (amendmentLabel) return amendmentLabel;
@@ -379,7 +379,8 @@ export function getOrderDisplayStatusLabel(order?: Pick<ClientOrder, 'status' | 
   }
   const displayStatus = getOrderDisplayStatus(order);
   const onecText = order.currentState1c || order.status1c;
-  return STATUS_LABELS[displayStatus] || onecText || displayStatus || STATUS_LABELS.DRAFT;
+  const label = STATUS_LABELS[displayStatus] || onecText || displayStatus || STATUS_LABELS.DRAFT;
+  return order.readState?.verificationRequired ? `Последний статус: ${label} · уточняется` : label;
 }
 
 export function getOrderDisplayStatusLabelWithQueue(

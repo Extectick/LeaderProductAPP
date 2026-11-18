@@ -1,8 +1,33 @@
-import { amendmentStatusLabel, preserveSubmittedVersion, submittedVersionOf } from '../src/features/clientOrders/lib/orderSubmissionPresentation';
+import { amendmentStatusLabel, persistedOrderSubmissionError, preserveSubmittedVersion, submittedVersionOf } from '../src/features/clientOrders/lib/orderSubmissionPresentation';
 
 const summary: any = { guid: 'api-order', clientOrderId: 'phone-id', clientRevision: 3, origin: 'local',
   number1c: 'НОУТ-127336', syncState: 'SYNCED', status: 'CONFIRMED', revision: 7, isPostedIn1c: true,
   totalAmount: 49325.2, itemsCount: 2, updatedAt: '2026-10-21T08:52:37Z' };
+
+test('a confirmed save with a posting error does not claim changes were not sent', () => {
+  const order: any = { ...summary, status: 'SENT_TO_1C', isPostedIn1c: false,
+    lastExportError: null, last1cError: 'Документ сохранен в 1С, но не проведен.' };
+  expect(persistedOrderSubmissionError(order)).toBe(
+    'Заказ сохранён в 1С: НОУТ-127336.\nДокумент сохранен в 1С, но не проведен.'
+  );
+  expect(persistedOrderSubmissionError(order, { includeSubmittedVersion: false })).toBe(order.last1cError);
+});
+
+test('a rejected newer local amendment stays separate from its saved original', () => {
+  const order: any = { ...summary, origin: 'device', clientRevision: 4, offlineDraftStatus: 'NEEDS_EDIT',
+    submittedVersion: submittedVersionOf(summary),
+    submissionErrorDetails: { message: 'Проверьте изменённые строки.' } };
+  expect(persistedOrderSubmissionError(order)).toBe(
+    'Заказ уже в 1С: НОУТ-127336. Последние изменения не отправлены.\nПроверьте изменённые строки.'
+  );
+});
+
+test('an export failure is not represented as a confirmed save', () => {
+  const order: any = { ...summary, status: 'QUEUED', syncState: 'QUEUED',
+    lastExportError: 'Результат сохранения изменений не подтверждён.' };
+  expect(persistedOrderSubmissionError(order)).not.toContain('Заказ сохранён в 1С');
+  expect(persistedOrderSubmissionError(order)).toContain(order.lastExportError);
+});
 
 test('uses the explicit row count in list summaries without loading or replacing document lines', () => {
   expect(submittedVersionOf(summary)?.itemsCount).toBe(2);

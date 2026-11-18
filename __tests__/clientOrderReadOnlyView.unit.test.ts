@@ -1,3 +1,4 @@
+jest.mock('moti/skeleton', () => ({Skeleton: 'Skeleton'}));
 import React from 'react';
 import TestRenderer,{act} from 'react-test-renderer';
 import {FlatList,ScrollView,StyleSheet} from 'react-native';

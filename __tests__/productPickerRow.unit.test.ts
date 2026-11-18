@@ -1,3 +1,4 @@
+jest.mock('moti/skeleton', () => ({Skeleton: 'Skeleton'}));
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 import { ProductPickerRow } from '../src/features/clientOrders/screen/mobile/ProductPickerRow';
@@ -173,4 +174,23 @@ describe('compact product picker controls', () => {
     expect(view.root.findByType('Document' as any).props.quantity).toBe(3);
     act(() => view.unmount());
   });
+});
+
+
+test('each unknown metric has an accessible skeleton only while its own data is pending', () => {
+  const freshness = {source: 'local-read-model' as const, catalogCheckedAt: null, commercialCheckedAt: null,
+    stale: true, commercialPending: true, receiptPricePending: true, priceStatus: 'unknown' as const, stockStatus: 'unknown' as const};
+  let view!: TestRenderer.ReactTestRenderer;
+  act(() => {view = TestRenderer.create(React.createElement(ProductPickerRow, {...rowProps,
+    item: {...item, basePrice: null, receiptPrice: null, stock: null, freshness}}));});
+  expect(view.root.findAllByType('Skeleton' as any)).toHaveLength(3);
+  expect(view.root.findAllByType('View' as any).filter(node => node.props.accessibilityState?.busy)).toHaveLength(3);
+  act(() => view.update(React.createElement(ProductPickerRow, {...rowProps,
+    item: {...item, stock: {available: 0}, freshness}})));
+  expect(view.root.findAllByType('Skeleton' as any)).toHaveLength(0);
+  act(() => view.update(React.createElement(ProductPickerRow, {...rowProps,
+    item: {...item, basePrice: null, receiptPrice: null, stock: null, freshness: {...freshness, commercialPending: false, receiptPricePending: false}}})));
+  expect(view.root.findAllByType('Skeleton' as any)).toHaveLength(0);
+  expect(view.root.findAllByType('Text' as any).filter(node => node.props.children === '—')).toHaveLength(3);
+  act(() => view.unmount());
 });

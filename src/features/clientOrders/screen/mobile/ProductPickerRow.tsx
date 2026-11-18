@@ -1,4 +1,5 @@
 import React from 'react';
+import { Skeleton } from 'moti/skeleton';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Text, Tooltip } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -9,24 +10,28 @@ import { purchaseHistoryDays, purchaseHistoryLabel } from '../../lib/customerPur
 import type { ProductQuantityChange } from '../../lib/productPickerQuantity';
 import { ProductPickerQuantityControl } from './ProductPickerQuantityControl';
 import { ProductListRow } from '@/src/shared/ui/ProductListRow';
+import { productMetricFreshness, productMetricPending } from '../../lib/productFreshness';
 
 function productMetrics(item: ClientOrderProduct, hasPriceType: boolean, hasWarehouse: boolean) {
   const price = hasPriceType ? item.basePrice : null;
   return [
-    { key: 'stock', icon: 'warehouse' as const, title: 'Доступный остаток', value: hasWarehouse ? formatStockInlineLabel(item.stock, item.baseUnit) || '—' : '—' },
-    { key: 'sale', icon: 'cash-multiple' as const, title: 'Цена продажи', value: formatMoney(price, item.currency) },
-    { key: 'cost', icon: 'chart-bar' as const, title: 'Себестоимость', value: formatMoney(item.receiptPrice, item.currency) },
+    { key: 'stock', pending: hasWarehouse && productMetricPending(item, 'stock'), icon: 'warehouse' as const, ...productMetricFreshness(item, 'stock', 'Доступный остаток', hasWarehouse ? formatStockInlineLabel(item.stock, item.baseUnit) || '—' : '—') },
+    { key: 'sale', pending: hasPriceType && productMetricPending(item, 'price'), icon: 'cash-multiple' as const, ...productMetricFreshness(item, 'price', 'Цена продажи', formatMoney(price, item.currency)) },
+    { key: 'cost', pending: productMetricPending(item, 'cost'), icon: 'chart-bar' as const, ...productMetricFreshness(item, 'cost', 'Себестоимость', formatMoney(item.receiptPrice, item.currency)) },
   ];
 }
 
 function ProductPickerMetric({ metric, compact = false, prominent = false }: {
   metric: ReturnType<typeof productMetrics>[number]; compact?: boolean; prominent?: boolean;
 }) {
-  return <Tooltip title={metric.title}>
-    <View accessible accessibilityLabel={`${metric.title}: ${metric.value}`} style={styles.metric}>
+  const loadingLabel = `${metric.key === 'stock' ? 'Доступный остаток' : metric.key === 'sale' ? 'Цена продажи' : 'Цена поступления'}: загружается`;
+  return <Tooltip title={metric.pending ? loadingLabel : metric.title}>
+    <View accessible accessibilityLabel={metric.pending ? loadingLabel : `${metric.title}: ${metric.value}`} accessibilityState={{busy: metric.pending}} style={styles.metric}>
       <MaterialCommunityIcons name={metric.icon} size={prominent ? 17 : compact ? 12 : 14} color="#64748B" />
-      <Text style={[styles.metricValue, compact && styles.metricValueCompact, prominent && styles.saleValue]}
-        numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>{metric.value}</Text>
+      {metric.pending ? <View testID={`product-metric-loading-${metric.key}`} style={{height: prominent ? 24 : compact ? 13 : 16, justifyContent: 'center'}}>
+        <Skeleton colorMode="light" radius={3} width={prominent ? 66 : 48} height={prominent ? 18 : compact ? 9 : 12} />
+      </View> : <Text style={[styles.metricValue, compact && styles.metricValueCompact, prominent && styles.saleValue]}
+        numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>{metric.value}</Text>}
     </View>
   </Tooltip>;
 }

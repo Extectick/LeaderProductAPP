@@ -1,9 +1,11 @@
+import {refreshPendingSnapshot} from './refreshPendingSnapshot';
 import { API_ENDPOINTS } from './apiEndpoints';
 import { apiClient } from './apiClient';
 import type { OrderGeoEventInput } from './orderGeo';
 import { isNetworkUnavailableError, toUserErrorMessage } from '@/src/shared/errors/userErrorMessage';
 import { getCatalogProductsByGuids, scheduleProductCatalogSync, searchCatalogProducts } from '@/src/features/productCatalog';
 import { getServerStatus } from '@/src/shared/network/serverStatus';
+import { refreshPendingProductSearch } from './clientOrdersProductSearchRefresh';
 import {
   hasActiveOfflineEntity,
   readActiveOfflineEntityItems,
@@ -11,13 +13,30 @@ import {
 } from '@/src/features/clientOrders/offline/offlineOrdersDatabase';
 
 const CLIENT_ORDERS_REQUEST_TIMEOUT_MS = 65_000;
+export type ClientOrdersReadOptions = {signal?: AbortSignal; expectedUserId?: number; onRefresh?: (result: PagedResult<any>) => void};
+
+export type ClientOrderReadState = {
+  source: 'local' | 'verified-snapshot' | 'none';
+  checkedAt: string | null;
+  stale: boolean;
+  refreshPending: boolean;
+  verificationRequired: boolean;
+};
 
 export type PaginationMeta = {
+  readState?: ClientOrderReadState;
+  pending?: boolean;
+  incomplete?: boolean;
+  verificationIncomplete?: boolean;
+  localTotal?: number;
   total?: number;
   count?: number;
   limit?: number;
   offset?: number;
   hasMore?: boolean;
+  nextOffset?: number;
+  totalIsEstimate?: boolean;
+  accessDenied?: boolean;
   statusCounts?: Record<string, number>;
   liveSource?: {
     status: string;
@@ -44,6 +63,8 @@ export type ClientOrdersTodaySummary = {
   currency: 'RUB';
   calculatedAt: string;
   stale?: boolean;
+  fetchedAt?: string;
+  refreshPending?: boolean;
 };
 
 export type ClientOrderEvent = {
@@ -83,8 +104,9 @@ export type ClientOrderCounterpartyOption = {
   managerGuid?: string | null;
   managerName?: string | null;
   manager?: { guid?: string | null; name?: string | null } | null;
-  hasDebt?: boolean;
-  shipmentProhibited?: boolean;
+  hasDebt?: boolean | null;
+  restrictionsKnown?: boolean;
+  shipmentProhibited?: boolean | null;
   debtReason?: string | null;
 };
 
@@ -201,6 +223,9 @@ export type ClientOrderEnumOption = {
 };
 
 export type ClientOrderSettings = {
+  readState?: ClientOrderReadState;
+  pending?: boolean;
+  incomplete?: boolean;
   organizations: ClientOrderOrganization[];
   preferredOrganization?: ClientOrderOrganization | null;
   deliveryDateMode: 'NEXT_DAY' | 'OFFSET_DAYS' | 'FIXED_DATE';
@@ -316,6 +341,8 @@ export type ClientOrderAmendmentReview = {
   changes: Array<{ lineGuid?: string; productName: string; reason: string; before: string | number | null; after: string | number | null }>;
 };
 export type ClientOrder = {
+  readConflict?: {code: string; message?: string};
+  readState?: ClientOrderReadState;
   sourceBaseKey?: string;
   sourceTruncated?: boolean;
   commentTruncated?: boolean;
@@ -376,6 +403,7 @@ export type ClientOrder = {
   totalAmount?: number | null;
   profit?: number | null;
   profitAvailable?: boolean;
+  profitFreshness?: {source: 'order-list' | 'profit-snapshot'; status: 'snapshot' | 'stale' | 'unknown'; checkedAt: string | null; refreshPending: boolean};
   profitBasisAmount?: number | null;
   profitabilityPercent?: number | null;
   missingReceiptPriceCount?: number;
@@ -394,8 +422,9 @@ export type ClientOrder = {
   cancelRequestedAt?: string | null;
   cancelReason?: string | null;
   last1cError?: string | null;
-  hasDebt?: boolean;
-  shipmentProhibited?: boolean;
+  hasDebt?: boolean | null;
+  restrictionsKnown?: boolean;
+  shipmentProhibited?: boolean | null;
   debtReason?: string | null;
   last1cSnapshot?: any;
   counterparty?: ClientOrderCounterpartyOption | null;
@@ -426,6 +455,9 @@ export type ClientOrdersReferenceData = {
 };
 
 export type ClientOrderDefaults = {
+  readState?: ClientOrderReadState;
+  pending?: boolean;
+  incomplete?: boolean;
   organization?: ClientOrderOrganization | null;
   counterparty?: ClientOrderCounterpartyOption | null;
   agreement?: ClientOrderAgreementOption | null;
@@ -444,12 +476,26 @@ export type ClientOrderDefaults = {
   discountsEnabled?: boolean;
   invoiceRequested?: boolean;
   warnings?: string[];
-  hasDebt?: boolean;
-  shipmentProhibited?: boolean;
+  hasDebt?: boolean | null;
+  restrictionsKnown?: boolean;
+  shipmentProhibited?: boolean | null;
   debtReason?: string | null;
 };
 
 export type ClientOrderProduct = {
+  freshness?: {
+    source: 'local-read-model';
+    catalogCheckedAt: string | null;
+    commercialCheckedAt: string | null;
+    stockCheckedAt?: string | null;
+    receiptPriceCheckedAt?: string | null;
+    stale: boolean;
+    commercialPending: boolean;
+    receiptPricePending?: boolean;
+    stockStatus: 'snapshot' | 'stale' | 'unknown';
+    priceStatus: 'snapshot' | 'stale' | 'unknown';
+    receiptPriceStatus?: 'snapshot' | 'stale' | 'unknown';
+  };
   lastPurchasedDate?: string | null;
   guid: string;
   name: string;
@@ -540,7 +586,7 @@ function mapPagedResponse<T>(res: { ok: boolean; data?: { items?: T[] } | T[]; m
   const data = Array.isArray(res.data) ? res.data : res.data.items;
   return {
     items: Array.isArray(data) ? data : [],
-    meta: res.meta || {},
+    meta: { ...(!Array.isArray(res.data) ? {readState: (res.data as any).readState, pending: (res.data as any).pending, incomplete: (res.data as any).incomplete} : {}), ...res.meta },
   };
 }
 
@@ -589,35 +635,46 @@ export async function getClientOrders(params?: {
   itemsMax?: string;
   hasNumber1c?: string;
   onlyProblems?: boolean;
-}) {
+}, options: ClientOrdersReadOptions = {}) {
   const query = buildQuery(params || {});
   const path = query ? `${API_ENDPOINTS.CLIENT_ORDERS.LIST}?${query}` : API_ENDPOINTS.CLIENT_ORDERS.LIST;
-  return dedupeRead(`GET ${path}`, async () => {
+  const load = async () => {
+    assertSearchNotAborted(options.signal);
     const res = await apiClient<void, { items: ClientOrder[] }>(path, {
       timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS,
+      ...options,
     });
+    assertSearchNotAborted(options.signal);
     return normalizeClientOrderPage(mapPagedResponse(res, 'Не удалось загрузить заказы клиентов'));
-  });
+  };
+  return options.signal || options.expectedUserId !== undefined ? load() : dedupeRead(`GET ${path}`, load);
 }
 
-export async function getClientOrdersTodaySummary(options: { force?: boolean } = {}) {
+export async function getClientOrdersTodaySummary(options: { force?: boolean } & ClientOrdersReadOptions = {}) {
   const path = options.force
     ? `${API_ENDPOINTS.CLIENT_ORDERS.TODAY_SUMMARY}?force=1`
     : API_ENDPOINTS.CLIENT_ORDERS.TODAY_SUMMARY;
   const load = async () => {
+    assertSearchNotAborted(options.signal);
     const res = await apiClient<void, ClientOrdersTodaySummary>(path, {
       timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS,
+      ...(options.signal ? {signal: options.signal} : {}),
+      ...(options.expectedUserId === undefined ? {} : {expectedUserId: options.expectedUserId}),
     });
+    assertSearchNotAborted(options.signal);
     if (!res.ok || !res.data) {
       throwApiError('Не удалось загрузить статистику заказов за сегодня', res);
     }
     return res.data;
   };
-  return options.force ? load() : dedupeRead(`GET ${path}`, load);
+  return options.force || options.signal || options.expectedUserId !== undefined ? load() : dedupeRead(`GET ${path}`, load);
 }
 
-export async function getClientOrder(guid: string, options: {baseKey?: string; expectedUserId?: number; signal?: AbortSignal} = {}) {
-  const path = API_ENDPOINTS.CLIENT_ORDERS.DETAIL(guid) + (options.baseKey === undefined ? '' : `?baseKey=${encodeURIComponent(options.baseKey)}`);
+export async function getClientOrder(guid: string, options: {baseKey?: string; expectedUserId?: number; signal?: AbortSignal; requireFresh?: boolean} = {}) {
+  const query = new URLSearchParams();
+  if (options.baseKey !== undefined) query.set('baseKey', options.baseKey);
+  if (options.requireFresh) query.set('fresh', '1');
+  const path = API_ENDPOINTS.CLIENT_ORDERS.DETAIL(guid) + (query.size ? `?${query}` : '');
   const load = async () => {
     options.signal?.throwIfAborted();
     const res = await apiClient<void, ClientOrder>(path, {
@@ -627,7 +684,8 @@ export async function getClientOrder(guid: string, options: {baseKey?: string; e
       ...(options.baseKey===undefined?{}:{networkRetryCount:0}),
     });
     options.signal?.throwIfAborted();
-    if (!res.ok || !res.data) throw Object.assign(new Error(getErrorMessage('Не удалось загрузить заказ клиента', res.message)), {code:res.backendErrorCode||res.errorCode});
+    if (!res.ok || !res.data) throw Object.assign(new Error(getErrorMessage('Не удалось загрузить заказ клиента', res.message)), {code:res.backendErrorCode||res.errorCode,status:res.status});
+    if ((res.data as any).pending && (res.data as any).item === null) throw Object.assign(new Error('Данные заказа проверяются в 1С.'), {code: 'CLIENT_ORDER_READ_PENDING', readState: (res.data as any).readState});
     if(options.baseKey!==undefined&&(typeof res.data.guid!=='string'||res.data.guid.toLowerCase()!==guid.toLowerCase()||res.data.sourceBaseKey!==options.baseKey||res.data.readOnly!==true))throw Object.assign(new Error('Не удалось проверить источник заказа.'),{code:'CLIENT_ORDER_SOURCE_MISMATCH'});
     return normalizeClientOrder(res.data);
   };
@@ -651,10 +709,11 @@ export async function getClientOrderStates(identifiers: string[], userId: string
   return res.data.items;
 }
 
-export async function getClientOrderInvoices(guid: string) {
+export async function getClientOrderInvoices(guid: string, options: ClientOrdersReadOptions = {}) {
   const path = API_ENDPOINTS.CLIENT_ORDERS.INVOICES(guid);
-  const res = await apiClient<void, { items?: ClientOrderInvoice[] } | ClientOrderInvoice[]>(path);
+  const res = await apiClient<void, { items?: ClientOrderInvoice[] } | ClientOrderInvoice[]>(path, options);
   if (!res.ok || !res.data) throwApiError('Не удалось загрузить счета заказа', res);
+  if (!Array.isArray(res.data) && (res.data as any).pending) throw Object.assign(new Error('Счета ещё проверяются.'), {code: 'CLIENT_ORDER_READ_PENDING'});
   const items = Array.isArray(res.data) ? res.data : res.data.items;
   return Array.isArray(items) ? items : [];
 }
@@ -668,7 +727,7 @@ const PRODUCT_BATCH_VALUE_TTL_MS = 15_000;
 const PRODUCT_BATCH_VALUE_CACHE_MAX = 1_500;
 const productBatchValueCache = new Map<string, { item: ClientOrderProduct; cachedAt: number }>();
 
-export async function getClientOrderInvoiceStatuses(identifiers: string[]) {
+export async function getClientOrderInvoiceStatuses(identifiers: string[], options: ClientOrdersReadOptions = {}) {
   const uniqueIdentifiers = Array.from(new Set(
     identifiers.map((value) => value.trim()).filter(Boolean)
   ));
@@ -679,6 +738,7 @@ export async function getClientOrderInvoiceStatuses(identifiers: string[]) {
     {
       method: 'POST',
       body: { identifiers: uniqueIdentifiers },
+      ...options,
     }
   );
   if (!res.ok || !res.data) throwApiError('Не удалось обновить статусы счетов', res);
@@ -724,13 +784,16 @@ export async function getClientOrdersReferenceData(counterpartyGuid?: string) {
 export async function getClientOrderDefaults(params: {
   organizationGuid: string;
   counterpartyGuid: string;
-}) {
+}, options: ClientOrdersReadOptions = {}) {
   const query = buildQuery(params);
   const path = `${API_ENDPOINTS.CLIENT_ORDERS.DEFAULTS}?${query}`;
-  return dedupeRead(`GET ${path}`, async () => {
+  const load = async () => {
+    assertSearchNotAborted(options.signal);
     const res = !getServerStatus().isReachable
-      ? { ok: false, data: null, message: 'Данные контрагента для офлайна ещё не загружены' }
-      : await apiClient<void, ClientOrderDefaults>(path, { timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS });
+      ? { ok: false, status: 0, data: null, message: 'Данные контрагента для офлайна ещё не загружены' }
+      : await apiClient<void, ClientOrderDefaults>(path, { timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS, ...options });
+    assertSearchNotAborted(options.signal);
+    if ([401, 403].includes(Number(res.status))) throwApiError('Нет доступа к условиям заказа', res);
     if (!res.ok || !res.data) {
       const [organizations, counterparties, agreements, contracts, warehouses, addresses, priceTypes, orderOptions] = await Promise.all([
         readActiveOfflineEntityItems<any>('organizations'),
@@ -742,6 +805,7 @@ export async function getClientOrderDefaults(params: {
         readActiveOfflineEntityItems<any>('price-types'),
         readActiveOfflineEntityItems<any>('order-options'),
       ]);
+      assertSearchNotAborted(options.signal);
       const organization = organizations.find((item) => item.guid === params.organizationGuid) ?? null;
       const counterparty = counterparties.find((item) => item.guid === params.counterpartyGuid) ?? null;
       const agreementRaw = agreements.find((item) =>
@@ -781,7 +845,7 @@ export async function getClientOrderDefaults(params: {
         } : null;
         return {
           organization: organization ?? { guid: params.organizationGuid, name: params.organizationGuid },
-          counterparty: { ...counterparty, hasDebt: false, shipmentProhibited: false, debtReason: null },
+          counterparty: { ...counterparty, hasDebt: null, shipmentProhibited: null, debtReason: null, restrictionsKnown: false },
           agreement,
           contract: contractRaw,
           warehouse,
@@ -797,21 +861,24 @@ export async function getClientOrderDefaults(params: {
             : contractRaw?.deliveryMethod ? [{ code: contractRaw.deliveryMethod, name: contractRaw.deliveryMethod }] : [],
           currency: agreementRaw?.currency ?? 'RUB',
           invoiceRequested: false,
-          hasDebt: false,
-          shipmentProhibited: false,
+          hasDebt: null,
+          shipmentProhibited: null,
+          restrictionsKnown: false,
+          readState: {source: 'local', checkedAt: null, stale: true, refreshPending: false, verificationRequired: true},
           debtReason: null,
         } as ClientOrderDefaults;
       }
       throw new Error(getErrorMessage('Не удалось получить значения по умолчанию', res.message));
     }
     return res.data;
-  });
+  };
+  return options.signal || options.expectedUserId !== undefined ? load() : dedupeRead(`GET ${path}`, load);
 }
 
-export async function getClientOrderSettings(options?: { offlineOnly?: boolean }) {
+export async function getClientOrderSettings(options?: { offlineOnly?: boolean } & ClientOrdersReadOptions): Promise<ClientOrderSettings> {
   const res = options?.offlineOnly || !getServerStatus().isReachable
     ? { ok: false, data: null, message: 'Настройки для офлайна ещё не загружены' }
-    : await apiClient<void, ClientOrderSettings>(API_ENDPOINTS.CLIENT_ORDERS.SETTINGS);
+    : await apiClient<void, ClientOrderSettings>(API_ENDPOINTS.CLIENT_ORDERS.SETTINGS, options);
   if (!res.ok || !res.data) {
     const organizations = await readActiveOfflineEntityItems<ClientOrderOrganization>('organizations');
     if (organizations.length) {
@@ -857,26 +924,54 @@ export async function getClientOrderReferenceDetails(kind: ClientOrderReferenceK
 async function getPagedSelector<T>(
   endpoint: string,
   params: Record<string, string | number | boolean | undefined | null>,
-  fallbackMessage: string
+  fallbackMessage: string,
+  options: ClientOrdersReadOptions = {}
 ) {
   const query = buildQuery(params);
   const path = query ? `${endpoint}?${query}` : endpoint;
-  return dedupeRead(`GET ${path}`, async () => {
+  const load = async () => {
     const res = await apiClient<void, { items: T[] }>(path, {
       timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS,
+      ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.expectedUserId === undefined ? {} : {expectedUserId: options.expectedUserId}),
     });
     if (!res.ok || !res.data) throwApiError(fallbackMessage, res);
     return mapPagedResponse(res, fallbackMessage);
-  });
+  };
+  // A caller-owned cancellation must not cancel another picker's shared read.
+  const result = await (options.signal || options.expectedUserId !== undefined ? load() : dedupeRead(`GET ${path}`, load));
+  if (result.meta.readState?.refreshPending && options.signal && options.onRefresh) {
+    void refreshPendingSnapshot(result, value => !!value.meta.readState?.refreshPending,
+      value => ({...value, meta: {...value.meta, readState: value.meta.readState ? {...value.meta.readState, refreshPending: false} : undefined}}),
+      async () => {
+        try {return await load();}
+        catch (error) {
+          if ([401, 403].includes(Number((error as {status?: number})?.status))) return {items: [], meta: {accessDenied: true}};
+          throw error;
+        }
+      }, options.onRefresh, options.signal);
+  }
+  return result;
+}
+
+function assertSearchNotAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw Object.assign(new Error('Запрос отменён.'), { name: 'AbortError', status: 499 });
 }
 
 async function getReferenceSelector<T>(
   loadOnline: () => Promise<PagedResult<T>>,
-  loadOffline: () => Promise<PagedResult<T> | null>
+  loadOffline: () => Promise<PagedResult<T> | null>,
+  signal?: AbortSignal
 ): Promise<PagedResult<T>> {
+  assertSearchNotAborted(signal);
   const readOffline = async () => {
-    try { return await loadOffline(); }
-    catch { return null; } // SQLite is a fallback, never a prerequisite for an API read.
+    assertSearchNotAborted(signal);
+    try {
+      const result = await loadOffline();
+      assertSearchNotAborted(signal);
+      return result;
+    }
+    catch { assertSearchNotAborted(signal); return null; } // SQLite is a fallback, never a prerequisite for an API read.
   };
   if (!getServerStatus().isReachable) {
     const local = await readOffline();
@@ -885,8 +980,12 @@ async function getReferenceSelector<T>(
     // Without usable local data, try the API rather than returning an empty list.
   }
   try {
-    return await loadOnline();
+    assertSearchNotAborted(signal);
+    const result = await loadOnline();
+    assertSearchNotAborted(signal);
+    return result;
   } catch (error) {
+    assertSearchNotAborted(signal);
     const status = (error as { status?: number } | null)?.status;
     const transientStatus = status === 0 || status === 408 || status === 502 || status === 503 || status === 504;
     // Never hide authorization, validation or cancellation failures behind cached data.
@@ -934,18 +1033,18 @@ export async function searchClientOrderCounterparties(params?: {
   managerOnly?: boolean;
   organizationGuid?: string;
   debtStatus?: ClientOrderDebtStatus;
-}) {
+}, options: ClientOrdersReadOptions = {}) {
   const input = params || {};
   return getReferenceSelector(
     () => getPagedSelector<ClientOrderCounterpartyOption>(
       API_ENDPOINTS.CLIENT_ORDERS.COUNTERPARTIES,
       { ...input, debtStatus: input.debtStatus ?? 'all' },
-      'Не удалось загрузить контрагентов'
+      'Не удалось загрузить контрагентов', options
     ),
     () => input.debtStatus && input.debtStatus !== 'all' ? Promise.resolve(null)
       : getOfflineSelector<ClientOrderCounterpartyOption>('counterparties', input, (item) => ({
-        ...item, hasDebt: false, shipmentProhibited: false, debtReason: null,
-      }))
+        ...item, hasDebt: null, shipmentProhibited: null, debtReason: null, restrictionsKnown: false,
+      })), options.signal
   );
 }
 
@@ -956,11 +1055,11 @@ export async function searchClientOrderAgreements(params?: {
   limit?: number;
   offset?: number;
   includeInactive?: boolean;
-}) {
+}, options: ClientOrdersReadOptions = {}) {
   const input = params || {};
   return getReferenceSelector(
     () => getPagedSelector<ClientOrderAgreementOption>(
-      API_ENDPOINTS.CLIENT_ORDERS.AGREEMENTS, input, 'Не удалось загрузить соглашения'
+      API_ENDPOINTS.CLIENT_ORDERS.AGREEMENTS, input, 'Не удалось загрузить соглашения', options
     ),
     () => getOfflineSelector<ClientOrderAgreementOption>('agreements', input, (item) => ({
       ...item,
@@ -969,7 +1068,7 @@ export async function searchClientOrderAgreements(params?: {
       contractGuid: item.contract?.guid ?? item.contractGuid ?? null,
       warehouseGuid: item.warehouse?.guid ?? item.warehouseGuid ?? null,
       priceTypeGuid: item.priceType?.guid ?? item.priceTypeGuid ?? null,
-    }))
+    })), options.signal
   );
 }
 
@@ -980,17 +1079,17 @@ export async function searchClientOrderContracts(params?: {
   limit?: number;
   offset?: number;
   includeInactive?: boolean;
-}) {
+}, options: ClientOrdersReadOptions = {}) {
   const input = params || {};
   return getReferenceSelector(
     () => getPagedSelector<ClientOrderContractOption>(
-      API_ENDPOINTS.CLIENT_ORDERS.CONTRACTS, input, 'Не удалось загрузить договоры'
+      API_ENDPOINTS.CLIENT_ORDERS.CONTRACTS, input, 'Не удалось загрузить договоры', options
     ),
     () => getOfflineSelector<ClientOrderContractOption>('contracts', input, (item) => ({
       ...item,
       counterpartyGuid: item.counterparty?.guid ?? item.counterpartyGuid ?? null,
       organizationGuid: item.organization?.guid ?? item.organizationGuid ?? null,
-    }))
+    })), options.signal
   );
 }
 
@@ -1001,13 +1100,13 @@ export async function searchClientOrderWarehouses(params?: {
   limit?: number;
   offset?: number;
   includeInactive?: boolean;
-}) {
+}, options: ClientOrdersReadOptions = {}) {
   const input = params || {};
   return getReferenceSelector(
     () => getPagedSelector<ClientOrderWarehouseOption>(
-      API_ENDPOINTS.CLIENT_ORDERS.WAREHOUSES, input, 'Не удалось загрузить склады'
+      API_ENDPOINTS.CLIENT_ORDERS.WAREHOUSES, input, 'Не удалось загрузить склады', options
     ),
-    () => getOfflineSelector<ClientOrderWarehouseOption>('warehouses', input, (item) => item)
+    () => getOfflineSelector<ClientOrderWarehouseOption>('warehouses', input, (item) => item), options.signal
   );
 }
 
@@ -1016,13 +1115,13 @@ export async function searchClientOrderPriceTypes(params?: {
   limit?: number;
   offset?: number;
   includeInactive?: boolean;
-}) {
+}, options: ClientOrdersReadOptions = {}) {
   const input = params || {};
   return getReferenceSelector(
     () => getPagedSelector<ClientOrderPriceTypeOption>(
-      API_ENDPOINTS.CLIENT_ORDERS.PRICE_TYPES, input, 'Не удалось загрузить виды цен'
+      API_ENDPOINTS.CLIENT_ORDERS.PRICE_TYPES, input, 'Не удалось загрузить виды цен', options
     ),
-    () => getOfflineSelector<ClientOrderPriceTypeOption>('price-types', input, (item) => item)
+    () => getOfflineSelector<ClientOrderPriceTypeOption>('price-types', input, (item) => item), options.signal
   );
 }
 
@@ -1033,16 +1132,16 @@ export async function searchClientOrderDeliveryAddresses(params?: {
   limit?: number;
   offset?: number;
   includeInactive?: boolean;
-}) {
+}, options: ClientOrdersReadOptions = {}) {
   const input = params || {};
   return getReferenceSelector(
     () => getPagedSelector<ClientOrderDeliveryAddressOption>(
-      API_ENDPOINTS.CLIENT_ORDERS.DELIVERY_ADDRESSES, input, 'Не удалось загрузить адреса доставки'
+      API_ENDPOINTS.CLIENT_ORDERS.DELIVERY_ADDRESSES, input, 'Не удалось загрузить адреса доставки', options
     ),
     () => getOfflineSelector<ClientOrderDeliveryAddressOption>('delivery-addresses', input, (item) => ({
       ...item,
       counterpartyGuid: item.counterparty?.guid ?? item.counterpartyGuid ?? null,
-    }))
+    })), options.signal
   );
 }
 
@@ -1059,13 +1158,14 @@ export async function searchClientOrderProducts(params: {
   inStockOnly?: boolean;
   limit?: number;
   offset?: number;
-}): Promise<PagedResult<ClientOrderProduct> & { localCatalog?: true }> {
+}, options: { signal?: AbortSignal; onRefresh?: (result: PagedResult<ClientOrderProduct>) => void } = {}): Promise<PagedResult<ClientOrderProduct> & { localCatalog?: true }> {
+  assertSearchNotAborted(options.signal);
   scheduleProductCatalogSync();
   const { historyUserId: _localUser, historyFetchedAt: _localSnapshot, ...query } = params;
   // A ready local dataset is not evidence that its stock/catalog is current.
   // Share the same online-first, transient-error fallback policy as references.
-  return getReferenceSelector(
-    () => getPagedSelector<ClientOrderProduct>(API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS, query, 'Не удалось загрузить номенклатуру'),
+  const result = await getReferenceSelector(
+    () => getPagedSelector<ClientOrderProduct>(API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS, query, 'Не удалось загрузить номенклатуру', options),
     async () => {
       const local = await searchCatalogProducts(params.search || '', params.limit || 50, params.offset || 0, {
         priceTypeGuid: params.priceTypeGuid,
@@ -1091,8 +1191,13 @@ export async function searchClientOrderProducts(params: {
         };
       }
       return null;
-    }
+    },
+    options.signal
   );
+  if (options.signal && options.onRefresh) {
+    void refreshPendingProductSearch(result, () => searchClientOrderProducts(params, {signal: options.signal}), options.onRefresh, options.signal);
+  }
+  return result;
 }
 
 export async function getClientOrderProductsBatch(payload: {
@@ -1103,7 +1208,7 @@ export async function getClientOrderProductsBatch(payload: {
   warehouseGuid?: string;
   priceTypeGuid?: string;
   receiptPriceAt?: string;
-}) {
+}, options: { onlineOnly?: boolean } = {}) {
   const productGuids = [...new Set(payload.productGuids)].sort();
   const contextKey = JSON.stringify({
     organizationGuid: payload.organizationGuid || '',
@@ -1118,7 +1223,7 @@ export async function getClientOrderProductsBatch(payload: {
   const missingGuids: string[] = [];
   for (const guid of productGuids) {
     const cached = productBatchValueCache.get(`${contextKey}|${guid}`);
-    if (cached && now - cached.cachedAt <= PRODUCT_BATCH_VALUE_TTL_MS) {
+    if (!options.onlineOnly && cached && now - cached.cachedAt <= PRODUCT_BATCH_VALUE_TTL_MS) {
       cachedByGuid.set(guid, cached.item);
     } else {
       missingGuids.push(guid);
@@ -1130,6 +1235,7 @@ export async function getClientOrderProductsBatch(payload: {
   const key = `POST ${API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS_BATCH} ${JSON.stringify(requestPayload)}`;
   let freshItems: ClientOrderProduct[];
   if (!getServerStatus().isReachable) {
+    if (options.onlineOnly) throw new Error('Для уточнения цены требуется подключение');
     freshItems = await getCatalogProductsByGuids(missingGuids, {
       priceTypeGuid: payload.priceTypeGuid,
       warehouseGuid: payload.warehouseGuid,
@@ -1137,7 +1243,7 @@ export async function getClientOrderProductsBatch(payload: {
     });
   } else {
   try {
-    freshItems = await dedupeRead(key, async () => {
+    const loadBatch = async () => {
       const res = await apiClient<typeof requestPayload, { items: ClientOrderProduct[] }>(
         API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS_BATCH,
         { method: 'POST', body: requestPayload, timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS }
@@ -1148,8 +1254,11 @@ export async function getClientOrderProductsBatch(payload: {
         throw error;
       }
       return Array.isArray(res.data.items) ? res.data.items : [];
-    });
+    };
+    // Automatic fill has its own user/context fence and must not join an old user's read.
+    freshItems = options.onlineOnly ? await loadBatch() : await dedupeRead(key, loadBatch);
   } catch (error) {
+    if (options.onlineOnly) throw error;
     const status = (error as { status?: number })?.status;
     if (status !== 0 && status !== 408 && status !== 503 && status !== 504) throw error;
     freshItems = await getCatalogProductsByGuids(missingGuids, {
@@ -1161,7 +1270,7 @@ export async function getClientOrderProductsBatch(payload: {
   }
   for (const item of freshItems) {
     cachedByGuid.set(item.guid, item);
-    productBatchValueCache.set(`${contextKey}|${item.guid}`, { item, cachedAt: Date.now() });
+    if (!options.onlineOnly) productBatchValueCache.set(`${contextKey}|${item.guid}`, { item, cachedAt: Date.now() });
   }
   while (productBatchValueCache.size > PRODUCT_BATCH_VALUE_CACHE_MAX) {
     const oldest = productBatchValueCache.keys().next().value;
