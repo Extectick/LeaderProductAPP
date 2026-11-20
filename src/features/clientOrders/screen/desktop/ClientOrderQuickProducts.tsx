@@ -134,6 +134,7 @@ export function ClientOrderQuickProducts({workspace, onOpenCatalog}: {workspace:
       {open && queryText && !disabled && hasContext ? <Box sx={{position: 'absolute', zIndex: 10, top: '100%', left: 0, right: 0,
         maxHeight: 'min(360px, 45vh)', overflowY: 'auto', bgcolor: 'var(--co-surface)', border: '1px solid var(--co-line)',
         borderRadius: 2, boxShadow: '0 12px 28px rgba(0,0,0,.12)'}}>
+        {results.some(item => item.freshness?.refreshPaused) ? <Alert severity="info" action={<Button onClick={() => setRetry(value => value + 1)}>Повторить</Button>}>Цены ещё не уточнены. Повторите обновление.</Alert> : null}
         {searchError ? <Alert severity="warning" action={<Button onClick={() => setRetry(value => value + 1)}>Повторить</Button>}>Не удалось найти товары. {workspace.online ? 'Попробуйте ещё раз.' : 'Проверьте подключение.'}</Alert>
           : loading ? <Typography role="status" sx={{p: 2, fontSize: 14, color: 'var(--co-muted)'}}>Ищем товары…</Typography>
           : !results.length ? <Typography role="status" sx={{p: 2, fontSize: 14, color: 'var(--co-muted)'}}>Ничего не найдено. Попробуйте другой запрос.</Typography> : null}

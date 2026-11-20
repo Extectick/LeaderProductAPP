@@ -1,4 +1,6 @@
 import { refreshPendingSnapshot } from '@/utils/refreshPendingSnapshot';
+import {refreshUnresolvedSnapshot} from '@/utils/refreshUnresolvedSnapshot';
+import {DEFAULT_SUGGESTION_FIELDS, defaultsNeedRefresh, mergeDefaultSuggestions} from './lib/defaultSuggestions';
 import { useNewItemPricing } from './lib/useNewItemPricing';
 import { AuthContext } from '@/context/AuthContext';
 import { addMonitoringBreadcrumb } from '@/src/shared/monitoring';
@@ -1374,6 +1376,13 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const [defaultsReadState, setDefaultsReadState] = React.useState<ClientOrderReadState | null>(null);
   const [loadingReceiptPrices, setLoadingReceiptPrices] = React.useState(false);
   const [loadingDefaults, setLoadingDefaults] = React.useState(false);
+  const [defaultsRefreshStatus, setDefaultsRefreshStatus] = React.useState<'idle' | 'waiting' | 'retry'>('idle');
+  const defaultsTouchedRef = React.useRef(new Set<string>());
+  const defaultsViewRef = React.useRef({draft, selections});
+  defaultsViewRef.current = {draft, selections};
+  const defaultsResumeRef = React.useRef<() => void>(() => {});
+  const defaultsCanRefreshRef = React.useRef(true);
+  defaultsCanRefreshRef.current = serverStatus.isReachable && options.isScreenActive !== false;
   const [loadingSettings, setLoadingSettings] = React.useState(false);
   const [savingSettings, setSavingSettings] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
@@ -1480,7 +1489,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     setAppliedDraftEditVersion(editVersion);
     setSelectedGuid(null); setSelectedOrder(null); setPendingDetail(null); setDetailRefreshEpoch(0);
     setDraft(emptyDraft()); setSelections(emptySelections()); setDirty(false); setDocumentStarted(false);
-    setLoadingDetail(false); setLoadingDefaults(false); setDefaultsReadState(null); setError(null);
+    setLoadingDetail(false); setLoadingDefaults(false); setDefaultsReadState(null); setDefaultsRefreshStatus('idle'); defaultsTouchedRef.current.clear(); setError(null);
     settingsRef.current = null; setSettings(null); setPaymentFormOptions([]); setDeliveryMethodOptions([]);
     apiOrdersRef.current = []; setOrders([]); deviceDraftEntriesRef.current = []; setDeviceDraftEntries([]);
     const meta = {total: 0, limit: ORDERS_PAGE_SIZE, offset: 0, statusCounts: {}};
@@ -1916,7 +1925,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   const resetDraftToBase = React.useCallback((nextSettings?: ClientOrderSettings | null) => {
     readControllers.current.detail?.abort(); readControllers.current.detailRefresh?.abort();
-    setPendingDetail(null); setDefaultsReadState(null);
+    setPendingDetail(null); setDefaultsReadState(null); setDefaultsRefreshStatus('idle'); defaultsTouchedRef.current.clear();
     const effectiveSettings = nextSettings ?? settingsRef.current;
     const base = buildDraftBase(effectiveSettings);
     selectedGuidRef.current = null;
@@ -1951,6 +1960,13 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, []);
 
   const patchDraft = React.useCallback((patch: Partial<DraftOrder> | ((prev: DraftOrder) => DraftOrder)) => {
+    if (typeof patch !== 'function') for (const field of DEFAULT_SUGGESTION_FIELDS) {
+      if (Object.prototype.hasOwnProperty.call(patch, field)) defaultsTouchedRef.current.add(field);
+    }
+    // Keep the defaults merge view current even when a customer change and an
+    // immediately resolved cache read share a React batch.
+    const currentDraft = defaultsViewRef.current.draft;
+    defaultsViewRef.current.draft = normalizeDraftOrder(typeof patch === 'function' ? patch(currentDraft) : {...currentDraft, ...patch}, currentDraft);
     const editVersion = ++draftEditVersionRef.current;
     dirtyRef.current = true;
     setDraft((prev) => normalizeDraftOrder(
@@ -3352,93 +3368,86 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     const requestUser = activeOfflineUserRef.current;
     if (!organizationGuid || !counterpartyGuid) return;
     const requestId = ++defaultsRequestIdRef.current;
-    const deliveryAddressManualVersion = deliveryAddressManualVersionRef.current;
-    const editVersion = draftEditVersionRef.current;
     setLoadingDefaults(true);
-    try {
-      const defaults = await getClientOrderDefaults({ organizationGuid, counterpartyGuid }, {signal: controller.signal, expectedUserId: Number(requestUser) > 0 ? Number(requestUser) : undefined});
-      if (controller.signal.aborted || activeOfflineUserRef.current !== requestUser || defaultsRequestIdRef.current !== requestId) return;
-
-      const applyDefaults = (defaults: ClientOrderDefaults) => {
-        if (controller.signal.aborted || activeOfflineUserRef.current !== requestUser || defaultsRequestIdRef.current !== requestId) return;
+    setDefaultsRefreshStatus('waiting');
+    const isCurrent = () => !controller.signal.aborted && activeOfflineUserRef.current === requestUser
+      && defaultsRequestIdRef.current === requestId;
+    const load = () => getClientOrderDefaults({organizationGuid, counterpartyGuid},
+      {signal: controller.signal, expectedUserId: Number(requestUser) > 0 ? Number(requestUser) : undefined});
+    const applyDefaults = (defaults: ClientOrderDefaults) => {
+      if (!isCurrent()) return;
       setDefaultsReadState(defaults.readState ?? null);
-      if (draftEditVersionRef.current !== editVersion) return;
-      if (defaults.pending || defaults.readState?.verificationRequired) {
-        // These are suggestions, not a new authoritative context. In particular
-        // null does not revoke an agreement, warehouse or a manually entered price.
-        setPaymentFormOptions(current => current.length ? current : defaults.paymentForms || []);
-        setDeliveryMethodOptions(current => current.length ? current : defaults.deliveryMethods || []);
-        return;
+      setDefaultsRefreshStatus(defaultsNeedRefresh(defaults) ? 'waiting' : 'idle');
+      setPaymentFormOptions(current => defaults.paymentForms?.length ? defaults.paymentForms : current);
+      setDeliveryMethodOptions(current => defaults.deliveryMethods?.length ? defaults.deliveryMethods : current);
+      const suggestions = {...defaults, agreement: overrides.agreement ?? defaults.agreement,
+        contract: overrides.contract ?? defaults.contract};
+      const context = {organizationGuid, counterpartyGuid};
+      const currentDraft = defaultsViewRef.current.draft;
+      const merged = mergeDefaultSuggestions(currentDraft, defaultsViewRef.current.selections,
+        suggestions, defaultsTouchedRef.current, context);
+      if (merged.draft !== currentDraft) {
+        // Autofill is a real draft edit: advance the existing autosave revision,
+        // but do not mark the suggested fields as manual choices.
+        patchDraft(prev => !isCurrent() ? prev : mergeDefaultSuggestions(prev, defaultsViewRef.current.selections,
+          suggestions, defaultsTouchedRef.current, context).draft);
       }
-
-      const agreement = overrides.agreement ?? defaults.agreement ?? null;
-      const contract = overrides.contract ?? agreement?.contract ?? defaults.contract ?? null;
-      const warehouse = agreement?.warehouse ?? defaults.warehouse ?? null;
-      const deliveryAddress = defaults.deliveryAddress ?? null;
-      const priceType = agreement?.priceType ?? defaults.priceType ?? null;
-      const shouldApplyDeliveryAddress = deliveryAddressManualVersionRef.current === deliveryAddressManualVersion;
-      setPaymentFormOptions(defaults.paymentForms || []);
-      setDeliveryMethodOptions(defaults.deliveryMethods || []);
-
-      setDraft((prev) => normalizeDraftOrder({
-        ...prev,
-        organizationGuid,
-        agreementGuid: agreement?.guid || '',
-        contractGuid: contract?.guid || '',
-        warehouseGuid: warehouse?.guid || '',
-        deliveryAddressGuid: shouldApplyDeliveryAddress
-          ? deliveryAddress?.guid || ''
-          : prev.deliveryAddressGuid,
-        deliveryDate: prev.deliveryDate ?? defaults.deliveryDate ?? settingsRef.current?.resolvedDeliveryDate ?? null,
-        paymentForm: prev.paymentForm ?? defaults.paymentForm ?? null,
-        deliveryMethod: prev.deliveryMethod ?? defaults.deliveryMethod ?? null,
-        invoiceRequested: !!defaults.invoiceRequested,
-        currency: defaults.currency || DEFAULT_ORDER_CURRENCY,
-        priceTypeGuid: priceType?.guid ?? null,
-        priceTypeName: priceType?.name ?? null,
-        items: prev.items.map((item) => {
-          if (hasManualPrice(item)) return item;
-          const priceTypeGuid = priceType?.guid ?? null;
-          const priceTypeName = priceType?.name ?? null;
-          return item.priceTypeGuid === priceTypeGuid && item.priceTypeName === priceTypeName
-            ? item
-            : { ...item, priceTypeGuid, priceTypeName };
-        }),
-      }, prev));
-      setSelections((prev) => ({
-        organization: overrides.organization ?? prev.organization,
-        counterparty: defaults.counterparty
-          ? {
-              ...prev.counterparty,
-              ...defaults.counterparty,
-              hasDebt: defaults.counterparty.hasDebt ?? defaults.hasDebt ?? false,
-              shipmentProhibited: defaults.counterparty.shipmentProhibited ?? defaults.shipmentProhibited ?? false,
-              debtReason: defaults.counterparty.debtReason ?? defaults.debtReason ?? null,
-            }
-          : prev.counterparty,
-        agreement,
-        contract,
-        warehouse,
-        deliveryAddress: shouldApplyDeliveryAddress ? deliveryAddress : prev.deliveryAddress,
-      }));
-      };
+      setSelections(prev => {
+        if (!isCurrent() || prev.counterparty?.guid !== counterpartyGuid || prev.organization?.guid !== organizationGuid) return prev;
+        const selectionDraft = {...defaultsViewRef.current.draft, organizationGuid, counterpartyGuid,
+          agreementGuid: prev.agreement?.guid || '', contractGuid: prev.contract?.guid || '',
+          warehouseGuid: prev.warehouse?.guid || '', deliveryAddressGuid: prev.deliveryAddress?.guid || ''};
+        return mergeDefaultSuggestions(selectionDraft, prev, suggestions, defaultsTouchedRef.current, context).selections;
+      });
+    };
+    const exhaust = () => {if (isCurrent()) setDefaultsRefreshStatus('retry');};
+    const refreshLoad = async () => {
+      if (!isCurrent() || !defaultsCanRefreshRef.current || (AppState.currentState && AppState.currentState !== 'active')) {
+        exhaust(); controller.abort(); throw new Error('Inactive defaults');
+      }
+      return load();
+    };
+    try {
+      const defaults = await load();
+      if (!isCurrent()) return;
       applyDefaults(defaults);
-      if (defaults.readState?.refreshPending) void refreshPendingSnapshot(defaults,
-        value => !!value.readState?.refreshPending,
-        value => ({...value, readState: value.readState ? {...value.readState, refreshPending: false} : undefined}),
-        async () => {
-          if (controller.signal.aborted || activeOfflineUserRef.current !== requestUser
-            || (AppState.currentState && AppState.currentState !== 'active')) throw new Error('Inactive defaults');
-          return getClientOrderDefaults({organizationGuid, counterpartyGuid}, {signal: controller.signal, expectedUserId: Number(requestUser) > 0 ? Number(requestUser) : undefined});
-        }, applyDefaults, controller.signal);
+      if (defaultsNeedRefresh(defaults)) void refreshUnresolvedSnapshot(defaults, defaultsNeedRefresh,
+        refreshLoad, applyDefaults, controller.signal, {onExhausted: exhaust});
     } catch (e: any) {
-      if (controller.signal.aborted || activeOfflineUserRef.current !== requestUser || defaultsRequestIdRef.current !== requestId) return;
-      if (isNetworkUnavailableError(e)) return;
-      setError(userErrorMessage(e, 'Не удалось подставить значения по умолчанию.'));
+      if (!isCurrent()) return;
+      exhaust();
+      if (![401, 403].includes(Number(e?.status))) {
+        void refreshUnresolvedSnapshot({pending: true} as ClientOrderDefaults, defaultsNeedRefresh,
+          refreshLoad, applyDefaults, controller.signal, {onExhausted: exhaust});
+      }
     } finally {
-      if (defaultsRequestIdRef.current === requestId) setLoadingDefaults(false);
+      if (isCurrent()) setLoadingDefaults(false);
     }
-  }, [beginRead]);
+  }, [beginRead, patchDraft]);
+
+  const retryDefaults = React.useCallback(() => {
+    const current = defaultsViewRef.current.draft;
+    if (current.organizationGuid && current.counterpartyGuid && !readOnly) {
+      void applyResolvedDefaults(current.organizationGuid, current.counterpartyGuid);
+    }
+  }, [applyResolvedDefaults, readOnly]);
+  defaultsResumeRef.current = () => {
+    if (defaultsRefreshStatus !== 'idle' && serverStatus.isReachable && options.isScreenActive !== false) retryDefaults();
+  };
+  React.useEffect(() => {
+    if (serverStatus.isReachable && options.isScreenActive !== false) defaultsResumeRef.current();
+    else if (readControllers.current.defaults && !readControllers.current.defaults.signal.aborted) {
+      readControllers.current.defaults.abort();
+      setLoadingDefaults(false);
+      setDefaultsRefreshStatus(current => current === 'idle' ? current : 'retry');
+    }
+  }, [serverStatus.isReachable, options.isScreenActive]);
+  React.useEffect(() => {
+    const subscription = AppState.addEventListener?.('change', state => {
+      if (state === 'active') defaultsResumeRef.current();
+    });
+    return () => subscription?.remove();
+  }, []);
 
   React.useEffect(() => {
     void loadSettings();
@@ -4260,6 +4269,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     if (guid === selectedGuid && selectedOrder?.guid === guid) return true;
     const canContinue = await confirmDiscardIfNeeded();
     if (!canContinue) return false;
+    defaultsRequestIdRef.current += 1; readControllers.current.defaults?.abort();
+    defaultsTouchedRef.current.clear(); setDefaultsReadState(null);
+    setDefaultsRefreshStatus('idle'); setLoadingDefaults(false);
     selectedGuidRef.current = guid;
     const order = await loadDetail(guid);
     if (!order) {
@@ -4294,6 +4306,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     defaultsRequestIdRef.current += 1;
     readControllers.current.enums?.abort(); readControllers.current.defaults?.abort();
     setLoadingDefaults(false);
+    setDefaultsRefreshStatus('idle'); setDefaultsReadState(null); defaultsTouchedRef.current.clear();
     patchDraft((prev) => ({
       ...prev,
       ...patch,
@@ -4371,10 +4384,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   const setAgreement = React.useCallback(async (agreement: ClientOrderAgreementOption | null) => {
     const organization = resolveEntityOrganization(agreement);
-    // Do not let an older defaults request overwrite the user's explicit pair.
-    defaultsRequestIdRef.current += 1;
-    readControllers.current.defaults?.abort();
-    setLoadingDefaults(false);
+    for (const field of ['agreementGuid', 'contractGuid', 'warehouseGuid', 'priceTypeGuid', 'priceTypeName']) defaultsTouchedRef.current.add(field);
     patchDraft((prev) => ({
       ...prev,
       agreementGuid: agreement?.guid || '',
@@ -4401,10 +4411,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   const setContract = React.useCallback(async (contract: ClientOrderContractOption | null) => {
     const organization = resolveEntityOrganization(contract);
-    // A manual contract choice must not re-apply defaults and reset agreement.
-    defaultsRequestIdRef.current += 1;
-    readControllers.current.defaults?.abort();
-    setLoadingDefaults(false);
+    defaultsTouchedRef.current.add('contractGuid');
     patchDraft({ contractGuid: contract?.guid || '' });
     setSelections((prev) => ({ ...prev, organization: organization ?? prev.organization, contract }));
   }, [patchDraft, resolveEntityOrganization]);
@@ -4704,6 +4711,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [defaultLinePriceType, draft.items, patchDraft, refreshItemPricing]);
 
   const setHeaderPriceType = React.useCallback((priceType: ClientOrderPriceTypeOption | null) => {
+    defaultsTouchedRef.current.add('priceTypeGuid'); defaultsTouchedRef.current.add('priceTypeName');
     const refreshTargets = draft.items.filter((item) => !hasManualPrice(item));
     contextRefreshSignatureRef.current = draft.organizationGuid && draft.counterpartyGuid && draft.items.length
       ? [draft.organizationGuid, draft.counterpartyGuid, draft.agreementGuid || '', draft.warehouseGuid || '', priceType?.guid || ''].join('||')
@@ -4725,6 +4733,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [draft.agreementGuid, draft.counterpartyGuid, draft.items, draft.organizationGuid, draft.warehouseGuid, patchDraft, refreshItemsPricing]);
 
   const resetHeaderPriceTypeToDefault = React.useCallback(() => {
+    defaultsTouchedRef.current.add('priceTypeGuid'); defaultsTouchedRef.current.add('priceTypeName');
     const priceType = defaultHeaderPriceType;
     const refreshTargets = draft.items;
     contextRefreshSignatureRef.current = draft.organizationGuid && draft.counterpartyGuid && draft.items.length
@@ -5290,6 +5299,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     loadingDetail,
     pendingDetail,
     defaultsReadState,
+    defaultsRefreshStatus,
+    defaultsPending: loadingDefaults || defaultsRefreshStatus !== 'idle',
+    retryDefaults,
     verificationRequired,
     retryDetailVerification: () => setDetailRefreshEpoch(value => value + 1),
     loadingReceiptPrices,

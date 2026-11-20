@@ -61,7 +61,7 @@ test.each([401, 403])('active catalog refresh clears cards after access rejectio
 });
 
 test('context change aborts old pending catalog refresh, and completed missing values render dashes', async () => {
-  api.mockResolvedValueOnce(response(pending)).mockResolvedValue(response({...pending, guid: 'new', freshness: {...pending.freshness!, commercialPending: false, receiptPricePending: false}}));
+  api.mockResolvedValueOnce(response(pending)).mockResolvedValue(response({...pending, guid: 'new', freshness: {...pending.freshness!, commercialPending: false, receiptPricePending: false, commercialCheckedAt: '2026-11-20T10:00:00Z'}}));
   await mount(); const signal = api.mock.calls[0][1]?.signal;
   await act(async () => tree.update(React.createElement(Harness, {scope: 'other'})));
   expect(signal?.aborted).toBe(true);

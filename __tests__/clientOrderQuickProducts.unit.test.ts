@@ -167,3 +167,19 @@ test('unknown pending price/stock skeletons settle to values or missing, with no
   await act(async () => refresh({items: [{...product, basePrice: null, stock: null, freshness: {...freshness, commercialPending: false}}]}));
   expect(tree.root.findAllByType('Skeleton' as any)).toHaveLength(0);
 });
+
+
+test('an exhausted price refresh exposes a real retry for the same query and context', async () => {
+  workspace.searchProducts.mockResolvedValue({items: [{...product, basePrice:null, freshness:{commercialPending:true, priceStatus:'unknown', refreshPaused:true}}]});
+  await act(async () => {tree=Renderer.create(render());}); await searchFor();
+  expect(tree.root.findAllByType('Skeleton' as any)).toHaveLength(0);
+  const notice = tree.root.findAllByType('Alert' as any).find(node => node.props.action?.props.children === 'Повторить')!;
+  const retry = notice?.props.action;
+  expect(retry).toBeDefined();
+  workspace.searchProducts.mockResolvedValue({items:[product]});
+  await act(async () => retry.props.onClick());
+  await act(async () => {jest.advanceTimersByTime(180);});
+  expect(workspace.searchProducts).toHaveBeenCalledTimes(2);
+  expect(workspace.searchProducts.mock.calls[1][0]).toMatchObject({search:'молоко',counterpartyGuid:'customer',priceTypeGuid:'price'});
+  expect(tree.root.findAllByType('Alert' as any).some(node => node.props.action?.props.children === 'Повторить')).toBe(false);
+});

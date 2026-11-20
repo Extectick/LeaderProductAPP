@@ -1282,7 +1282,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     if (!append) productPickerSnapshotRef.current.invalidate();
     if (!append) setPickerItems([]);
     else setPickerItems(current => current.map(item => item.freshness ? {...item,
-      freshness: {...item.freshness, commercialPending: false, receiptPricePending: false}} : item));
+      freshness: {...item.freshness, refreshPaused: item.freshness.refreshPaused || item.freshness.commercialPending || item.freshness.receiptPricePending}} : item));
     setPickerLoadError(false);
     setPickerLoading(true);
     try {
@@ -2129,7 +2129,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     || workspace.selections.deliveryAddress?.fullAddress
     || workspace.selections.deliveryAddress?.name
   );
-  const dependentHeaderValidationReady = hasCounterpartyValue && !workspace.loadingDefaults;
+  const dependentHeaderValidationReady = hasCounterpartyValue && !workspace.defaultsPending;
   const headerRequiredState = React.useMemo(() => ({
     organization: !hasOrganizationValue,
     counterparty: !hasCounterpartyValue,
@@ -2648,6 +2648,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     selectedOrder: workspace.selectedOrder,
     documentHeaderLoadingState: workspace.documentHeaderLoadingState,
     loadingDefaults: workspace.loadingDefaults,
+    defaultsPending: workspace.defaultsPending,
     hasDebt: workspace.hasDebt,
     readOnly: workspace.readOnly,
     mutationLocked: workspace.mutationLocked,
@@ -2659,6 +2660,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     workspace.isHeaderPriceTypeCustom,
     workspace.hasDebt,
     workspace.loadingDefaults,
+    workspace.defaultsPending,
     workspace.mutationLocked,
     workspace.patchDraft,
     workspace.readOnly,
@@ -3039,6 +3041,12 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           importantForAccessibility={mode === 'editor' ? 'auto' : 'no-hide-descendants'}
           style={[styles.editorStage, mode !== 'editor' && styles.editorStageHidden]}
         >
+          {!workspace.readOnly && workspace.draft.counterpartyGuid && workspace.defaultsPending ? <View style={{paddingHorizontal: 16, paddingVertical: 8}}>
+            <Text accessibilityLiveRegion="polite">{workspace.defaultsRefreshStatus === 'retry'
+              ? 'Условия клиента пока не удалось уточнить. Уже выбранные значения сохранены.'
+              : 'Уточняем условия клиента в 1С. Можно продолжать заполнять заказ.'}</Text>
+            <PaperButton compact onPress={workspace.retryDefaults} disabled={workspace.loadingDefaults}>Повторить проверку условий</PaperButton>
+          </View> : null}
           {workspace.verificationRequired && !workspace.pendingDetail ? <Pressable accessibilityRole="button" onPress={workspace.retryDetailVerification} style={{paddingHorizontal: 16, paddingVertical: 8}}><Text>Состояние заказа проверяется в 1С. Изменения сохраняются локально. Проверить снова</Text></Pressable> : null}
           {showDocumentOpenLoader ? (
             <ScrollView
@@ -3221,7 +3229,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           appendLoading={pickerAppendLoading}
           hasLoadedOnce={pickerHasLoadedOnce}
           loadError={pickerLoadError}
-          onRetryProducts={() => void loadPickerPage('product', pickerSearch, 0, false)}
+          onRetryProducts={() => {pickerLoadSignatureRef.current = ''; void loadPickerPage('product', pickerSearch, 0, false);}}
           inStockOnly={inStockOnly}
           onToggleInStockOnly={() => setInStockOnly((prev) => !prev)}
           purchasedOnly={purchasedOnly}
@@ -3540,7 +3548,7 @@ const HeaderSection = React.memo(function HeaderSection({
   );
   const showDependentRequiredErrors = showRequiredErrors
     && hasCounterpartyValue
-    && !workspace.loadingDefaults;
+    && !workspace.defaultsPending;
   const showCounterpartyDebt = workspace.hasDebt
     && !workspace.selectedOrder?.isPostedIn1c;
   const deliveryAddressComment = workspace.selections.deliveryAddress?.deliveryComment || workspace.selections.deliveryAddress?.comment || '';
@@ -3677,6 +3685,7 @@ function areHeaderSectionPropsEqual(previous: any, next: any) {
     && a.selectedOrder === b.selectedOrder
     && a.documentHeaderLoadingState === b.documentHeaderLoadingState
     && a.loadingDefaults === b.loadingDefaults
+    && a.defaultsPending === b.defaultsPending
     && a.hasDebt === b.hasDebt
     && a.readOnly === b.readOnly
     && a.mutationLocked === b.mutationLocked
@@ -4667,6 +4676,7 @@ function ProductPickerFullscreenPanel({
       <OfflineProductDataNote online={online} syncedAt={offlineDataSyncedAt} />
       {hasOrderContext && historyNotice ? <Text style={{ color: '#64748B', fontSize: 11, paddingHorizontal: 14, paddingVertical: 4 }}>{historyNotice}</Text> : null}
       {hasOrderContext && onRetryHistory ? <PaperButton compact icon="refresh" onPress={onRetryHistory}>Повторить загрузку истории</PaperButton> : null}
+      {items.some(item => item.freshness?.refreshPaused) ? <PaperButton compact icon="refresh" onPress={onRetryProducts}>Цены ещё не уточнены. Повторить</PaperButton> : null}
       {loadError ? <PaperButton compact icon="refresh" onPress={onRetryProducts}>Не удалось загрузить товары. Повторить</PaperButton> : null}
       {showInitialLoader ? (
         <View style={styles.productPickerInitialLoader}>
@@ -4674,7 +4684,7 @@ function ProductPickerFullscreenPanel({
         </View>
       ) : null}
     </>
-  ), [hasOrderContext, offlineDataSyncedAt, online, showInitialLoader, styles, historyNotice, onRetryHistory, loadError, onRetryProducts]);
+  ), [hasOrderContext, offlineDataSyncedAt, online, showInitialLoader, styles, historyNotice, onRetryHistory, loadError, onRetryProducts, items]);
   const listEmpty = React.useMemo(() => {
     if (isResetLoading || !hasOrderContext || loadError || (purchasedOnly && !purchaseHistoryReady)) return null;
     return <Text style={styles.filtersLookupEmpty}>Ничего не найдено.</Text>;

@@ -11,6 +11,7 @@ function checkedTime(value?: string | null) {
 export function productFreshnessLabel(product: ClientOrderProduct) {
   const freshness = product.freshness;
   if (!freshness) return null;
+  if (freshness.refreshPaused) return 'Цены ещё не уточнены. Повторите поиск или обновление.';
   if (freshness.commercialPending || freshness.stale) return 'Цена и остаток требуют уточнения';
   const at = checkedTime(freshness.commercialCheckedAt);
   return at ? `Данные на ${at}` : 'Цена и остаток по последним данным';
@@ -20,6 +21,7 @@ export function productMetricFreshness(product: ClientOrderProduct, kind: 'price
   const freshness = product.freshness;
   if (!freshness) return { title, value };
   const status = kind === 'stock' ? freshness.stockStatus : kind === 'price' ? freshness.priceStatus : freshness.receiptPriceStatus;
+  if (freshness.refreshPaused && (status === 'unknown' || value === '—')) return {title: `${title}: обновление не завершено, повторите поиск`, value: '—'};
   if (status === 'unknown' || value === '—') return { title: `${title}: данных нет, требуется уточнение`, value: '—' };
   const at = checkedTime(kind === 'price' ? freshness.commercialCheckedAt
     : kind === 'stock' ? freshness.stockCheckedAt : freshness.receiptPriceCheckedAt);
@@ -55,5 +57,5 @@ export function productMetricPending(product: ClientOrderProduct, kind: 'price' 
   const pending = kind === 'cost' ? product.freshness?.receiptPricePending : product.freshness?.commercialPending;
   const value = kind === 'price' ? product.basePrice : kind === 'cost' ? product.receiptPrice : stockAvailableValue(product.stock);
   // Zero is a known value; a background refresh must never hide an existing snapshot.
-  return pending === true && value == null;
+  return pending === true && !product.freshness?.refreshPaused && value == null;
 }

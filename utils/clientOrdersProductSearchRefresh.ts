@@ -1,5 +1,11 @@
 import type { ClientOrderProduct, PagedResult } from './clientOrdersService';
-import { refreshPendingSnapshot } from './refreshPendingSnapshot';
+import { refreshUnresolvedSnapshot } from './refreshUnresolvedSnapshot';
+
+function needsRefresh(item: ClientOrderProduct) {
+  return Boolean(item.freshness?.commercialPending || item.freshness?.receiptPricePending
+    || (item.freshness?.source === 'local-read-model' && item.freshness.commercialCheckedAt == null
+      && item.freshness.priceStatus === 'unknown'));
+}
 
 /** Only updates search presentation; never mutates a draft. */
 export function refreshPendingProductSearch(
@@ -8,10 +14,8 @@ export function refreshPendingProductSearch(
   onRefresh: (result: PagedResult<ClientOrderProduct>) => void,
   signal: AbortSignal,
 ) {
-  return refreshPendingSnapshot(initial,
-    result => result.items.some(item => item.freshness?.commercialPending || item.freshness?.receiptPricePending),
-    result => ({...result, items: result.items.map(item => item.freshness ? {...item,
-      freshness: {...item.freshness, commercialPending: false, receiptPricePending: false}} : item)}),
+  return refreshUnresolvedSnapshot(initial,
+    result => result.items.some(needsRefresh),
     async () => {
       try { return await load(); }
       catch (error) {
@@ -20,5 +24,7 @@ export function refreshPendingProductSearch(
         }
         throw error;
       }
-    }, onRefresh, signal);
+    }, onRefresh, signal, {onExhausted: result => onRefresh({...result,
+      items: result.items.map(item => item.freshness && needsRefresh(item) ? {...item,
+        freshness: {...item.freshness, refreshPaused: true}} : item)})});
 }

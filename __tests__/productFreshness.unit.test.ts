@@ -69,3 +69,12 @@ test('pending stock uses the same effective numeric value as its display, preser
   expect(productMetricPending({...product, stock: {quantity: 0} as any}, 'stock')).toBe(false);
   expect(productMetricPending({...product, freshness: {...product.freshness!, commercialPending: false}}, 'stock')).toBe(false);
 });
+
+
+test('exhausted refresh stops skeletons but keeps unknown values and a recovery explanation', () => {
+  const paused = {...product, freshness: {...product.freshness!, refreshPaused: true}};
+  expect(productMetricPending(paused, 'price')).toBe(false);
+  expect(productMetricFreshness(paused, 'price', 'Цена', '0 ₽')).toEqual({title:'Цена: обновление не завершено, повторите поиск', value:'—'});
+  expect(productFreshnessLabel(paused)).toContain('Повторите');
+  expect(paused.freshness.commercialPending).toBe(true);
+});

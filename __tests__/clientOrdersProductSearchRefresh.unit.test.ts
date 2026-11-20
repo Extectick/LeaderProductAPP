@@ -5,7 +5,7 @@ const pending: PagedResult<ClientOrderProduct> = {items: [{guid: 'p', name: 'Ð¢Ð
   freshness: {source: 'local-read-model', catalogCheckedAt: null, commercialCheckedAt: null,
     stale: true, commercialPending: true, priceStatus: 'unknown', stockStatus: 'unknown'}}], meta: {}};
 const ready: PagedResult<ClientOrderProduct> = {...pending, items: [{...pending.items[0], basePrice: 125,
-  freshness: {...pending.items[0].freshness!, commercialPending: false}}]};
+  freshness: {...pending.items[0].freshness!, commercialPending: false, priceStatus: 'snapshot', commercialCheckedAt: '2026-11-20T10:00:00Z'}}]};
 beforeEach(() => jest.useFakeTimers());
 afterEach(() => jest.useRealTimers());
 
@@ -25,11 +25,11 @@ test('returns initial display independently and refreshes until commercial data 
 test('unknown source never causes an unbounded polling loop', async () => {
   const load = jest.fn().mockResolvedValue(pending), update = jest.fn();
   const task = refreshPendingProductSearch(pending, load, update, new AbortController().signal);
-  await jest.advanceTimersByTimeAsync(46999);
-  expect(load).toHaveBeenCalledTimes(3);
+  await jest.advanceTimersByTimeAsync(111999);
+  expect(load).toHaveBeenCalledTimes(5);
   await jest.advanceTimersByTimeAsync(1); await task;
-  expect(load).toHaveBeenCalledTimes(4);
-  expect(update.mock.calls.at(-1)[0].items[0].freshness.commercialPending).toBe(false);
+  expect(load).toHaveBeenCalledTimes(6);
+  expect(update.mock.calls.at(-1)[0].items[0].freshness).toMatchObject({commercialPending:true,refreshPaused:true});
   expect(jest.getTimerCount()).toBe(0);
 });
 
@@ -52,8 +52,8 @@ test('confirmed or live results do not poll and a failed refresh retains the dis
   await refreshPendingProductSearch(ready, load, update, new AbortController().signal);
   expect(load).not.toHaveBeenCalled();
   const task = refreshPendingProductSearch(pending, load, update, new AbortController().signal);
-  await jest.advanceTimersByTimeAsync(2000); await task;
-  expect(update.mock.calls[0][0].items[0].freshness.commercialPending).toBe(false); expect(jest.getTimerCount()).toBe(0);
+  await jest.advanceTimersByTimeAsync(112000); await task;
+  expect(update.mock.calls[0][0].items[0].freshness).toMatchObject({commercialPending:true,refreshPaused:true}); expect(jest.getTimerCount()).toBe(0);
 });
 
 
@@ -72,4 +72,39 @@ test.each([401, 403])('authorization loss %s clears all search cards instead of 
   await jest.advanceTimersByTimeAsync(2000); await task;
   expect(update).toHaveBeenLastCalledWith({items: [], meta: {accessDenied: true, hasMore: false}});
   expect(load).toHaveBeenCalledTimes(1);
+});
+
+
+test('slow price completion after the old budget and a transient failure is still applied', async () => {
+ const load=jest.fn().mockRejectedValueOnce(new Error('temporary')).mockImplementation(async()=>Date.now()-started>=60000?ready:pending),update=jest.fn();
+ const started=Date.now();const task=refreshPendingProductSearch(pending,load,update,new AbortController().signal);
+ await jest.advanceTimersByTimeAsync(112000);await task;
+ expect(update).toHaveBeenLastCalledWith(ready);
+ expect(load).toHaveBeenCalledTimes(5);
+});
+
+
+test('an unchecked price excluded from a full queue keeps bounded demand until a later admission', async () => {
+  const unqueued = {...pending, items: [{...pending.items[0], freshness: {...pending.items[0].freshness!, commercialPending: false}}]};
+  const load = jest.fn().mockResolvedValueOnce(unqueued).mockResolvedValueOnce(ready), update = jest.fn();
+  const task = refreshPendingProductSearch(unqueued, load, update, new AbortController().signal);
+  await jest.advanceTimersByTimeAsync(7000); await task;
+  expect(load).toHaveBeenCalledTimes(2); expect(update).toHaveBeenLastCalledWith(ready);
+});
+
+test('a checked missing price does not restart polling just because its value is unknown', async () => {
+  const missing = {...pending, items: [{...pending.items[0], freshness: {...pending.items[0].freshness!, commercialPending:false, commercialCheckedAt:'2026-11-20T10:00:00Z'}}]};
+  const load = jest.fn(), update = jest.fn();
+  await refreshPendingProductSearch(missing, load, update, new AbortController().signal);
+  expect(load).not.toHaveBeenCalled(); expect(update).not.toHaveBeenCalled();
+});
+
+
+test('exhaustion marks only unresolved rows, preserving already checked prices in the same page', async () => {
+  const mixed = {...pending, items: [...pending.items, {...ready.items[0],guid:'ready'}]};
+  const load = jest.fn().mockResolvedValue(mixed), update = jest.fn();
+  const task = refreshPendingProductSearch(mixed, load, update, new AbortController().signal);
+  await jest.advanceTimersByTimeAsync(112000); await task;
+  expect(update.mock.calls.at(-1)[0].items[0].freshness.refreshPaused).toBe(true);
+  expect(update.mock.calls.at(-1)[0].items[1].freshness.refreshPaused).toBeUndefined();
 });

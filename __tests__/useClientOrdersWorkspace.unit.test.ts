@@ -2997,14 +2997,15 @@ describe('useClientOrdersWorkspace', () => {
     });
   });
   async function auditedReadWorkspace() {
+    let active = true;
     let current!: ReturnType<typeof useClientOrdersWorkspace>;
-    const Harness = () => {current = useClientOrdersWorkspace({autoSelectLatestDraft: false, confirmDiscard: async () => true}); return null;};
+    const Harness = () => {current = useClientOrdersWorkspace({autoSelectLatestDraft: false, confirmDiscard: async () => true, isScreenActive: active}); return null;};
     const render = (userId: number) => React.createElement(AuthContext.Provider, {value: {
       isLoading: false, isAuthenticated: true, profile: {id: userId}, setAuthenticated: jest.fn(), setProfile: jest.fn(), signOut: jest.fn(),
     } as any}, React.createElement(Harness));
     let renderer!: TestRenderer.ReactTestRenderer;
     await act(async () => {renderer = TestRenderer.create(render(1));}); await flush();
-    return {get current() {return current;}, renderer, changeUser: async (userId: number) => {await act(async () => renderer.update(render(userId)));}};
+    return {get current() {return current;}, renderer, changeActive: async (value: boolean) => {active=value; await act(async()=>renderer.update(render(1)));}, changeUser: async (userId: number) => {await act(async () => renderer.update(render(userId)));}};
   }
 
   it('aborts superseded detail reads and a late old selection cannot cancel the new document', async () => {
@@ -3219,6 +3220,138 @@ describe('useClientOrdersWorkspace', () => {
     await act(async () => harness.renderer.unmount());
   });
 
+
+  it('fills local defaults immediately and later fills untouched fields after a comment edit', async () => {
+    const harness = await editableWorkspace();
+    const local:any = {pending:true,readState:pendingRead,agreement:{guid:'auto-a',name:'Auto'},contract:{guid:'auto-c',name:'Contract'},warehouse:null};
+    jest.mocked(getClientOrderDefaults).mockResolvedValueOnce(local).mockResolvedValue({...local,pending:false,readState:freshRead,warehouse:{guid:'auto-w',name:'Warehouse'}});
+    await act(async () => {await harness.current.setCounterparty({guid:'customer-new',name:'New'} as any);});
+    expect(harness.current.draft.agreementGuid).toBe('auto-a');
+    expect(harness.current.selections.agreement?.guid).toBe('auto-a');
+    expect(harness.current.defaultsPending).toBe(true);
+    await act(async () => {harness.current.patchDraft({comment:'User typed'});});
+    await act(async () => {await jest.advanceTimersByTimeAsync(2000);});
+    expect(harness.current.draft.warehouseGuid).toBe('auto-w');
+    expect(harness.current.draft.comment).toBe('User typed');
+    expect(harness.current.defaultsPending).toBe(false);
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('keeps an explicitly cleared warehouse through a late defaults response and manual retry', async () => {
+    const harness = await editableWorkspace();
+    const local:any={pending:true,readState:pendingRead};
+    const ready:any={pending:false,readState:freshRead,warehouse:{guid:'auto-w',name:'Warehouse'},contract:{guid:'auto-c',name:'Contract'}};
+    jest.mocked(getClientOrderDefaults).mockResolvedValueOnce(local).mockResolvedValue(ready);
+    await act(async()=>{await harness.current.setCounterparty({guid:'customer-new',name:'New'} as any);});
+    await act(async()=>{harness.current.setWarehouse(null);});
+    await act(async()=>{await jest.advanceTimersByTimeAsync(2000);});
+    expect(harness.current.draft.warehouseGuid).toBe('');expect(harness.current.draft.contractGuid).toBe('auto-c');
+    await act(async()=>{harness.current.retryDefaults();});await flush();
+    expect(harness.current.draft.warehouseGuid).toBe('');
+    await act(async()=>harness.renderer.unmount());
+  });
+
+  it('persists late autofill after the initial local autosave and does not resave identical polls', async () => {
+    const records = memoryDraftStore();
+    const harness = await editableWorkspace();
+    const local:any={pending:true,readState:pendingRead,contract:{guid:'auto-c',name:'Contract'}};
+    const ready:any={...local,pending:false,readState:freshRead,warehouse:{guid:'auto-w',name:'Warehouse'}};
+    jest.mocked(getClientOrderDefaults).mockResolvedValueOnce(local).mockResolvedValue(ready);
+    await act(async()=>{await harness.current.setCounterparty({guid:'customer-new',name:'New'} as any);});
+    await act(async()=>{await jest.advanceTimersByTimeAsync(400);});
+    expect(harness.current.dirty).toBe(false);
+    expect([...records.values()][0].order.localDraft.warehouseGuid).toBe('');
+    const oldSave = harness.current.saveDraft;
+    await act(async()=>{await jest.advanceTimersByTimeAsync(1600);});
+    expect(harness.current.draft.warehouseGuid).toBe('auto-w');
+    expect(harness.current.dirty).toBe(true);
+    await act(async()=>{expect(await oldSave({reason:'autosave'})).toBeNull();});
+    await act(async()=>{await jest.advanceTimersByTimeAsync(400);});
+    expect([...records.values()][0].order.localDraft.warehouseGuid).toBe('auto-w');
+    const writes = jest.mocked(applyOfflineDraftChanges).mock.calls.length;
+    await act(async()=>{harness.current.retryDefaults();}); await flush();
+    await act(async()=>{await jest.advanceTimersByTimeAsync(500);});
+    expect(jest.mocked(applyOfflineDraftChanges).mock.calls.length).toBe(writes);
+    await act(async()=>harness.renderer.unmount());
+  });
+
+  it('keeps a manual header price clear and manual item price through late defaults', async () => {
+    const harness = await editableWorkspace();
+    jest.mocked(getClientOrderDefaults).mockResolvedValueOnce({pending:true,readState:pendingRead})
+      .mockResolvedValue({priceType:{guid:'auto-price',name:'Auto'},warehouse:{guid:'auto-w',name:'Warehouse'},readState:freshRead});
+    await act(async()=>{await harness.current.setCounterparty({guid:'customer-new',name:'New'} as any);});
+    await act(async()=>{harness.current.setHeaderPriceType(null);});
+    await act(async()=>{harness.current.patchDraft(prev=>({...prev,items:prev.items.map(item=>({...item,manualPrice:'123'}))}));});
+    await act(async()=>{await jest.advanceTimersByTimeAsync(2000);});
+    expect(harness.current.draft.priceTypeGuid).toBeNull();
+    expect(harness.current.draft.items[0].manualPrice).toBe('123');
+    expect(harness.current.draft.warehouseGuid).toBe('auto-w');
+    await act(async()=>harness.renderer.unmount());
+  });
+
+  it('recovers defaults after a transient failure and a result taking longer than 47 seconds', async () => {
+    const harness = await editableWorkspace();
+    const started = Date.now();
+    jest.mocked(getClientOrderDefaults).mockRejectedValueOnce(new Error('temporarily unavailable')).mockImplementation(async()=>
+      Date.now()-started < 60000 ? {pending:true,readState:pendingRead} : {readState:freshRead,warehouse:{guid:'late-w',name:'Late'}});
+    await act(async()=>{await harness.current.setCounterparty({guid:'customer-new',name:'New'} as any);});
+    await act(async()=>{await jest.advanceTimersByTimeAsync(67000);});
+    expect(harness.current.draft.warehouseGuid).toBe('late-w');
+    expect(harness.current.defaultsRefreshStatus).toBe('idle');
+    await act(async()=>harness.renderer.unmount());
+  });
+
+  it('exposes bounded defaults exhaustion and manual retry without unbounded polling', async () => {
+    const harness = await editableWorkspace();
+    jest.mocked(getClientOrderDefaults).mockClear().mockResolvedValue({pending:true,readState:pendingRead});
+    await act(async()=>{await harness.current.setCounterparty({guid:'customer-new',name:'New'} as any);});
+    await act(async()=>{await jest.advanceTimersByTimeAsync(112000);});
+    expect(getClientOrderDefaults).toHaveBeenCalledTimes(7);
+    expect(harness.current.defaultsRefreshStatus).toBe('retry');
+    expect(harness.current.defaultsPending).toBe(true);
+    await act(async()=>{await jest.advanceTimersByTimeAsync(112000);});
+    expect(getClientOrderDefaults).toHaveBeenCalledTimes(7);
+    jest.mocked(getClientOrderDefaults).mockResolvedValue({readState:freshRead,warehouse:{guid:'retry-w',name:'Retry'}});
+    await act(async()=>{harness.current.retryDefaults();}); await flush();
+    expect(harness.current.draft.warehouseGuid).toBe('retry-w');
+    expect(harness.current.defaultsPending).toBe(false);
+    await act(async()=>harness.renderer.unmount());
+  });
+
+  it('pauses defaults on loss of screen focus and recovers on focus and reconnect', async () => {
+    const harness = await auditedReadWorkspace();
+    jest.mocked(getClientOrderDefaults).mockClear().mockResolvedValue({pending:true,readState:pendingRead});
+    await act(async()=>{await harness.current.setCounterparty({guid:'customer-new',name:'New'} as any);});
+    const signal = jest.mocked(getClientOrderDefaults).mock.calls.at(-1)?.[1]?.signal;
+    await harness.changeActive(false);
+    expect(signal?.aborted).toBe(true);
+    const count = jest.mocked(getClientOrderDefaults).mock.calls.length;
+    await act(async()=>{await jest.advanceTimersByTimeAsync(10000);});
+    expect(getClientOrderDefaults).toHaveBeenCalledTimes(count);
+    await harness.changeActive(true); await flush();
+    expect(getClientOrderDefaults).toHaveBeenCalledTimes(count+1);
+    await act(async()=>{setServerUnavailable('Network request failed');});
+    jest.mocked(getClientOrderDefaults).mockResolvedValue({readState:freshRead,warehouse:{guid:'reconnected',name:'Ready'}});
+    await act(async()=>{setServerReachable();}); await flush();
+    expect(harness.current.draft.warehouseGuid).toBe('reconnected');
+    expect(harness.current.defaultsPending).toBe(false);
+    await act(async()=>harness.renderer.unmount());
+  });
+
+  it('rejects old defaults after account change even if the same customer is selected again', async () => {
+    const harness = await auditedReadWorkspace();
+    let finish!: (value:any)=>void;
+    jest.mocked(getClientOrderDefaults).mockReturnValueOnce(new Promise(resolve=>{finish=resolve;}));
+    let waiting!: Promise<void>;
+    await act(async()=>{waiting=harness.current.setCounterparty({guid:'customer-new',name:'New'} as any);});
+    const signal=jest.mocked(getClientOrderDefaults).mock.calls.at(-1)?.[1]?.signal;
+    await harness.changeUser(2); await flush();
+    expect(signal?.aborted).toBe(true);
+    await act(async()=>{finish({warehouse:{guid:'old-account',name:'Old'}});await waiting;});
+    expect(harness.current.draft.warehouseGuid).toBe('');
+    expect(harness.current.selections.warehouse).toBeNull();
+    await act(async()=>harness.renderer.unmount());
+  });
 
   it('advances using the server cursor when a filtered incomplete page contains no rows', async () => {
     jest.mocked(getClientOrders).mockResolvedValue({items: [], meta: {total: 80, limit: 20, offset: 0, nextOffset: 20,

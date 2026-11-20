@@ -491,6 +491,8 @@ export type ClientOrderProduct = {
     receiptPriceCheckedAt?: string | null;
     stale: boolean;
     commercialPending: boolean;
+    /** Foreground budget exhausted; data remains unresolved and can be retried. */
+    refreshPaused?: boolean;
     receiptPricePending?: boolean;
     stockStatus: 'snapshot' | 'stale' | 'unknown';
     priceStatus: 'snapshot' | 'stale' | 'unknown';

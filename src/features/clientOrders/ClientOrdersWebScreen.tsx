@@ -1586,7 +1586,7 @@ export default function ClientOrdersWebScreen() {
 
     if (!append) setPickerItems([]);
     else setPickerItems(current => current.map(item => item.freshness ? {...item,
-      freshness: {...item.freshness, commercialPending: false, receiptPricePending: false}} : item));
+      freshness: {...item.freshness, refreshPaused: item.freshness.refreshPaused || item.freshness.commercialPending || item.freshness.receiptPricePending}} : item));
     setPickerLoadError(false);
     setPickerLoading(true);
     try {
@@ -2854,8 +2854,11 @@ export default function ClientOrdersWebScreen() {
                     <DeliveryDateField value={workspace.draft.deliveryDate} onChange={(date) => workspace.patchDraft({ deliveryDate: date })} disabled={editingLocked} />
                   </Box>
                   </Collapse>
-                  {workspace.loadingDefaults ? <Typography role="status">Загрузка условий…</Typography> : null}
-                  {!workspace.readOnly && draft.counterpartyGuid && !workspace.loadingDefaults && missingConditions.length ? <Button onClick={() => setDetailsExpanded(true)} sx={{ alignSelf: 'flex-start', p: 0, minHeight: 24, color: 'var(--co-warning)', textAlign: 'left' }}>Заполните условия: {missingConditions.join(', ').toLowerCase()}</Button> : null}
+                  {!workspace.readOnly && draft.counterpartyGuid && workspace.defaultsPending ? <Alert severity={workspace.defaultsRefreshStatus === 'retry' ? 'warning' : 'info'} sx={{py: 0}}
+                    action={<Button onClick={workspace.retryDefaults} disabled={workspace.loadingDefaults}>Повторить</Button>}>
+                    {workspace.defaultsRefreshStatus === 'retry' ? 'Условия клиента пока не удалось уточнить. Уже выбранные значения сохранены.' : 'Уточняем условия клиента в 1С. Можно продолжать заполнять заказ.'}
+                  </Alert> : null}
+                  {!workspace.readOnly && draft.counterpartyGuid && !workspace.defaultsPending && missingConditions.length ? <Button onClick={() => setDetailsExpanded(true)} sx={{ alignSelf: 'flex-start', p: 0, minHeight: 24, color: 'var(--co-warning)', textAlign: 'left' }}>Заполните условия: {missingConditions.join(', ').toLowerCase()}</Button> : null}
                   {workspace.verificationRequired ? <Alert severity="info" sx={{py: 0}} action={<Button onClick={workspace.retryDetailVerification}>Проверить</Button>}>Состояние заказа проверяется в 1С. Изменения сохраняются локально; результат проверки и проведения появится отдельно.</Alert> : null}
                   {workspace.readOnly && !workspace.verificationRequired ? <Alert severity="info" sx={{ py: 0 }}>{workspace.selectedOrder?.readOnlyReason || 'Заказ доступен только для просмотра. Создайте копию, чтобы оформить новый заказ.'}</Alert> : null}
                   {workspace.defaultsReadState?.verificationRequired ? <Alert severity="info" sx={{py: 0}}>Условия контрагента ещё проверяются. Текущие значения сохранены.</Alert> : null}
@@ -3409,6 +3412,7 @@ export default function ClientOrdersWebScreen() {
           </Box>
           <Box onScroll={handlePickerScroll} sx={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain' }}>
             {pickerLoadError ? <Button onClick={() => pickerKind && void loadPickerPage(pickerKind, pickerSearch, 0, false)}>Не удалось загрузить список. Повторить</Button> : null}
+            {pickerKind === 'product' && pickerItems.some(item => item.freshness?.refreshPaused) ? <Alert severity="info" action={<Button disabled={pickerLoading} onClick={() => {pickerLoadSignatureRef.current = ''; void loadPickerPage('product', pickerSearch, 0, false);}}>Повторить</Button>}>Цены ещё не уточнены. Повторите обновление.</Alert> : null}
             {pickerKind === 'product' && hasOrderContext && !purchaseHistory.ready ? <Typography sx={{ px: 2, py: 0.5, fontSize: 12, color: 'var(--co-muted)' }}>{purchaseHistory.loading ? 'Загружается история покупок…' : 'История покупок ещё не загружена'}</Typography> : null}
             {pickerKind === 'product' && purchaseHistory.error && workspace.online ? <Button startIcon={<Ionicons name="refresh" color="inherit" />} onClick={purchaseHistory.refresh}>Повторить загрузку истории</Button> : null}
             {pickerKind === 'product' && purchasedOnly && purchaseHistory.snapshot ? <Typography sx={{ px: 2, py: 0.5, fontSize: 12, color: 'var(--co-muted)' }}>Покупки с 31.03.2026 · данные на {purchaseHistory.snapshot.asOf.slice(0, 10).split('-').reverse().join('.')}</Typography> : null}
