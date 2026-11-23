@@ -14,13 +14,21 @@ describe('user error messages', () => {
 
     expect(isNetworkUnavailableError(nativeError)).toBe(true);
     expect(toUserErrorMessage(nativeError, 'Не удалось загрузить список')).toBe(
-      ONEC_CONNECTION_UNAVAILABLE_MESSAGE
+      SERVER_CONNECTION_UNAVAILABLE_MESSAGE
     );
     expect(toUserErrorMessage(nativeError, 'Не удалось загрузить список')).not.toContain('155.212.144.191');
   });
 
   it('recognizes the safe server reconnect message as a transient connection error', () => {
     expect(isNetworkUnavailableError(SERVER_CONNECTION_UNAVAILABLE_MESSAGE)).toBe(true);
+  });
+
+  it('separates an upstream 1C failure from the phone internet connection', () => {
+    expect(toUserErrorMessage({errorCode: 'ONEC_UNAVAILABLE', message: 'request timeout'}, 'Ошибка'))
+      .toBe(ONEC_CONNECTION_UNAVAILABLE_MESSAGE);
+    expect(toUserErrorMessage('Нет связи с 1С', 'Ошибка')).toBe(ONEC_CONNECTION_UNAVAILABLE_MESSAGE);
+    expect(ONEC_CONNECTION_UNAVAILABLE_MESSAGE).not.toContain('интернет');
+    expect(isNetworkUnavailableError(ONEC_CONNECTION_UNAVAILABLE_MESSAGE)).toBe(true);
   });
 
   it('keeps a normal business error', () => {

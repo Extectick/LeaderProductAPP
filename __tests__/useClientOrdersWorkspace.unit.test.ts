@@ -1,3 +1,4 @@
+import {ONEC_CONNECTION_UNAVAILABLE_MESSAGE, SERVER_CONNECTION_UNAVAILABLE_MESSAGE} from '@/src/shared/errors/userErrorMessage';
 jest.mock('@/utils/apiClient', () => ({apiClient: jest.fn()}));
 
 import React from 'react';
@@ -518,11 +519,97 @@ describe('useClientOrdersWorkspace', () => {
       expect(getClientOrderSettings).not.toHaveBeenCalled();
       await act(async () => { setServerReachable(); });
       await act(async () => { await harness.current.refreshOrders(); });
-      expect(harness.current.ordersError).toContain('Нет связи с 1С');
+      expect(harness.current.ordersError).toBe(ONEC_CONNECTION_UNAVAILABLE_MESSAGE);
       expect(harness.current.ordersConnectionNotice).toBeNull();
     } finally {
       await act(async () => harness.renderer.unmount());
     }
+  });
+
+  it('recovers a stale read error from a verified background snapshot, but not from a cached pending page', async () => {
+    const saved = queuedOrder(0, {status: 'CONFIRMED', syncState: 'SYNCED'});
+    const page = {items: [saved], meta: {total: 1, limit: 20, offset: 0}};
+    jest.mocked(getClientOrders).mockResolvedValue({...page, meta: {...page.meta,
+      liveSource: {status: 'unavailable', message: 'Нет связи с 1С'}}} as any);
+    const harness = await ordersListWorkspace();
+    try {
+      await act(async () => {await harness.current.refreshOrders();});
+      expect(harness.current.ordersError).toBe(ONEC_CONNECTION_UNAVAILABLE_MESSAGE);
+      const stale = {source: 'local', checkedAt: null, stale: true, refreshPending: false, verificationRequired: true};
+      jest.mocked(getClientOrders).mockResolvedValue({...page, items: [{...saved, readState: stale}],
+        meta: {...page.meta, readState: stale, liveSource: {status: 'pending', message: 'Проверяем документы в 1С'}}} as any);
+      await act(async () => {await jest.advanceTimersByTimeAsync(3_000);});
+      await flush();
+      expect(harness.current.ordersError).toBe(ONEC_CONNECTION_UNAVAILABLE_MESSAGE);
+      expect(harness.current.orders[0].readState?.verificationRequired).toBe(true);
+      const verified = {...stale, source: 'verified-snapshot', checkedAt: new Date().toISOString(), stale: false, verificationRequired: false};
+      jest.mocked(getClientOrders).mockResolvedValue({...page, items: [{...saved, readState: verified}], meta: {...page.meta, readState: verified}} as any);
+      await act(async () => {await jest.advanceTimersByTimeAsync(10_000);});
+      await flush();
+      expect(harness.current.ordersError).toBeNull();
+      expect(harness.current.orders[0].readState?.verificationRequired).toBe(false);
+    } finally {await act(async () => harness.renderer.unmount());}
+  });
+
+  it('automatically replaces pending local status with the verified 1C status', async () => {
+    const pending = {source: 'local', checkedAt: null, stale: true, refreshPending: true, verificationRequired: true};
+    const verified = {source: 'verified-snapshot', checkedAt: new Date().toISOString(), stale: false, refreshPending: false, verificationRequired: false};
+    const saved = queuedOrder(0, {status: 'CONFIRMED', syncState: 'SYNCED', number1c: 'НОУТ-141919', readState: pending} as any);
+    const page = {items: [saved], meta: {total: 1, limit: 20, offset: 0, readState: pending, liveSource: {status: 'pending', message: 'Проверяем документы в 1С'}}};
+    jest.mocked(getClientOrders).mockResolvedValue(page as any);
+    const harness = await ordersListWorkspace();
+    try {
+      await act(async () => {await jest.advanceTimersByTimeAsync(150);});
+      expect(harness.current.ordersError).toBeNull();
+      expect(harness.current.orders[0].readState?.verificationRequired).toBe(true);
+      jest.mocked(getClientOrders).mockResolvedValue({...page,
+        items: [{...saved, status: 'SHIPPING_IN_PROGRESS', readState: verified}],
+        meta: {...page.meta, readState: verified, liveSource: {status: 'ok'}}} as any);
+      await act(async () => {await jest.advanceTimersByTimeAsync(2_000);}); await flush();
+      expect(harness.current.orders[0].status).toBe('SHIPPING_IN_PROGRESS');
+      expect(harness.current.orders[0].readState?.verificationRequired).toBe(false);
+      expect(harness.current.ordersError).toBeNull();
+    } finally {await act(async () => harness.renderer.unmount());}
+  });
+
+  it.each(['pending', 'failure'])('ignores an older foreground %s after a newer silent verified response', async outcome => {
+    const saved = queuedOrder(0, {status: 'CONFIRMED', syncState: 'SYNCED'});
+    const page = {items: [saved], meta: {total: 1, limit: 20, offset: 0}};
+    jest.mocked(getClientOrders).mockResolvedValue({...page, meta: {...page.meta, liveSource: {status: 'unavailable', message: 'Нет связи с 1С'}}} as any);
+    const harness = await ordersListWorkspace();
+    try {
+      await act(async () => {await jest.advanceTimersByTimeAsync(150);});
+      expect(harness.current.ordersError).toBe(ONEC_CONNECTION_UNAVAILABLE_MESSAGE);
+      let resolveOld!: (value: any) => void; let rejectOld!: (error: any) => void;
+      const old = new Promise<any>((resolve, reject) => {resolveOld = resolve; rejectOld = reject;});
+      const verified = {source: 'verified-snapshot', checkedAt: new Date().toISOString(), stale: false, refreshPending: false, verificationRequired: false};
+      jest.mocked(getClientOrders).mockImplementationOnce(() => old).mockResolvedValue({...page,
+        items: [{...saved, status: 'SHIPPING_IN_PROGRESS', readState: verified}], meta: {...page.meta, readState: verified}} as any);
+      let foreground!: Promise<any>;
+      await act(async () => {foreground = harness.current.refreshOrders();});
+      await act(async () => {await jest.advanceTimersByTimeAsync(3_000);}); await flush();
+      expect(harness.current.ordersError).toBeNull();
+      await act(async () => {
+        if (outcome === 'failure') rejectOld(new Error('Нет связи с 1С'));
+        else resolveOld({...page, meta: {...page.meta, liveSource: {status: 'pending', message: 'Проверяем документы в 1С'}}});
+        await foreground;
+      });
+      expect(harness.current.ordersError).toBeNull();
+      expect(harness.current.orders[0].status).toBe('SHIPPING_IN_PROGRESS');
+      expect(harness.current.orders[0].readState?.verificationRequired).toBe(false);
+    } finally {await act(async () => harness.renderer.unmount());}
+  });
+
+  it('does not clear an explicit action failure on background read recovery', async () => {
+    const page = {items: [queuedOrder(0, {status: 'CONFIRMED', syncState: 'SYNCED'})], meta: {total: 1, limit: 20, offset: 0, liveSource: {status: 'ok'}}};
+    jest.mocked(getClientOrders).mockResolvedValue(page as any);
+    const harness = await ordersListWorkspace();
+    try {
+      await act(async () => {await jest.advanceTimersByTimeAsync(150);});
+      await act(async () => {harness.current.setOrdersError(ONEC_CONNECTION_UNAVAILABLE_MESSAGE);});
+      await act(async () => {await jest.advanceTimersByTimeAsync(3_000);}); await flush();
+      expect(harness.current.ordersError).toBe(ONEC_CONNECTION_UNAVAILABLE_MESSAGE);
+    } finally {await act(async () => harness.renderer.unmount());}
   });
 
   it('does not hide non-network list errors in offline mode', async () => {
@@ -549,7 +636,7 @@ describe('useClientOrdersWorkspace', () => {
       expect(harness.current.ordersError).toBeNull();
       jest.mocked(submitClientOrder).mockRejectedValue(new Error('Network request failed'));
       await act(async () => { await harness.current.submitOrderFromList(queuedOrder(0, { status: 'DRAFT', syncState: 'DRAFT' }) as any); });
-      expect(harness.current.ordersError).toContain('Нет связи с 1С');
+      expect(harness.current.ordersError).toBe(SERVER_CONNECTION_UNAVAILABLE_MESSAGE);
     } finally {
       await act(async () => harness.renderer.unmount());
     }

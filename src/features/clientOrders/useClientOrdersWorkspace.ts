@@ -1,3 +1,4 @@
+import {orderConnectionReadUpdate} from './lib/orderConnectionStatus';
 import { refreshPendingSnapshot } from '@/utils/refreshPendingSnapshot';
 import {refreshUnresolvedSnapshot} from '@/utils/refreshUnresolvedSnapshot';
 import {DEFAULT_SUGGESTION_FIELDS, defaultsNeedRefresh, mergeDefaultSuggestions} from './lib/defaultSuggestions';
@@ -1397,7 +1398,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const [ordersErrorState, setOrdersErrorState] = React.useState<{ message: string | null; source: 'read' | 'action' }>({ message: null, source: 'read' });
   const ordersError = ordersErrorState.message;
   const setOrdersError = React.useCallback((message: string | null) => setOrdersErrorState({ message, source: 'action' }), []);
-  const setOrdersReadError = React.useCallback((message: string | null) => setOrdersErrorState({ message, source: 'read' }), []);
+  const setOrdersReadError = React.useCallback((message: string | null) => setOrdersErrorState(current =>
+    current.source === 'action' && current.message ? current : {message, source: 'read'}), []);
   const [ordersAppendError, setOrdersAppendError] = React.useState<string | null>(null);
   const [dirty, setDirty] = React.useState(false);
 
@@ -1441,6 +1443,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const contextRefreshSignatureRef = React.useRef('');
   const ordersRequestIdRef = React.useRef(0);
   const silentOrdersRequestIdRef = React.useRef(0);
+  const ordersConnectionRequestIdRef = React.useRef(0);
   const detailRequestIdRef = React.useRef(0);
   const defaultsRequestIdRef = React.useRef(0);
   const enumOptionsRequestIdRef = React.useRef(0);
@@ -2998,6 +3001,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     if (!silent) readControllers.current.silentOrders?.abort();
     const offset = mode === 'append' ? ordersNextOffsetRef.current : 0;
     const requestId = silent ? ++silentOrdersRequestIdRef.current : ++ordersRequestIdRef.current;
+    const connectionRequestId = ++ordersConnectionRequestIdRef.current;
     const mutationVersion = ordersMutationVersionRef.current;
     const isContextStale = () => controller.signal.aborted || ordersMutationVersionRef.current !== mutationVersion
       || activeOfflineUserRef.current !== offlineUserId
@@ -3008,7 +3012,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       setOrdersAppendError(null);
     } else if (!silent) {
       setLoadingOrders(true);
-      setOrdersError(null);
+      // Keep the last read failure until a response confirms recovery. A
+      // successful local/cache response alone must not erase an upstream fault.
+      setOrdersErrorState(current => current.source === 'action' ? {message: null, source: 'read'} : current);
       setOrdersAppendError(null);
     }
 
@@ -3037,12 +3043,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       const requestIsStale = silent
         ? silentOrdersRequestIdRef.current !== requestId
         : ordersRequestIdRef.current !== requestId;
-      if (requestIsStale || isContextStale()) return;
-      const liveSource = result.meta.liveSource;
-      if (liveSource?.status && liveSource.status !== 'ok' && liveSource.message) {
-        setOrdersReadError(userErrorMessage(liveSource.message, 'Нет связи с 1С. Повторите попытку позже.'));
-      } else if (liveSource?.status === 'ok') {
-        setOrdersError(null);
+      if (requestIsStale || ordersConnectionRequestIdRef.current !== connectionRequestId || isContextStale()) return;
+      if (ordersConnectionRequestIdRef.current === connectionRequestId) {
+        const connectionUpdate = orderConnectionReadUpdate(result.meta);
+        if (connectionUpdate !== undefined) setOrdersReadError(connectionUpdate);
       }
       const rawList = Array.isArray(result.items) ? result.items : [];
       const currentOrders = apiOrdersRef.current.filter(order => !isDeviceOnlyOrder(order));
@@ -3149,12 +3153,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       const requestIsStale = silent
         ? silentOrdersRequestIdRef.current !== requestId
         : ordersRequestIdRef.current !== requestId;
-      if (requestIsStale || isContextStale()) return;
+      if (requestIsStale || ordersConnectionRequestIdRef.current !== connectionRequestId || isContextStale()) return;
       const message = userErrorMessage(e, mode === 'append' ? 'Не удалось загрузить ещё документы.' : 'Не удалось загрузить список заказов.');
       if (mode === 'append') {
         setOrdersAppendError(message);
       } else {
-        setOrdersReadError(message);
+        if (ordersConnectionRequestIdRef.current === connectionRequestId) setOrdersReadError(message);
         if (!silent) markOrdersInitialLoadDone();
       }
     } finally {

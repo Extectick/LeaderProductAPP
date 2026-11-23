@@ -1,11 +1,12 @@
 export const ONEC_CONNECTION_UNAVAILABLE_MESSAGE =
-  'Нет связи с 1С. Проверьте интернет-соединение. Приложение повторит подключение автоматически.';
+  'Не удалось обновить данные из 1С. Приложение повторит проверку автоматически.';
 export const SERVER_CONNECTION_UNAVAILABLE_MESSAGE =
   'Нет связи с сервером. Проверьте интернет-соединение. Подключение восстановится автоматически.';
 
 type ErrorLike = {
   status?: number;
   errorCode?: string;
+  backendErrorCode?: string;
   code?: string;
   name?: string;
   message?: string;
@@ -22,11 +23,19 @@ export function errorMessageText(value: unknown) {
   return String(record.message || '').trim();
 }
 
+export function isOnecConnectionUnavailableError(value: unknown) {
+  const record = errorRecord(value);
+  const message = errorMessageText(value).toLocaleLowerCase('ru');
+  return [record.code, record.errorCode, record.backendErrorCode].includes('ONEC_UNAVAILABLE')
+    || /нет связи (?:сервера приложения )?с 1[сc]|1[сc] временно недоступ|не удалось (?:обновить данные|загрузить документы) из 1[сc]/.test(message);
+}
+
 export function isNetworkUnavailableError(value: unknown) {
   const record = errorRecord(value);
   const message = errorMessageText(value).toLocaleLowerCase('ru');
   return (
-    record.status === 0
+    isOnecConnectionUnavailableError(value)
+    || record.status === 0
     || record.errorCode === 'NETWORK_UNAVAILABLE'
     || record.code === 'NETWORK_UNAVAILABLE'
     || record.name === 'AbortError'
@@ -82,7 +91,8 @@ export function isTechnicalErrorMessage(value: unknown) {
 }
 
 export function toUserErrorMessage(value: unknown, fallback: string) {
-  if (isNetworkUnavailableError(value)) return ONEC_CONNECTION_UNAVAILABLE_MESSAGE;
+  if (isOnecConnectionUnavailableError(value)) return ONEC_CONNECTION_UNAVAILABLE_MESSAGE;
+  if (isNetworkUnavailableError(value)) return SERVER_CONNECTION_UNAVAILABLE_MESSAGE;
   const message = errorMessageText(value);
   return isTechnicalErrorMessage(message) ? fallback : message.slice(0, 240);
 }
