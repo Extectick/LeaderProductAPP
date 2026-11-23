@@ -1,3 +1,4 @@
+import { Skeleton } from 'moti/skeleton';
 import { ReadSnapshotLabel } from './components/ReadSnapshotLabel';
 import { orderProfitFreshnessHint, summaryFreshnessHint } from './lib/orderReadFreshness';
 import { fillUnknownSelectedProduct, mergeRefreshedProductPage } from './lib/productFreshness';
@@ -29,6 +30,8 @@ import {
   getClientOrderItemsCount,
   getClientOrderDisplayNumber,
   getDisplayedUnitPriceValue,
+  getEffectiveBasePrice,
+  MISSING_SELLING_PRICE_MESSAGE,
   getClientOrdersResponsiveMetrics,
   getOrderDisplayStatus,
   getOrderDisplayStatusLabelWithQueue,
@@ -90,7 +93,7 @@ import {
 import { useClientOrdersWorkspace } from './hooks/useClientOrdersWorkspace';
 import { useCustomerPurchaseHistory } from './hooks/useCustomerPurchaseHistory';
 import { ProductPickerSnapshot } from './lib/productPickerSnapshot';
-import { applyProductPickerQuantity, productPickerQuantity, type ProductQuantityChange } from './lib/productPickerQuantity';
+import { productPickerQuantity, type ProductQuantityChange } from './lib/productPickerQuantity';
 import { ProductPickerRow, ProductPickerMetrics } from './screen/mobile/ProductPickerRow';
 import { getClientOrderInvoices, getClientOrderProductsBatch, getClientOrderReferenceDetails, requestClientOrderInvoice } from '@/utils/clientOrdersService';
 import type { ClientOrder, ClientOrderCounterpartyOption, ClientOrderInvoice, ClientOrderOrganization, ClientOrderPriceTypeOption, ClientOrderProduct, ClientOrderReferenceDetails, ClientOrderReferenceKind, ClientOrdersTodaySummary, ClientOrderWarehouseOption } from '@/utils/clientOrdersService';
@@ -1835,14 +1838,6 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     setSelectedProducts(new Map());
   }, []);
 
-  const changePickerQuantity = React.useCallback((product: ClientOrderProduct, change: ProductQuantityChange) => {
-    if (workspace.readOnly || workspace.mutationLocked) return;
-    const newItem = buildNewItem(product);
-    workspace.patchDraft(current => ({ ...current,
-      items: applyProductPickerQuantity(current.items, product, change, newItem),
-    }));
-  }, [workspace.readOnly, workspace.mutationLocked, workspace.patchDraft]);
-
   const transferSelectedProducts = React.useCallback(() => {
     const firstNewIndex = workspace.draft.items.length;
     const addedKeys = transferSelectedProductsToOrder(selectedProducts, workspace.draft.items, workspace.addProduct, { quantity: 0 });
@@ -3134,6 +3129,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
                     currency={workspace.draft.currency}
                     readOnly={!!workspace.readOnly}
                     mutationLocked={!!workspace.mutationLocked}
+                    pendingItemPriceKeys={workspace.pendingItemPriceKeys}
                     itemMessages={workspace.validation.itemMessages}
                     itemWarnings={workspace.validation.itemWarnings}
                     onEditItem={openLineEditor}
@@ -3249,7 +3245,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           online={isReachable}
           onPressProduct={handleProductPickerPress}
           onLongPressProduct={handleProductPickerLongPress}
-          onChangeQuantity={changePickerQuantity}
+          onChangeQuantity={workspace.changePickerQuantity}
           mutationLocked={workspace.readOnly || workspace.mutationLocked}
           onOpenImages={openProductGallery}
           onScroll={handlePickerScroll}
@@ -4824,7 +4820,10 @@ function DocumentBottomBar({
     extrapolate: 'clamp',
   });
   const currency = workspace.draft.currency;
-  const profitAvailable = !!workspace.localProfitAvailable;
+  const awaitingPrice = (workspace.pendingItemPriceKeys?.size ?? 0) > 0;
+  const missingPrice = !workspace.readOnly && workspace.draft.items.some((item: DraftItem) =>
+    !isCancelledDraftItem(item) && getEffectiveBasePrice(item) == null);
+  const profitAvailable = !!workspace.localProfitAvailable && !missingPrice;
   const profitLoading = !!workspace.loadingReceiptPrices
     && workspace.draft.items.some((item: DraftItem) => !isCancelledDraftItem(item));
   const profitValue = profitAvailable
@@ -4847,11 +4846,11 @@ function DocumentBottomBar({
     {
       key: 'total',
       label: 'Сумма',
-      value: formatMoney(workspace.localTotal, currency),
+      value: missingPrice ? '—' : formatMoney(workspace.localTotal, currency),
       icon: 'cash-multiple',
       color: '#2563EB',
-      loading: false,
-      description: 'Итоговая сумма по активным строкам заказа с учетом скидок.',
+      loading: awaitingPrice,
+      description: missingPrice ? 'Для расчёта суммы нужна цена каждой позиции.' : 'Итоговая сумма по активным строкам заказа с учетом скидок.',
     },
     {
       key: 'empty',
@@ -4867,12 +4866,12 @@ function DocumentBottomBar({
       key: 'profit',
       label: 'Прибыль',
       labelSuffix: markupPercent === null ? null : formatMarkupPercent(markupPercent),
-      value: profitAvailable ? profitValue : 'Рассчитать',
+      value: missingPrice ? '—' : profitAvailable ? profitValue : 'Рассчитать',
       icon: 'chart-line',
       color: profitColor,
-      loading: profitLoading,
-      action: !profitAvailable && !profitLoading ? workspace.refreshDocumentProfit : undefined,
-      description: profitAvailable
+      loading: awaitingPrice || profitLoading,
+      action: !missingPrice && !profitAvailable && !profitLoading ? workspace.refreshDocumentProfit : undefined,
+      description: missingPrice ? 'Для расчёта прибыли нужна цена продажи каждой позиции.' : profitAvailable
         ? 'Прибыль рассчитана по активным строкам с известной ценой поступления. Процент — наценка к себестоимости. Строки без себестоимости пропущены.'
         : 'Прибыль появится после получения хотя бы одной цены поступления.',
     },
@@ -5013,6 +5012,7 @@ const ItemsSection = React.memo(function ItemsSection({
   currency,
   readOnly,
   mutationLocked,
+  pendingItemPriceKeys,
   itemMessages,
   itemWarnings,
   onEditItem,
@@ -5028,6 +5028,7 @@ const ItemsSection = React.memo(function ItemsSection({
   currency: string;
   readOnly: boolean;
   mutationLocked: boolean;
+  pendingItemPriceKeys?: ReadonlySet<string>;
   itemMessages: Record<string, string[]>;
   itemWarnings: Record<string, string[]>;
   onEditItem: (key: string) => void;
@@ -5042,13 +5043,14 @@ const ItemsSection = React.memo(function ItemsSection({
       currency={currency}
       readOnly={readOnly}
       mutationLocked={mutationLocked}
+      pricePending={pendingItemPriceKeys?.has(item.key) === true}
       lineMessages={itemMessages[item.key] || EMPTY_LINE_MESSAGES}
       lineWarnings={itemWarnings?.[item.key] || EMPTY_LINE_MESSAGES}
       onEditItem={onEditItem}
       onRemoveItem={onRemoveItem}
       onOpenImages={onOpenImages}
     />
-  ), [currency, generalDiscountPercent, itemMessages, itemWarnings, mutationLocked, onEditItem, onOpenImages, onRemoveItem, readOnly]);
+  ), [currency, generalDiscountPercent, itemMessages, itemWarnings, pendingItemPriceKeys, mutationLocked, onEditItem, onOpenImages, onRemoveItem, readOnly]);
   const keyExtractor = React.useCallback((item: any) => String(item.key), []);
   const ListComponentWithRef=(ListComponent??FlatList) as typeof FlatList;
 
@@ -5086,6 +5088,7 @@ function areLineItemCardPropsEqual(previous: any, next: any) {
     && previous.generalDiscountPercent === next.generalDiscountPercent
     && previous.currency === next.currency
     && previous.readOnly === next.readOnly
+    && previous.pricePending === next.pricePending
     && previous.mutationLocked === next.mutationLocked
     && previous.onEditItem === next.onEditItem
     && previous.onRemoveItem === next.onRemoveItem
@@ -5101,6 +5104,7 @@ const LineItemCard = React.memo(function LineItemCard({
   currency,
   readOnly: documentReadOnly,
   mutationLocked,
+  pricePending,
   lineMessages,
   lineWarnings,
   onEditItem,
@@ -5113,16 +5117,20 @@ const LineItemCard = React.memo(function LineItemCard({
   currency: string;
   readOnly: boolean;
   mutationLocked: boolean;
+  pricePending: boolean;
   lineMessages: string[];
   lineWarnings: string[];
   onEditItem: (key: string) => void;
   onRemoveItem: (key: string) => void;
   onOpenImages: (item: any) => void;
 }) {
+  const effectivePrice = getEffectiveBasePrice(item);
+  const priceUnknown = effectivePrice == null || (pricePending && effectivePrice <= 0 && !hasManualPrice(item));
   const displayedPrice = getDisplayedUnitPriceValue(item);
   const lineTotalAmount = documentReadOnly&&typeof item.readOnlyLineAmount==='number'&&Number.isFinite(item.readOnlyLineAmount)?item.readOnlyLineAmount:computeLineTotal(item, generalDiscountPercent);
-  const lineTotal = formatMoney(lineTotalAmount, currency);
-  const lineProfitAvailable = canComputeLineProfit(item);
+  const hasDocumentAmount = documentReadOnly && Number.isFinite(item.readOnlyLineAmount);
+  const lineTotal = priceUnknown && !hasDocumentAmount ? '—' : formatMoney(lineTotalAmount, currency);
+  const lineProfitAvailable = !priceUnknown && canComputeLineProfit(item);
   const lineProfitAmount = lineProfitAvailable
     ? computeLineProfit(item, generalDiscountPercent, lineTotalAmount)
     : 0;
@@ -5134,7 +5142,9 @@ const LineItemCard = React.memo(function LineItemCard({
   const lineProfitColor = lineProfitAmount < 0 ? '#DC2626' : '#16A34A';
   const packageLabelText = linePackageShortLabel(item);
   const muteValidation = documentReadOnly;
-  const visibleLineMessages = muteValidation ? [] : lineMessages;
+  const visibleLineMessages = muteValidation ? [] : pricePending && priceUnknown
+    ? lineMessages.filter(message => message !== MISSING_SELLING_PRICE_MESSAGE && message !== 'Цена должна быть больше 0.')
+    : lineMessages;
   const visibleLineWarnings = muteValidation ? [] : lineWarnings;
   const hasErrors = visibleLineMessages.length > 0;
   const hasWarnings = visibleLineWarnings.length > 0;
@@ -5213,7 +5223,11 @@ const LineItemCard = React.memo(function LineItemCard({
             <Text style={[styles.productPreviewPackage, readOnly && styles.productPreviewMetaReadOnly]} numberOfLines={1}>{packageLabelText}</Text>
             <Text style={[styles.productPreviewFormulaSeparator, readOnly && styles.productPreviewFormulaSeparatorReadOnly]}>×</Text>
             {manualPrice ? <MaterialCommunityIcons name="pencil-outline" size={12} color={hasErrors || hasWarnings ? '#DC2626' : '#64748B'} /> : null}
-            <Text style={[styles.productPreviewPrice, readOnly && styles.productPreviewPriceReadOnly]} numberOfLines={1}>{displayedPrice || '0'} {(currency || DEFAULT_ORDER_CURRENCY).toUpperCase()==='RUB'?'₽':currency || DEFAULT_ORDER_CURRENCY}</Text>
+            {priceUnknown && pricePending ? <SellingPriceSkeleton /> : (
+              <Text style={[styles.productPreviewPrice, readOnly && styles.productPreviewPriceReadOnly]} numberOfLines={1}>
+                {priceUnknown ? '—' : `${displayedPrice} ${(currency || DEFAULT_ORDER_CURRENCY).toUpperCase() === 'RUB' ? '₽' : currency || DEFAULT_ORDER_CURRENCY}`}
+              </Text>
+            )}
           </View>
           <View style={styles.productPreviewTotals}>
             <Text style={[styles.productPreviewTotal, readOnly && styles.productPreviewTotalReadOnly]} numberOfLines={1}>{lineTotal}</Text>
@@ -5226,6 +5240,14 @@ const LineItemCard = React.memo(function LineItemCard({
     </Pressable>
   );
 }, areLineItemCardPropsEqual);
+
+function SellingPriceSkeleton() {
+  return (
+    <View accessible accessibilityRole="progressbar" accessibilityLabel="Загрузка цены" accessibilityState={{ busy: true }}>
+      <Skeleton colorMode="light" radius={3} width={58} height={14} />
+    </View>
+  );
+}
 
 function ProductThumb({
   item,
@@ -5553,7 +5575,7 @@ function ProductLineEditorSheet({
   const [keyboardVisible, setKeyboardVisible] = React.useState(false);
   const [quantityInputValue, setQuantityInputValue] = React.useState(() => String(item?.quantity ?? ''));
   const priceInputRef = React.useRef<any>(null);
-  const currentDisplayedPrice = getDisplayedUnitPriceValue(displayedItem);
+  const currentDisplayedPrice = getEffectiveBasePrice(displayedItem) == null ? '' : getDisplayedUnitPriceValue(displayedItem);
   const displayedItemKey = displayedItem?.key || displayedItem?.productGuid || '';
   const sourceQuantityValue = String(displayedItem?.quantity ?? '');
   const quantityValueRef = React.useRef(quantityInputValue);
@@ -5672,7 +5694,7 @@ function ProductLineEditorSheet({
   if (!displayedItem) return null;
 
   const localManualPrice = priceFocused
-    ? (priceInputValue === '' ? '0' : displayedUnitPriceToBasePriceInput(priceInputValue, displayedItem))
+    ? (priceInputValue === '' ? displayedItem.manualPrice : displayedUnitPriceToBasePriceInput(priceInputValue, displayedItem))
     : displayedItem.manualPrice;
   const displayedItemWithLocalEdits = quantityInputValue === sourceQuantityValue && !priceFocused
     ? displayedItem
@@ -5684,14 +5706,14 @@ function ProductLineEditorSheet({
   const currentManualPrice = displayedItemWithLocalEdits.manualPrice || '';
   const priceValid = readOnly || !currentManualPrice || isValidManualPriceValue(currentManualPrice);
   const displayedPrice = currentDisplayedPrice;
+  const showPriceSkeleton = !priceFocused && !hasManualPrice(displayedItem)
+    && workspace.pendingItemPriceKeys?.has(displayedItem.key) === true;
   const priceInputDisplayValue = priceFocused && previousDisplayedItemKeyRef.current === displayedItemKey
     ? priceInputValue
     : displayedPrice;
   const lineTotalAmount = computeLineTotal(displayedItemWithLocalEdits, workspace.draft.generalDiscountPercent);
-  const lineTotal = formatMoney(
-    lineTotalAmount,
-    displayedItem.currency || workspace.draft.currency
-  );
+  const lineTotal = getEffectiveBasePrice(displayedItemWithLocalEdits) == null ? '—'
+    : formatMoney(lineTotalAmount, displayedItem.currency || workspace.draft.currency);
   const lineProfitAvailable = canComputeLineProfit(displayedItemWithLocalEdits);
   const lineProfitAmount = lineProfitAvailable
     ? computeLineProfit(displayedItemWithLocalEdits, workspace.draft.generalDiscountPercent, lineTotalAmount)
@@ -5840,8 +5862,8 @@ function ProductLineEditorSheet({
             <View style={[styles.productEditorPriceBox, !priceValid && styles.productEditorPriceBoxInvalid, readOnly && styles.productEditorReadOnlySurface]}>
               <SheetTextInput
                 ref={priceInputRef}
-                value={priceInputDisplayValue}
-                placeholder="0"
+                value={showPriceSkeleton ? '' : priceInputDisplayValue}
+                placeholder={showPriceSkeleton ? '' : readOnly ? '—' : 'Введите цену'}
                 placeholderTextColor="#94A3B8"
                 keyboardType="decimal-pad"
                 selectTextOnFocus
@@ -5867,6 +5889,9 @@ function ProductLineEditorSheet({
                 }}
                 style={[styles.productEditorPriceInput, styles.productEditorPriceInputContent, readOnly && styles.productEditorReadOnlyInputText]}
               />
+              {showPriceSkeleton ? <View pointerEvents="none" style={styles.productEditorPriceSkeleton}>
+                <SellingPriceSkeleton />
+              </View> : null}
               <Text style={[styles.productEditorCurrency, readOnly && styles.productEditorReadOnlyMutedText]}>₽</Text>
               <Pressable
                 accessibilityRole="button"
@@ -8330,6 +8355,7 @@ const styles = StyleSheet.create({
   productEditorPackageButtonActive: { borderColor: '#2563EB', backgroundColor: '#FFFFFF' },
   productEditorPackageText: { color: '#64748B', fontSize: 11, fontWeight: '700' },
   productEditorPackageTextActive: { color: '#2563EB', fontWeight: '900' },
+  productEditorPriceSkeleton: { position: 'absolute', left: 10, alignSelf: 'center' },
   productEditorPriceBox: { height: 52, borderRadius: 5, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', flexDirection: 'row', alignItems: 'center', paddingRight: 3 },
   productEditorPriceBoxInvalid: { borderColor: '#DC2626', backgroundColor: '#FEF2F2' },
   productEditorPriceInput: { flex: 1, height: 50, minHeight: 50, backgroundColor: 'transparent' },

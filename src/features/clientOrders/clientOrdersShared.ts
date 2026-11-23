@@ -775,6 +775,8 @@ export function getDisplayedUnitPriceValue(item?: DraftItem | null) {
   return priceInputString(sourcePrice * getPackageMultiplier(item));
 }
 
+export const MISSING_SELLING_PRICE_MESSAGE = 'Цена не получена. Укажите цену в строке заказа.';
+
 export function getEffectiveBasePrice(item?: DraftItem | null) {
   if (!item) return null;
   const manualPrice = manualPriceInput(item);
@@ -996,7 +998,7 @@ export function computeLineTotal(item: DraftItem, generalDiscountPercent?: strin
 }
 
 export function computeLineProfit(item: DraftItem, generalDiscountPercent?: string, computedLineTotal?: number) {
-  if (isCancelledDraftItem(item)) return 0;
+  if (isCancelledDraftItem(item) || getEffectiveBasePrice(item) == null) return 0;
   const quantity = normalizeQuantityForPayload(item);
   if (Number.isNaN(quantity)) return 0;
 
@@ -1056,7 +1058,7 @@ export function getOrderMarkupPercent(order?: {
 }
 
 export function canComputeLineProfit(item: DraftItem) {
-  if (isCancelledDraftItem(item)) return false;
+  if (isCancelledDraftItem(item) || getEffectiveBasePrice(item) == null) return false;
   const receiptPrice = Number(item.receiptPrice);
   return Number.isFinite(receiptPrice) && receiptPrice > 0;
 }
@@ -1201,7 +1203,7 @@ export function validateDraft(draft: DraftOrder, options?: { recheckStock?: bool
       hasSaveBlockingItemErrors = true;
     }
     if (manualPrice === undefined && (effectivePrice === null || effectivePrice <= 0)) {
-      messages.push('Цена должна быть больше 0.');
+      messages.push(effectivePrice === null ? MISSING_SELLING_PRICE_MESSAGE : 'Цена должна быть больше 0.');
     }
     if (manualPrice !== undefined && (Number.isNaN(manualPrice) || manualPrice <= 0)) {
       messages.push('Ручная цена должна быть больше 0.');

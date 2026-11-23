@@ -194,6 +194,47 @@ describe('useClientOrdersWorkspace', () => {
     return { get current() { return current; }, renderer };
   }
 
+  it('prices mobile picker additions and retries an existing missing line after another tap', async () => {
+    const harness = await editableWorkspace();
+    const cheese = {guid: 'gouda', name: 'Сыр Гауда', packages: [], receiptPrice: 1422.2, basePrice: null};
+    const batch = jest.mocked(getClientOrderProductsBatch);
+    batch.mockResolvedValue([]);
+    try {
+      await act(async () => { harness.current.changePickerQuantity(cheese, {delta: 1}); });
+      const first = harness.current.draft.items.find(line => line.productGuid === cheese.guid)!;
+      expect(harness.current.pendingItemPriceKeys.has(first.key)).toBe(true);
+      await act(async () => { await jest.advanceTimersByTimeAsync(250); });
+      expect(harness.current.pendingItemPriceKeys.size).toBe(0);
+      const onlineReads = () => batch.mock.calls.filter(call => call[1]?.onlineOnly);
+      expect(onlineReads()).toHaveLength(1);
+      batch.mockResolvedValue([{...cheese, basePrice: 1660}]);
+      await act(async () => {
+        harness.current.changePickerQuantity({...cheese, basePrice: 1660}, {delta: 1});
+        harness.current.changePickerQuantity({...cheese, basePrice: 1660}, {delta: 1});
+      });
+      await act(async () => { await jest.advanceTimersByTimeAsync(250); });
+      expect(onlineReads()).toHaveLength(2);
+      expect(harness.current.draft.items.find(line => line.key === first.key)).toMatchObject({quantity: '3', basePrice: 1660});
+      expect(harness.current.draft.items[0].basePrice).toBe(100);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('a late header-price error cannot clear prices from products added while it was in flight', async () => {
+    const harness = await editableWorkspace();
+    let rejectHeader!: (error: Error) => void;
+    const batch = jest.mocked(getClientOrderProductsBatch);
+    batch.mockImplementation(async (_payload, options) => {
+      if (options?.onlineOnly) return [];
+      return new Promise((_resolve, reject) => { rejectHeader = reject; });
+    });
+    try {
+      await act(async () => { await jest.advanceTimersByTimeAsync(190); });
+      await act(async () => { harness.current.changePickerQuantity({guid: 'gouda', name: 'Гауда', basePrice: 1660}, {delta: 1}); });
+      await act(async () => rejectHeader(new Error('timeout')));
+      expect(harness.current.draft.items.find(line => line.productGuid === 'gouda')?.basePrice).toBe(1660);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
   it('does not lock a new order while an unrelated device packet is API_ACCEPTED', async () => {
     const entry = localEntry('previous-packet', 'API_ACCEPTED');
     memoryDraftStore([entry]);

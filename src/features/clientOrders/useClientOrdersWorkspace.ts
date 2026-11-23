@@ -2,6 +2,7 @@ import {orderConnectionReadUpdate} from './lib/orderConnectionStatus';
 import { refreshPendingSnapshot } from '@/utils/refreshPendingSnapshot';
 import {refreshUnresolvedSnapshot} from '@/utils/refreshUnresolvedSnapshot';
 import {DEFAULT_SUGGESTION_FIELDS, defaultsNeedRefresh, mergeDefaultSuggestions} from './lib/defaultSuggestions';
+import { applyProductPickerQuantity, type ProductQuantityChange } from './lib/productPickerQuantity';
 import { useNewItemPricing } from './lib/useNewItemPricing';
 import { AuthContext } from '@/context/AuthContext';
 import { addMonitoringBreadcrumb } from '@/src/shared/monitoring';
@@ -4481,6 +4482,15 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   ) => {
     if (!draft.counterpartyGuid || !items.length) return;
     const requestId = ++pricingRequestIdRef.current;
+    const source = defaultsViewRef.current.draft;
+    const requestedKeys = new Set(items.map(line => line.key));
+    const requested = new Map(source.items.filter(line => requestedKeys.has(line.key)).map(line => [line.key, line]));
+    const matchesRequest = (line: DraftItem) => {
+      const original = requested.get(line.key);
+      return original && original.lineGuid === line.lineGuid && original.productGuid === line.productGuid
+        && original.priceTypeGuid === line.priceTypeGuid && original.basePrice === line.basePrice
+        && original.manualPrice === line.manualPrice && !line.isCancelled;
+    };
     const hasPriceTypeOverride = !!options && Object.prototype.hasOwnProperty.call(options, 'priceType');
     const targetPriceTypeGuid = hasPriceTypeOverride
       ? options?.priceType?.guid || undefined
@@ -4503,7 +4513,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         ...prev,
         items: prev.items.map((item) => {
           const product = productByGuid.get(item.productGuid);
-          if (!product) return item;
+          if (!product || !matchesRequest(item)) return item;
           const isManualPrice = options?.forceAutomaticPrice ? false : hasManualPrice(item);
           const packages = mergeDraftPackagesForProduct(product, item.packages, item.baseUnit);
           const hasProductPackages = Array.isArray(product.packages);
@@ -4536,7 +4546,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       if (pricingRequestIdRef.current !== requestId) return;
       setDraft((prev) => normalizeDraftOrder({
         ...prev,
-        items: prev.items.map((item) => hasManualPrice(item)
+        items: prev.items.map((item) => hasManualPrice(item) || !matchesRequest(item)
           ? item
           : { ...item, basePrice: null }),
       }, prev));
@@ -4590,7 +4600,26 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     deliveryDate: loadingDefaults,
   }), [loadingDefaults]);
 
-  const queueNewItemPricing = useNewItemPricing(draft, offlineUserId, patchDraft);
+  const pricingEnabled = options.isScreenActive !== false && (!options.screenMode || options.screenMode === 'editor')
+    && serverStatus.isReachable && offlineUserId !== 'anonymous' && !readOnly && !verificationRequired;
+  // An editable amendment may explicitly request a price for its new line.
+  // Only unsent drafts may automatically recover prices on already saved lines.
+  const recoverMissingPrices = (!selectedOrder || selectedOrder.status === 'DRAFT')
+    && !selectedOrderQueued && !selectedOrderSynced && !selectedOrder?.isPostedIn1c
+    && (!selectedDeviceStatus || selectedDeviceStatus === 'ON_DEVICE' || selectedDeviceStatus === 'NEEDS_EDIT');
+  const { enqueue: queueNewItemPricing, pendingItemPriceKeys } = useNewItemPricing(
+    draft, pricingEnabled ? offlineUserId : null, patchDraft, recoverMissingPrices);
+
+  const changePickerQuantity = React.useCallback((product: ClientOrderProduct, change: ProductQuantityChange) => {
+    if (readOnly || mutationLocked) return;
+    const newItem = buildNewItem(product);
+    patchDraft(previous => ({ ...previous, items: applyProductPickerQuantity(previous.items, product, change, newItem) }));
+    // The draft ref includes all taps in the current React batch. An explicit edit
+    // can retry a line whose first automatic pricing request already finished.
+    for (const line of defaultsViewRef.current.draft.items) {
+      if (line.productGuid === product.guid) queueNewItemPricing(line);
+    }
+  }, [readOnly, mutationLocked, patchDraft, queueNewItemPricing]);
 
   const addProduct = React.useCallback((product: ClientOrderProduct, options?: { quantity?: string | number }) => {
     addMonitoringBreadcrumb('order.product_add');
@@ -5288,6 +5317,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     resetHeaderPriceTypeToDefault,
     removeItem,
     clearItems,
+    changePickerQuantity,
+    pendingItemPriceKeys,
     addProduct,
     addDraftItem,
     searchCounterparties,

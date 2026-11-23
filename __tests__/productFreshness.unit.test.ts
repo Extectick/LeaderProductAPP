@@ -18,7 +18,7 @@ test('unknown values remain unknown in presentation and newly added drafts', () 
     deliveryAddressGuid: 'address', deliveryDate: '2026-11-18T00:00:00Z', items: [line]}));
   expect(validation.canSave).toBe(true);
   expect(validation.canSubmit).toBe(false);
-  expect(validation.itemMessages[line.key]).toContain('Цена должна быть больше 0.');
+  expect(validation.itemMessages[line.key]).toContain('Цена не получена. Укажите цену в строке заказа.');
 });
 
 test('snapshot prices/stock carry a check time and never look like live confirmed values', () => {

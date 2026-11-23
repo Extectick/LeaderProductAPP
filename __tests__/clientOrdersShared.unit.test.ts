@@ -641,6 +641,14 @@ describe('clientOrdersShared validation and payload', () => {
     expect(canComputeLineProfit(item({ receiptPrice: 80 }))).toBe(true);
   });
 
+  it('excludes a missing sale price from profit until a price is received or entered', () => {
+    const line = item({ basePrice: null, receiptPrice: 1422.2, quantity: '1' });
+    expect(canComputeLineProfit(line)).toBe(false);
+    expect(computeLineProfit(line)).toBe(0);
+    expect(computeLineProfit({ ...line, basePrice: 1660 })).toBeCloseTo(237.8);
+    expect(canComputeLineProfit({ ...line, manualPrice: '1660' })).toBe(true);
+  });
+
   it('exposes document profit when at least one active line has a receipt price', () => {
     const priced = item({ receiptPrice: 80 });
     const pending = item({ key: 'line-2', lineGuid: 'line-guid-2', receiptPrice: null });

@@ -52,3 +52,34 @@ test('ordinary linked service keeps its native defaults and unmodified header sp
  await act(async()=>view.root.findAll(node=>node.props.accessibilityRole==='tab'&&typeof node.props.onPress==='function')[0].props.onPress());
  expect(view.root.findAllByType(ScrollView)).toHaveLength(1);
 });
+
+test('order row displays a pending or missing selling price until the quoted price arrives', async () => {
+  const Rows = React.forwardRef<any, any>((props, ref) => React.createElement('Rows', { ...props, ref }));
+  await act(async () => {
+    view = TestRenderer.create(React.createElement(ClientOrderReadOnlyView, { order, ListComponent: Rows }));
+  });
+  const list = view.root.findByType('Rows' as any);
+  const card = list.props.renderItem({ item: list.props.data[0], index: 0 });
+  const missing = 'Цена не получена. Укажите цену в строке заказа.';
+  const line = { ...card.props.item, quantity: '1', basePrice: null, manualPrice: '', receiptPrice: 1422.2 };
+  const renderRow = async (pricePending: boolean, basePrice: number | null) => {
+    await act(async () => view.update(React.cloneElement(card, {
+      item: { ...line, basePrice }, currency: 'RUB', readOnly: false, mutationLocked: false,
+      pricePending, lineMessages: basePrice == null ? [missing] : [],
+    })));
+    return JSON.stringify(view.toJSON()).replace(/[\s\u00a0\u202f]/g, '');
+  };
+  const pending = await renderRow(true, null);
+  expect(pending).toContain('Skeleton');
+  expect(pending).toContain('Загрузкацены');
+  expect(pending).not.toContain('Ценанеполучена');
+  expect(pending).not.toContain('Прибыль');
+  const absent = await renderRow(false, null);
+  expect(absent).not.toContain('Skeleton');
+  expect(absent).toContain('Ценанеполучена');
+  expect(absent).not.toContain('Прибыль');
+  const priced = await renderRow(false, 1660);
+  expect(priced).not.toContain('Skeleton');
+  expect(priced).toContain('1660₽');
+  expect(priced).toContain('Прибыль237,8');
+});
