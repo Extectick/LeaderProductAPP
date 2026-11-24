@@ -43,7 +43,11 @@ export function mergeDefaultSuggestions(draft: DraftOrder, selections: DefaultSe
   // Neither a false/empty fallback nor a pending response may revoke a prior choice.
   if (!touched.has('invoiceRequested') && defaults.invoiceRequested === true) next.invoiceRequested = true;
   if (!touched.has('currency') && !draft.currency && defaults.currency) next.currency = defaults.currency;
-  if (next.priceTypeGuid !== draft.priceTypeGuid) next.items = draft.items.map(item => hasManualPrice(item) ? item : {...item, priceTypeGuid: next.priceTypeGuid, priceTypeName: next.priceTypeName});
+  if (next.priceTypeGuid !== draft.priceTypeGuid) {
+    next.items = draft.items.map(item => hasManualPrice(item) || item.priceTypeGuid
+      ? item
+      : {...item, priceTypeGuid: next.priceTypeGuid, priceTypeName: next.priceTypeName});
+  }
   const restrictionsKnown = defaults.restrictionsKnown === true || (defaults.restrictionsKnown == null
     && !defaultsNeedRefresh(defaults) && defaults.readState?.verificationRequired !== true);
   if (defaults.counterparty?.guid === context.counterpartyGuid) refs.counterparty = {

@@ -1,3 +1,4 @@
+import { withPendingLineInput, type PendingLineInputReader } from './lib/pendingLineInput';
 import { Skeleton } from 'moti/skeleton';
 import { ReadSnapshotLabel } from './components/ReadSnapshotLabel';
 import { orderProfitFreshnessHint, summaryFreshnessHint } from './lib/orderReadFreshness';
@@ -17,7 +18,7 @@ import ContextMenuTrigger from '@/components/ui/ContextMenuTrigger';
 import type { ContextMenuItem } from '@/components/ui/ContextMenu';
 import { LiquidGlassSurface } from '@/components/ui/LiquidGlassSurface';
 import { useThemeColor } from '@/hooks/useThemeColor';
-import { useServicesHeaderSlot } from '@/src/features/services/headerSlotContext';
+import { MobileOrderDocumentHeader } from './components/MobileOrderDocumentHeader';
 import { useOptionalLastServiceRoute } from '@/src/features/navigation/LastServiceRouteContext';
 import {
   canComputeLineProfit,
@@ -65,6 +66,7 @@ import {
   getSelectedPickerGuid,
   isProductAlreadyInOrder,
   packageLabel,
+  pickerNeedsOrderContext,
   removeOrderItemsFromProductSelection,
   isWarehousePickerGroupRow,
   resolveProductPickerPressAction,
@@ -458,15 +460,6 @@ function normalizeClientOrderUserErrorMessage(value: unknown, fallback = 'Док
   return message;
 }
 
-function pickerNeedsOrderContext(kind: PickerKind | null) {
-  return kind === 'agreement'
-    || kind === 'contract'
-    || kind === 'deliveryAddress'
-    || kind === 'warehouse'
-    || kind === 'priceType'
-    || kind === 'product';
-}
-
 function pickerShouldAutofocusSearch(kind: PickerKind | null) {
   return kind === 'organization' || kind === 'counterparty' || kind === 'priceType' || kind === 'product';
 }
@@ -520,7 +513,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     setScreenFocused(true);
     return () => setScreenFocused(false);
   }, []));
+  const pendingLineInput = React.useRef<PendingLineInputReader | null>(null);
   const workspace = useClientOrdersWorkspace({
+    pendingLineInput,
     confirmDiscard: requestDiscardConfirm,
     screenMode: mode,
     isScreenActive: screenFocused,
@@ -529,8 +524,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const lastService = useOptionalLastServiceRoute();
   const { isReachable } = useServerStatus();
   const topInset = useHeaderContentTopInset({ compact: true, hasSubtitle: false, extraGap: 2 });
-  const { headerBottomOffset, setHeaderBottomOffset } = useNotificationViewport();
-  const { setHeaderOverride } = useServicesHeaderSlot();
+  const { headerBottomOffset } = useNotificationViewport();
   const tabBarVisibility = useOptionalTabBarVisibility();
   const setTabBarHidden = tabBarVisibility?.setHidden;
   const background = useThemeColor({}, 'background');
@@ -1180,10 +1174,6 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     }
     pickerAutoFocusSuppressedRef.current = false;
     clearPickerFocusTimers();
-    // Full-screen pickers have their own header. Hide the document header in
-    // the same event as opening the picker so it cannot remain visible for a
-    // frame (or be restored by a stale document-header layout effect).
-    setHeaderOverride({ hidden: true });
     const shouldRestoreProductPicker = productPickerSnapshotRef.current.open(kind, productPickerContextSignature);
     setPickerKind(kind);
     setLinePriceTarget(kind === 'priceType' && lineKey ? lineKey : null);
@@ -1220,7 +1210,6 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     productPickerContextSignature,
     restorePickerListScroll,
     scrollPickerListToTop,
-    setHeaderOverride,
   ]);
 
   const handlePickerSearchChange = React.useCallback((value: string) => {
@@ -1273,6 +1262,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       onRefresh: (fresh: {items: any[]; meta: any}) => {
         if (controller.signal.aborted || pickerRequestIdRef.current !== requestId) return;
         setPickerReferencePending(!!fresh.meta.pending);
+        if (kind === 'priceType') setPickerLoadError(!!fresh.meta.refreshPaused);
         if (fresh.meta.accessDenied) {setPickerItems([]); setPickerHasMore(false); return;}
         const previous = referencePageGuids;
         referencePageGuids = new Set(fresh.items.map(item => item.guid));
@@ -1328,7 +1318,11 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       });
       if (pickerRequestIdRef.current !== requestId || pickerKindRef.current !== kind) return;
       const items = result?.items || [];
-      if (kind !== 'product') {referencePageGuids = new Set(items.map((item: any) => item.guid)); setPickerReferencePending(!!result?.meta?.pending);}
+      if (kind !== 'product') {
+        referencePageGuids = new Set(items.map((item: any) => item.guid));
+        setPickerReferencePending(!!result?.meta?.pending);
+        if (kind === 'priceType') setPickerLoadError(!!result?.meta?.refreshPaused);
+      }
       refreshedPageGuids = new Set(items.map((item: ClientOrderProduct) => item.guid));
       if (append && items.length === 0 && !(kind === 'product' && result?.meta?.hasMore === true && Number.isFinite(result?.meta?.nextOffset) && result.meta.nextOffset > offset)) {
         setPickerHasMore(false);
@@ -1501,18 +1495,13 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     workspace.cancelDetailLoading?.();
     setOpeningOrderGuid(null);
     setOpeningDocument(null);
-    setHeaderOverride({ hidden: true });
     setMode('orders');
     return true;
-  }, [openingOrderGuid, setHeaderOverride, workspace.cancelDetailLoading]);
+  }, [openingOrderGuid, workspace.cancelDetailLoading]);
   const closeDocumentToOrders = React.useCallback(() => {
     const leaveDocument = () => {
       Keyboard.dismiss();
       setOpeningDocument(null);
-      // Update the navigation header in the same batch as the local screen.
-      // Waiting for the mode-driven effect left one visible frame where the
-      // orders list was already shown under the old document header.
-      setHeaderOverride({ hidden: true });
       setMode('orders');
     };
     if (!workspace.dirty) {
@@ -1523,7 +1512,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       if (!canLeave) return;
       leaveDocument();
     });
-  }, [setHeaderOverride, workspace.confirmDiscardIfNeeded, workspace.dirty, workspace.readOnly]);
+  }, [workspace.confirmDiscardIfNeeded, workspace.dirty]);
   const closeOrdersService = React.useCallback(() => {
     Keyboard.dismiss();
     lastService?.clearLastServiceRoute();
@@ -2662,30 +2651,6 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     workspace.selectedOrder,
     workspace.selections,
   ]);
-  const documentHeaderOverride = React.useMemo(() => {
-    if (pickerKind) return { hidden: true as const };
-    if (mode !== 'editor') return { hidden: true as const };
-    return {
-      title: 'Заказы клиентов',
-      icon: 'receipt-outline',
-      titleSlot: documentHeaderTitleSlot,
-      showBack: true,
-      onBack: closeDocumentToOrders,
-      compact: true,
-      dense: true,
-      horizontalPadding: 6,
-      rightSlot: documentHeaderRightSlot,
-      bottomSlot: documentHeaderSlot,
-      surfaceVisible: true,
-      entranceMotion: 'none' as const,
-      variant: 'document' as const,
-      showServerStatus: false,
-    };
-  }, [closeDocumentToOrders, documentHeaderRightSlot, documentHeaderSlot, documentHeaderTitleSlot, mode, pickerKind]);
-  React.useLayoutEffect(() => {
-    if (screenFocused) setHeaderOverride(documentHeaderOverride);
-  }, [documentHeaderOverride, screenFocused, setHeaderOverride]);
-  React.useEffect(() => () => setHeaderOverride(null), [setHeaderOverride]);
   const isCounterpartyPicker = pickerKind === 'counterparty' || pickerKind === 'filterCounterparty';
   const pickerMissingOrderContext = pickerNeedsOrderContext(pickerKind) && (!workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid);
   const pickerResetLoading = pickerLoading && !pickerAppendLoading;
@@ -2742,8 +2707,18 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   ), [pickerMissingOrderContext]);
   const referencePickerEmpty = React.useMemo(() => {
     if (pickerResetLoading || pickerMissingOrderContext) return null;
+    if (pickerKind === 'priceType') {
+      if (pickerLoadError) return (
+        <PaperButton compact icon="refresh" onPress={() => {
+          pickerLoadSignatureRef.current = '';
+          void loadPickerPage('priceType', pickerSearch);
+        }}>Не удалось проверить виды цен. Повторить</PaperButton>
+      );
+      return <Text style={styles.filtersLookupEmpty}>{pickerReferencePending
+        ? 'Проверяем виды цен в 1С…' : 'Доступных видов цен по запросу не найдено.'}</Text>;
+    }
     return <Text style={styles.filtersLookupEmpty}>{pickerReferencePending ? 'Справочник ещё проверяется в 1С. Повторите обновление позже.' : 'Ничего не найдено.'}</Text>;
-  }, [pickerMissingOrderContext, pickerResetLoading, pickerReferencePending]);
+  }, [loadPickerPage, pickerKind, pickerLoadError, pickerMissingOrderContext, pickerResetLoading, pickerReferencePending, pickerSearch]);
   const referencePickerFooter = React.useMemo(() => (
     pickerFooterLoading
       ? <View style={styles.pickerFooter}><ActivityIndicator size="small" color="#2563EB" /><Text style={styles.pickerFooterText}>Загружаю...</Text></View>
@@ -3143,6 +3118,13 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         </View>
       ) : null}
 
+      <MobileOrderDocumentHeader
+        visible={screenFocused && mode === 'editor' && !pickerKind}
+        onBack={closeDocumentToOrders}
+        titleSlot={documentHeaderTitleSlot}
+        rightSlot={documentHeaderRightSlot}
+        bottomSlot={documentHeaderSlot}
+      />
       <ItemsSearchResultsOverlay
         styles={styles}
         visible={showItemsSearchOverlay}
@@ -3386,6 +3368,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       </PickerBottomSheet>
 
       <ProductLineEditorSheet
+        pendingLineInput={pendingLineInput}
         styles={styles}
         visible={!!(pendingProductItem || editingItem)}
         topOffset={Math.max(topInset + 6, Math.round(height * 0.3))}
@@ -3572,7 +3555,7 @@ const HeaderSection = React.memo(function HeaderSection({
       value={workspace.draft.priceTypeName || workspace.selections.agreement?.priceType?.name || 'Выбрать'}
       icon="tag-outline"
       onPress={() => openPicker('priceType')}
-      disabled={readOnly || missingOrderContext}
+      disabled={readOnly}
       invalid={showDependentRequiredErrors && !hasPriceTypeValue}
       loading={workspace.documentHeaderLoadingState.priceType}
       onDetails={() => openDetails('price-type', workspace.draft.priceTypeGuid || workspace.selections.agreement?.priceType?.guid)}
@@ -5536,7 +5519,7 @@ function CompactSearchbar({
   );
 }
 
-function ProductLineEditorSheet({
+export function ProductLineEditorSheet({
   styles,
   visible,
   topOffset,
@@ -5545,6 +5528,7 @@ function ProductLineEditorSheet({
   workspace,
   allowZeroQuantity = false,
   metadataLoading = false,
+  pendingLineInput,
   onClose,
   onOpenImages,
 }: {
@@ -5556,6 +5540,7 @@ function ProductLineEditorSheet({
   workspace: any;
   allowZeroQuantity?: boolean;
   metadataLoading?: boolean;
+  pendingLineInput: React.RefObject<PendingLineInputReader | null>;
   onClose: () => void;
   onOpenImages: (item: any) => void;
 }) {
@@ -5632,6 +5617,20 @@ function ProductLineEditorSheet({
       commitPrice();
     }, 180);
   }, [commitPrice]);
+
+  // Read at error-boundary cleanup, before the debounced quantity/price can
+  // reach workspace state. Ordinary typing still only renders this sheet.
+  React.useLayoutEffect(() => {
+    pendingLineInput.current = draft => {
+      if (!visible || !item || workspace.readOnly || workspace.mutationLocked) return draft;
+      const price = pendingPricePatchRef.current;
+      const patch: Partial<DraftItem> = price && price.key === item.key ? {...price.patch} : {};
+      if (quantityCommitTimerRef.current && quantityItemKeyRef.current === item.key) {
+        patch.quantity = quantityValueRef.current;
+      }
+      return withPendingLineInput(draft, workspace.draft, item, patch, allowZeroQuantity);
+    };
+  });
 
   const previousDisplayedItemKeyRef = React.useRef(displayedItemKey);
   const visibleRef = React.useRef(false);

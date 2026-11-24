@@ -42,6 +42,6 @@ test('all workspace-wide document header handlers use stable actions', () => {
   for (const name of ['removeOrCancel', 'deleteDocumentFromMenu', 'submitFromMenu', 'copyFromMenu']) {
     expect(source).toContain(`const ${name} = useOrderAction(`);
   }
-  const boundary = fs.readFileSync(path.join(__dirname, '../src/features/clientOrders/screen/ClientOrdersScreen.tsx'), 'utf8');
+  const boundary = fs.readFileSync(path.join(__dirname, '../src/features/clientOrders/screen/ClientOrdersErrorBoundary.tsx'), 'utf8');
   expect(boundary).toContain('captureException(error, { contexts: { react_native_context:');
 });

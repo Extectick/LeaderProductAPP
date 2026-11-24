@@ -31,6 +31,12 @@ test('manual item prices and unrelated draft content survive incoming defaults',
  const result=mergeDefaultSuggestions(current,selections,local,new Set(),context);
  expect(result.draft.items[0]).toBe(current.items[0]);
 });
+test('a delayed header default preserves an explicit line type even when its price is automatic',()=>{
+ const current={...draft(),items:[{key:'line',manualPrice:'',priceTypeGuid:'special',priceTypeName:'Сырнев'} as any]};
+ const result=mergeDefaultSuggestions(current,selections,local,new Set(),context);
+ expect(result.draft.priceTypeGuid).toBe(local.agreement.priceType.guid);
+ expect(result.draft.items[0]).toBe(current.items[0]);
+});
 test('wrong customer/org results cannot change draft or selections',()=>{
  const current=draft();const result=mergeDefaultSuggestions(current,selections,local,new Set(),{...context,counterpartyGuid:'other'});
  expect(result.draft).toBe(current);expect(result.selections).toBe(selections);

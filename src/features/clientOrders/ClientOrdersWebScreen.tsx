@@ -1,3 +1,4 @@
+import type { ClientOrdersReadOptions } from '@/utils/clientOrdersService';
 import { WebProductPickerMetrics } from './screen/desktop/WebProductPickerMetrics';
 import { loadWebProductPickerPage, productPickerPageProgress } from './screen/desktop/webProductPickerSearch';
 import { fillUnknownSelectedProduct, mergeRefreshedProductPage } from './lib/productFreshness';
@@ -858,7 +859,7 @@ function ProductPickerListItem(props: {
   );
 }
 
-type QuickLookupLoadResult<T> = { items: T[]; meta?: { total?: number } };
+type QuickLookupLoadResult<T> = { items: T[]; meta?: { total?: number; pending?: boolean; refreshPaused?: boolean; accessDenied?: boolean } };
 
 type QuickLookupFieldProps<T extends { guid?: string | null }> = {
   kind: PickerKind;
@@ -866,7 +867,7 @@ type QuickLookupFieldProps<T extends { guid?: string | null }> = {
   value: T | null;
   placeholder?: string;
   disabled?: boolean;
-  loadOptions: (args: { search: string; limit: number; offset: number }) => Promise<QuickLookupLoadResult<T>>;
+  loadOptions: (args: { search: string; limit: number; offset: number }, options?: ClientOrdersReadOptions) => Promise<QuickLookupLoadResult<T>>;
   onSelect: (item: T) => void | Promise<void>;
   onOpenDetails?: () => void;
   detailsDisabled?: boolean;
@@ -890,6 +891,8 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
   const [activeIndex, setActiveIndex] = React.useState(0);
   const anchorRef = React.useRef<HTMLDivElement | null>(null);
   const requestIdRef = React.useRef(0);
+  const liveRequest = React.useRef<AbortController | null>(null);
+  const [priceStatus, setPriceStatus] = React.useState<'pending' | 'retry' | null>(null);
   const appendLoadingRef = React.useRef(false);
   const valueLabel = value ? getPickerItemTitle(value) : '';
   const showDetailsAction = false;
@@ -908,35 +911,47 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
     if (append && appendLoadingRef.current) return;
     if (append) appendLoadingRef.current = true;
     const requestId = ++requestIdRef.current;
-    setLoading(true);
-    try {
-      const result = await loadOptions({ search, limit: 25, offset: nextOffset });
-      if (requestIdRef.current !== requestId) return;
+    liveRequest.current?.abort();
+    const controller = new AbortController();
+    liveRequest.current = controller;
+    let pageGuids = new Set<string | null | undefined>();
+    const receive = (result: QuickLookupLoadResult<T>) => {
+      if (controller.signal.aborted || requestIdRef.current !== requestId) return;
+      if (kind === 'priceType') setPriceStatus(result.meta?.refreshPaused ? 'retry' : result.meta?.pending ? 'pending' : null);
+      if (result.meta?.accessDenied) { setItems([]); setHasMore(false); return; }
       const nextItems = kind === 'deliveryAddress'
-        ? sortDeliveryAddressOptions(result.items || [])
-        : result.items || [];
-      setItems((prev) => {
-        const merged = append ? [...prev, ...nextItems] : nextItems;
+        ? sortDeliveryAddressOptions(result.items || []) : result.items || [];
+      const previous = pageGuids;
+      pageGuids = new Set(nextItems.map(item => item.guid));
+      setItems(prev => {
+        const merged = append ? [...prev.filter(item => !previous.has(item.guid)), ...nextItems] : nextItems;
         return kind === 'deliveryAddress' ? sortDeliveryAddressOptions(merged as T[]) : merged;
       });
       setOffset(nextOffset + nextItems.length);
-      setHasMore(hasMorePage(nextItems.length, 25, nextOffset, result.meta?.total));
-      if (!append) setActiveIndex(0);
+      setHasMore(!result.meta?.pending && hasMorePage(nextItems.length, 25, nextOffset, result.meta?.total));
+    };
+    setLoading(true);
+    setPriceStatus(null);
+    try {
+      const result = await loadOptions({ search, limit: 25, offset: nextOffset }, {signal: controller.signal, onRefresh: receive});
+      receive(result);
+      if (!append && !controller.signal.aborted) setActiveIndex(0);
     } catch {
-      if (requestIdRef.current !== requestId) return;
+      if (controller.signal.aborted || requestIdRef.current !== requestId) return;
+      if (kind === 'priceType') setPriceStatus('retry');
       if (!append) setItems([]);
       setHasMore(false);
     } finally {
       if (append) appendLoadingRef.current = false;
       if (requestIdRef.current === requestId) setLoading(false);
     }
-  }, [loadOptions]);
+  }, [kind, loadOptions]);
 
   React.useEffect(() => {
     if (!open || disabled) return;
     const searchValue = useDefaultListing ? '' : query;
     const timer = setTimeout(() => void loadPage(searchValue, 0, false), searchValue ? 200 : 0);
-    return () => clearTimeout(timer);
+    return () => { clearTimeout(timer); liveRequest.current?.abort(); };
   }, [disabled, loadPage, open, query, useDefaultListing]);
 
   const visibleItems = React.useMemo(() => {
@@ -948,6 +963,7 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
   const close = React.useCallback(() => {
     requestIdRef.current += 1;
     appendLoadingRef.current = false;
+    liveRequest.current?.abort();
     setOpen(false);
     setLoading(false);
     setItems([]);
@@ -1093,7 +1109,9 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
         >
           <Paper variant="outlined" sx={{ mt: 0.35, maxHeight: 280, overflowY: 'auto', borderRadius: '6px', boxShadow: '0 12px 32px rgba(15, 23, 42, 0.16)' }} onScroll={handleScroll}>
             {!loading && !visibleItems.length ? (
-              <Typography sx={{ px: 1, py: 0.8, fontSize: 12, color: 'var(--co-muted)' }}>Ничего не найдено</Typography>
+              priceStatus === 'retry'
+                ? <Button size="small" onMouseDown={event => event.preventDefault()} onClick={() => void loadPage(useDefaultListing ? '' : query)}>Не удалось проверить виды цен. Повторить</Button>
+                : <Typography sx={{ px: 1, py: 0.8, fontSize: 12, color: 'var(--co-muted)' }}>{priceStatus === 'pending' ? 'Проверяем виды цен в 1С…' : 'Ничего не найдено'}</Typography>
             ) : null}
             {visibleItems.map((item, index) => {
               const title = getPickerItemTitle(item);
@@ -1576,6 +1594,7 @@ export default function ClientOrdersWebScreen() {
       onRefresh: (fresh: {items: any[]; meta: any}) => {
         if (controller.signal.aborted || pickerRequestIdRef.current !== requestId) return;
         setPickerReferencePending(!!fresh.meta.pending);
+        if (kind === 'priceType') setPickerLoadError(!!fresh.meta.refreshPaused);
         if (fresh.meta.accessDenied) {setPickerItems([]); setPickerHasMore(false); return;}
         const previous = referencePageGuids;
         referencePageGuids = new Set(fresh.items.map(item => item.guid));
@@ -1665,7 +1684,11 @@ export default function ClientOrdersWebScreen() {
       const nextItems = kind === 'deliveryAddress'
         ? sortDeliveryAddressOptions((result?.items || []) as ClientOrderDeliveryAddressOption[])
         : result?.items || [];
-      if (kind !== 'product') {referencePageGuids = new Set(nextItems.map((item: any) => item.guid)); setPickerReferencePending(!!result?.meta?.pending);}
+      if (kind !== 'product') {
+        referencePageGuids = new Set(nextItems.map((item: any) => item.guid));
+        setPickerReferencePending(!!result?.meta?.pending);
+        if (kind === 'priceType') setPickerLoadError(!!result?.meta?.refreshPaused);
+      }
       setPickerItems((prev) => {
         const merged = append ? [...prev, ...nextItems] : nextItems;
         return kind === 'deliveryAddress' ? sortDeliveryAddressOptions(merged as any[]) : merged;
@@ -1843,10 +1866,9 @@ export default function ClientOrdersWebScreen() {
     }).then((result) => ({ ...result, items: sortDeliveryAddressOptions(result.items || []) }));
   }, [searchDeliveryAddresses, workspace.draft.counterpartyGuid, workspace.draft.organizationGuid]);
 
-  const loadPriceTypeLookup = React.useCallback((args: { search: string; limit: number; offset: number }) => {
-    if (!workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid) return Promise.resolve({ items: [], meta: { total: 0 } });
-    return searchPriceTypes({ search: args.search, limit: args.limit, offset: args.offset });
-  }, [searchPriceTypes, workspace.draft.counterpartyGuid, workspace.draft.organizationGuid]);
+  const loadPriceTypeLookup = React.useCallback((args: { search: string; limit: number; offset: number }, options?: ClientOrdersReadOptions) =>
+    searchPriceTypes(args, {...options, expectedUserId: Number(workspace.offlineUserId) || undefined}),
+    [searchPriceTypes, workspace.offlineUserId]);
 
   const selectFilterCounterparty = React.useCallback((item: ClientOrderCounterpartyOption) => {
     setFilterCounterparty(item);
@@ -2914,7 +2936,7 @@ export default function ClientOrdersWebScreen() {
                       value={workspace.draft.priceTypeGuid ? { guid: workspace.draft.priceTypeGuid, name: workspace.draft.priceTypeName || 'Вид цены' } : null}
                       loadOptions={loadPriceTypeLookup}
                       onSelect={confirmHeaderPriceTypeChange}
-                      disabled={editingLocked || !hasOrderContext}
+                      disabled={editingLocked}
                       loadingAdornment={workspace.documentHeaderLoadingState.priceType}
                       beforeDetailsAdornment={workspace.isHeaderPriceTypeCustom ? (
                         <ResetAdornmentButton title="Сбросить вид цены к соглашению" disabled={editingLocked} onClick={confirmHeaderPriceTypeReset} />
@@ -3282,7 +3304,7 @@ export default function ClientOrdersWebScreen() {
                 <Typography sx={{ color: 'var(--co-muted)', fontSize: 12, mt: 0.35 }}>{workspace.documentHeaderDefaultsState.contract}</Typography>
               </Box>
               <Box>
-                <SelectionButton label="Вид цены" value={workspace.draft.priceTypeName} onClick={() => openPicker('priceType')} disabled={editingLocked || !hasOrderContext} loading={workspace.documentHeaderLoadingState.priceType} />
+                <SelectionButton label="Вид цены" value={workspace.draft.priceTypeName} onClick={() => openPicker('priceType')} disabled={editingLocked} loading={workspace.documentHeaderLoadingState.priceType} />
                 <Typography sx={{ color: 'var(--co-muted)', fontSize: 12, mt: 0.35 }}>из соглашения или вручную</Typography>
               </Box>
               <InvoiceRequestWebField workspace={workspace} wide={false} />
@@ -3411,7 +3433,10 @@ export default function ClientOrdersWebScreen() {
             </Stack>
           </Box>
           <Box onScroll={handlePickerScroll} sx={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain' }}>
-            {pickerLoadError ? <Button onClick={() => pickerKind && void loadPickerPage(pickerKind, pickerSearch, 0, false)}>Не удалось загрузить список. Повторить</Button> : null}
+            {pickerLoadError ? <Button onClick={() => {
+              pickerLoadSignatureRef.current = '';
+              if (pickerKind) void loadPickerPage(pickerKind, pickerSearch, 0, false);
+            }}>{pickerKind === 'priceType' ? 'Не удалось проверить виды цен. Повторить' : 'Не удалось загрузить список. Повторить'}</Button> : null}
             {pickerKind === 'product' && pickerItems.some(item => item.freshness?.refreshPaused) ? <Alert severity="info" action={<Button disabled={pickerLoading} onClick={() => {pickerLoadSignatureRef.current = ''; void loadPickerPage('product', pickerSearch, 0, false);}}>Повторить</Button>}>Цены ещё не уточнены. Повторите обновление.</Alert> : null}
             {pickerKind === 'product' && hasOrderContext && !purchaseHistory.ready ? <Typography sx={{ px: 2, py: 0.5, fontSize: 12, color: 'var(--co-muted)' }}>{purchaseHistory.loading ? 'Загружается история покупок…' : 'История покупок ещё не загружена'}</Typography> : null}
             {pickerKind === 'product' && purchaseHistory.error && workspace.online ? <Button startIcon={<Ionicons name="refresh" color="inherit" />} onClick={purchaseHistory.refresh}>Повторить загрузку истории</Button> : null}
@@ -3420,7 +3445,9 @@ export default function ClientOrdersWebScreen() {
               <Typography sx={{ px: 2, py: 1.5, color: 'var(--co-muted)', borderBottom: '1px solid var(--co-line)' }}>Сначала выберите организацию и контрагента.</Typography>
             ) : null}
             {!pickerLoading && !pickerLoadError && !(pickerKind === 'product' && purchasedOnly && !purchaseHistory.ready) && pickerItems.length === 0 && !(pickerNeedsOrderContext(pickerKind) && !hasOrderContext) ? (
-              <Typography sx={{ px: 2, py: 1.5, color: 'var(--co-muted)', borderBottom: '1px solid var(--co-line)' }}>{pickerReferencePending ? 'Справочник ещё проверяется в 1С. Повторите обновление позже.' : 'Ничего не найдено.'}</Typography>
+              <Typography sx={{ px: 2, py: 1.5, color: 'var(--co-muted)', borderBottom: '1px solid var(--co-line)' }}>{pickerKind === 'priceType'
+                ? (pickerReferencePending ? 'Проверяем виды цен в 1С…' : 'Доступных видов цен по запросу не найдено.')
+                : (pickerReferencePending ? 'Справочник ещё проверяется в 1С. Повторите обновление позже.' : 'Ничего не найдено.')}</Typography>
             ) : null}
             {pickerDisplayItems.map((item: any, index) => {
               if (isWarehousePickerGroupRow(item)) {

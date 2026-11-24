@@ -24,6 +24,7 @@ export type ClientOrderReadState = {
 };
 
 export type PaginationMeta = {
+  refreshPaused?: boolean;
   readState?: ClientOrderReadState;
   pending?: boolean;
   incomplete?: boolean;
@@ -931,6 +932,12 @@ async function getPagedSelector<T>(
 ) {
   const query = buildQuery(params);
   const path = query ? `${endpoint}?${query}` : endpoint;
+  function pricePageAfterRefresh(page: PagedResult<T>): PagedResult<T> {
+    const state = page.meta.readState;
+    if (endpoint !== API_ENDPOINTS.CLIENT_ORDERS.PRICE_TYPES || page.items.length || !state || state.refreshPending) return page;
+    const refreshPaused = state.source !== 'verified-snapshot' && !!(page.meta.pending || page.meta.incomplete);
+    return { ...page, meta: { ...page.meta, pending: false, refreshPaused } };
+  }
   const load = async () => {
     const res = await apiClient<void, { items: T[] }>(path, {
       timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS,
@@ -938,13 +945,13 @@ async function getPagedSelector<T>(
       ...(options.expectedUserId === undefined ? {} : {expectedUserId: options.expectedUserId}),
     });
     if (!res.ok || !res.data) throwApiError(fallbackMessage, res);
-    return mapPagedResponse(res, fallbackMessage);
+    return pricePageAfterRefresh(mapPagedResponse(res, fallbackMessage));
   };
   // A caller-owned cancellation must not cancel another picker's shared read.
   const result = await (options.signal || options.expectedUserId !== undefined ? load() : dedupeRead(`GET ${path}`, load));
   if (result.meta.readState?.refreshPending && options.signal && options.onRefresh) {
     void refreshPendingSnapshot(result, value => !!value.meta.readState?.refreshPending,
-      value => ({...value, meta: {...value.meta, readState: value.meta.readState ? {...value.meta.readState, refreshPending: false} : undefined}}),
+      value => pricePageAfterRefresh({...value, meta: {...value.meta, readState: value.meta.readState ? {...value.meta.readState, refreshPending: false} : undefined}}),
       async () => {
         try {return await load();}
         catch (error) {

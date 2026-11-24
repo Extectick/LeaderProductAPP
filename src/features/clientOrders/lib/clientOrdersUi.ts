@@ -182,7 +182,7 @@ export function formatDateOnly(value?: string | null) {
 }
 
 export function pickerNeedsOrderContext(kind: ClientOrdersPickerKind | null) {
-  return kind === 'agreement' || kind === 'contract' || kind === 'warehouse' || kind === 'deliveryAddress' || kind === 'priceType' || kind === 'product';
+  return kind === 'agreement' || kind === 'contract' || kind === 'warehouse' || kind === 'deliveryAddress' || kind === 'product';
 }
 
 export function unitLabel(unit: any) {

@@ -3,6 +3,7 @@ jest.mock('@/utils/apiClient', () => ({apiClient: jest.fn()}));
 
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
+import { ClientOrdersErrorBoundary } from '../src/features/clientOrders/screen/ClientOrdersErrorBoundary';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState } from 'react-native';
 jest.mock('../src/features/clientOrders/offline/orderOutbox', () => ({ kickOrderOutbox: jest.fn(), retryOrderOutboxNow: jest.fn(async () => {}), isAsyncOrderOutboxEnabled: jest.fn(() => false) }));
@@ -22,6 +23,7 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 
 jest.mock('react-native', () => ({
   Alert: { alert: jest.fn() },
+  StyleSheet: {create: (styles: unknown) => styles}, View: 'View', Text: 'Text', Pressable: 'Pressable',
   AppState: { currentState: 'active' },
   Platform: { OS: 'ios' },
 }));
@@ -216,6 +218,63 @@ describe('useClientOrdersWorkspace', () => {
       expect(onlineReads()).toHaveLength(2);
       expect(harness.current.draft.items.find(line => line.key === first.key)).toMatchObject({quantity: '3', basePrice: 1660});
       expect(harness.current.draft.items[0].basePrice).toBe(100);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('retains a global price chosen before the customer, but resets it when switching to a different customer', async () => {
+    const harness = await editableWorkspace();
+    const fallback = {guid: 'regular', name: 'Обычная'};
+    jest.mocked(getClientOrderDefaults).mockResolvedValue({priceType: fallback, readState: freshRead});
+    try {
+      await act(async () => harness.current.setCounterparty(null));
+      await act(async () => harness.current.setHeaderPriceType({guid: 'special', name: 'Сырнев'}));
+      await act(async () => harness.current.setCounterparty({guid: 'first-customer', name: 'Первый'} as any));
+      expect(harness.current.draft.priceTypeGuid).toBe('special');
+      await act(async () => harness.current.setCounterparty({guid: 'second-customer', name: 'Второй'} as any));
+      expect(harness.current.draft.priceTypeGuid).toBe('regular');
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('refreshes the same product at distinct row prices and retains both in a saved device draft', async () => {
+    const harness = await editableWorkspace();
+    const batch = jest.mocked(getClientOrderProductsBatch);
+    const records = memoryDraftStore();
+    batch.mockImplementation(async ({priceTypeGuid}) => [{guid: 'product-guid', basePrice: priceTypeGuid === 'special' ? 225 : 100}] as any);
+    try {
+      await act(async () => harness.current.patchDraft(prev => ({
+        ...prev, warehouseGuid: 'new-warehouse', priceTypeGuid: 'regular', priceTypeName: 'Обычная', items: [
+          {...prev.items[0], priceTypeGuid: 'regular', priceTypeName: 'Обычная'},
+          {...prev.items[0], key: 'second-key', lineGuid: 'second-line', priceTypeGuid: 'special', priceTypeName: 'Сырнев'},
+        ],
+      })));
+      await act(async () => { await jest.advanceTimersByTimeAsync(200); });
+      expect(batch).toHaveBeenCalledWith(expect.objectContaining({priceTypeGuid: 'special', organizationGuid: 'org-guid', counterpartyGuid: 'counterparty-guid', warehouseGuid: 'new-warehouse'}));
+      const expected = [{priceTypeGuid: 'regular', basePrice: 100}, {priceTypeGuid: 'special', basePrice: 225}];
+      expect(harness.current.draft.items).toMatchObject(expected);
+      await act(async () => { await harness.current.saveDraft({reason: 'manual', localOnly: true}); });
+      expect([...records.values()][0].order.localDraft.items).toMatchObject(expected);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it.each(['success', 'failure'])('ignores an older line price %s after the employee selects a different type', async outcome => {
+    const harness = await editableWorkspace();
+    const batch = jest.mocked(getClientOrderProductsBatch);
+    let resolveFirst!: (value: any[]) => void;
+    let rejectFirst!: (error: Error) => void;
+    batch.mockImplementation(async request => {
+      if (request.priceTypeGuid === 'first') return new Promise((resolve, reject) => {
+        resolveFirst = resolve; rejectFirst = reject;
+      });
+      return [{guid: 'product-guid', basePrice: 225}] as any;
+    });
+    try {
+      await act(async () => harness.current.setItemPriceType('line-key', {guid: 'first', name: 'Первая'}));
+      await act(async () => harness.current.setItemPriceType('line-key', {guid: 'special', name: 'Сырнев'}));
+      await act(async () => {
+        if (outcome === 'success') resolveFirst([{guid: 'product-guid', basePrice: 100}]);
+        else rejectFirst(new Error('request expired'));
+      });
+      expect(harness.current.draft.items[0]).toMatchObject({priceTypeGuid: 'special', priceTypeName: 'Сырнев', basePrice: 225});
     } finally { await act(async () => harness.renderer.unmount()); }
   });
 
@@ -709,6 +768,75 @@ describe('useClientOrdersWorkspace', () => {
     });
     return records;
   }
+
+  it('ignores a repeated line input commit and keeps its draft revision and item array stable', async () => {
+    const entry = localEntry('repeat-quantity');
+    const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace();
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      const items = harness.current.draft.items;
+      const line = items[0];
+      await act(async () => {
+        harness.current.setItemPatch(line.key, {quantity: line.quantity});
+        harness.current.setItemPatch('removed-line', {quantity: '4'});
+      });
+      expect(harness.current.draft.items).toBe(items);
+      expect(harness.current.dirty).toBe(false);
+      await act(async () => { await jest.advanceTimersByTimeAsync(450); });
+      expect(records.get(entry.clientOrderId).clientRevision).toBe(1);
+    } finally {
+      await act(async () => harness.renderer.unmount());
+    }
+  });
+
+  it.each([true, false])('recovers the displayed item when the orders error boundary replaces the editor before autosave (online=%s)', async online => {
+    if (!online) setServerUnavailable('Network request failed');
+    const entry = localEntry('boundary-recovery', 'ON_DEVICE', true);
+    const records = memoryDraftStore([entry]);
+    let current!: ReturnType<typeof useClientOrdersWorkspace>;
+    let triggerError!: () => void;
+    function Editor() {
+      current = useClientOrdersWorkspace();
+      const [fail, setFail] = React.useState(false);
+      const [, setCount] = React.useState(0);
+      triggerError = () => setFail(true);
+      React.useLayoutEffect(() => { if (fail) setCount(n => n + 1); });
+      return null;
+    }
+    let renderer!: TestRenderer.ReactTestRenderer;
+    const observed = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await act(async () => {
+        renderer = TestRenderer.create(React.createElement(AuthContext.Provider, {
+          value: { isAuthenticated: true, profile: { id: 1 } } as any,
+        }, React.createElement(ClientOrdersErrorBoundary, {onExit: jest.fn(), children: React.createElement(Editor)})));
+      });
+      await act(async () => { await current.selectOrder(entry.order.guid); });
+      await act(async () => { current.addDraftItem(localEntry('item').order.localDraft.items[0]); });
+      expect(current.draft.items).toHaveLength(1);
+      await act(async () => { await jest.advanceTimersByTimeAsync(399); triggerError(); });
+      const boundary = renderer.root.findByType(ClientOrdersErrorBoundary);
+      expect((boundary.instance as ClientOrdersErrorBoundary).state.error?.message).toMatch(/maximum update depth/i);
+      expect(records.get(entry.clientOrderId).order.localDraft.items[0].productGuid).toBe('product-guid');
+      expect(records.get(entry.clientOrderId).intent).toBe('SAVE');
+      expect(records.get(entry.clientOrderId).clientRevision).toBe(2);
+      const buttons = renderer.root.findAll(node => String(node.type) === 'Pressable');
+      const diagnostics = buttons.find(node => node.props.accessibilityState?.expanded === false);
+      await act(async () => { diagnostics!.props.onPress(); });
+      expect(renderer.root.findAll(node => node.props.selectable && typeof node.props.children === 'string')
+        .some(node => node.props.children.includes('Editor') && !node.props.children.includes(__dirname))).toBe(true);
+      const retry = buttons[0];
+      await act(async () => { retry.props.onPress(); });
+      await act(async () => { await current.selectOrder(entry.order.guid); });
+      expect(current.draft.items[0].productGuid).toBe('product-guid');
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+      expect(submitClientOrder).not.toHaveBeenCalled();
+    } finally {
+      if (renderer) await act(async () => renderer.unmount());
+      observed.mockRestore();
+    }
+  });
 
   it('backs up incomplete local drafts online without submitting or removing them', async () => {
     const records = memoryDraftStore([localEntry('incomplete-backup', 'ON_DEVICE', true)]);

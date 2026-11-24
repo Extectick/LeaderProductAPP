@@ -124,6 +124,63 @@ it('does not replace a valid empty online result with unrelated cached records',
   expect(readLocal).not.toHaveBeenCalled();
 });
 
+describe('pending price search in an open order', () => {
+  const query = { search: 'Сырнев', limit: 25, offset: 0 };
+  const waiting = { ok: true, status: 200, data: { items: [], pending: true, incomplete: true,
+    readState: { source: 'none', refreshPending: true } } };
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  it('shows a late allowed result without changing the query', async () => {
+    api.mockResolvedValueOnce(waiting as any).mockResolvedValueOnce({ ok: true, status: 200, data: {
+      items: [{ guid: 'permitted', name: 'Сырнев' }], pending: false, incomplete: false,
+      readState: { source: 'verified-snapshot', refreshPending: false },
+    } } as any);
+    const controller = new AbortController();
+    const onRefresh = jest.fn();
+    const initial = await searchClientOrderPriceTypes(query, { signal: controller.signal, expectedUserId: 7, onRefresh });
+    expect(initial.meta.pending).toBe(true);
+    await jest.advanceTimersByTimeAsync(2000);
+    expect(onRefresh).toHaveBeenCalledWith(expect.objectContaining({ items: [{ guid: 'permitted', name: 'Сырнев' }] }));
+    expect(api.mock.calls[1]).toEqual(api.mock.calls[0]);
+    controller.abort();
+  });
+
+  it('settles legacy verified-but-filtered pages and does not poll or grant a selection', async () => {
+    api.mockResolvedValue({ ok: true, status: 200, data: { items: [], pending: true, incomplete: true,
+      readState: { source: 'verified-snapshot', refreshPending: false } } } as any);
+    const onRefresh = jest.fn();
+    const result = await searchClientOrderPriceTypes(query, { signal: new AbortController().signal, onRefresh });
+    expect(result).toMatchObject({ items: [], meta: { pending: false, refreshPaused: false, incomplete: true } });
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(onRefresh).not.toHaveBeenCalled();
+  });
+
+  it('offers a retry after bounded polling without treating an unfinished lookup as a definitive empty result', async () => {
+    api.mockResolvedValue(waiting as any);
+    const onRefresh = jest.fn();
+    const controller = new AbortController();
+    await searchClientOrderPriceTypes(query, { signal: controller.signal, onRefresh });
+    await jest.advanceTimersByTimeAsync(120_000);
+    expect(api).toHaveBeenCalledTimes(5);
+    expect(onRefresh).toHaveBeenLastCalledWith(expect.objectContaining({ items: [],
+      meta: expect.objectContaining({ pending: false, refreshPaused: true, incomplete: true }) }));
+    controller.abort();
+  });
+
+  it('stops refreshing when the user changes search or leaves the picker', async () => {
+    api.mockResolvedValue(waiting as any);
+    const controller = new AbortController();
+    const onRefresh = jest.fn();
+    await searchClientOrderPriceTypes(query, { signal: controller.signal, expectedUserId: 7, onRefresh });
+    controller.abort();
+    await jest.advanceTimersByTimeAsync(120_000);
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(onRefresh).not.toHaveBeenCalled();
+  });
+});
+
 it('filters and paginates offline records without bypassing the selected organization', async () => {
   setServerUnavailable('Network error');
   readLocal.mockResolvedValue([

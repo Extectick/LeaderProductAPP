@@ -1,3 +1,5 @@
+import type { PendingLineInputReader } from './lib/pendingLineInput';
+import { OrderScreenFailed } from './screen/orderErrorRecovery';
 import {orderConnectionReadUpdate} from './lib/orderConnectionStatus';
 import { refreshPendingSnapshot } from '@/utils/refreshPendingSnapshot';
 import {refreshUnresolvedSnapshot} from '@/utils/refreshUnresolvedSnapshot';
@@ -146,6 +148,7 @@ type DiscardConfirmContext = {
   blockingMessage: string | null;
 };
 type UseClientOrdersWorkspaceOptions = {
+  pendingLineInput?: React.RefObject<PendingLineInputReader | null>;
   confirmPriceReview?: (prompt: PriceReviewPrompt) => Promise<PriceReviewChoice | null>;
   notifyCancelDenied?: (message: string) => void;
   confirmDiscard?: (context: DiscardConfirmContext) => Promise<DiscardDecision | boolean>;
@@ -526,7 +529,11 @@ function sanitizeDeviceDraftEntries(value: unknown): DeviceDraftEntry[] {
   }));
 }
 
+const recoveryWrites = new Map<string, Promise<void>>();
+
 async function readStoredDeviceDrafts(storageKey: string, userId: string) {
+  const pendingRecovery = recoveryWrites.get(storageKey);
+  if (pendingRecovery) await pendingRecovery;
   if (Platform.OS !== 'web') {
     const stored = await readOfflineDrafts(userId);
     if (stored.length) {
@@ -645,6 +652,41 @@ function buildPricingContextSignature(draft: DraftOrder) {
     draft.warehouseGuid || '',
     draft.priceTypeGuid || '',
   ].join('||');
+}
+
+// A single product may appear twice at different sales prices in the same order.
+async function readOrderLineProducts(
+  draft: DraftOrder, lines: DraftItem[],
+  options?: { priceType?: ClientOrderPriceTypeOption | null; receiptPriceAt?: string },
+) {
+  const groups = new Map<string, DraftItem[]>();
+  const override = options && Object.prototype.hasOwnProperty.call(options, 'priceType');
+  for (const line of lines) {
+    if (!line.productGuid) continue;
+    const type = (override ? options.priceType?.guid : line.priceTypeGuid || draft.priceTypeGuid) || '';
+    const group = groups.get(type);
+    if (group) group.push(line);
+    else groups.set(type, [line]);
+  }
+  const byLine = new Map<string, ClientOrderProduct | null>();
+  await Promise.all(Array.from(groups, async ([type, group]) => {
+    try {
+      const products = await getClientOrderProductsBatch({
+        productGuids: [...new Set(group.map(line => line.productGuid))],
+        organizationGuid: draft.organizationGuid || undefined, counterpartyGuid: draft.counterpartyGuid,
+        agreementGuid: draft.agreementGuid || undefined, warehouseGuid: draft.warehouseGuid || undefined,
+        priceTypeGuid: type || undefined, receiptPriceAt: options?.receiptPriceAt,
+      });
+      const byProduct = new Map(products.map(product => [product.guid, product]));
+      for (const line of group) {
+        const product = byProduct.get(line.productGuid);
+        if (product) byLine.set(line.key, product);
+      }
+    } catch {
+      for (const line of group) byLine.set(line.key, null);
+    }
+  }));
+  return byLine;
 }
 
 function includesSearchToken(value: string | null | undefined, search: string) {
@@ -1450,6 +1492,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const enumOptionsRequestIdRef = React.useRef(0);
   const deliveryAddressManualVersionRef = React.useRef(0);
   const pricingRequestIdRef = React.useRef(0);
+  const linePricingRequests = React.useRef(new Map<string, symbol>());
   const receiptPriceLoadingRequestIdRef = React.useRef(0);
   const ordersAppendLoadingRef = React.useRef(false);
   const ordersNextOffsetRef = React.useRef(0);
@@ -2011,6 +2054,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [offlineUserId, ordersCacheStorageKey]);
 
   const setItemPatch = React.useCallback((lineKey: string, patch: Partial<DraftItem>) => {
+    const line = defaultsViewRef.current.draft.items.find(item => item.key === lineKey);
+    if (!line || !(Object.keys(patch) as Array<keyof DraftItem>).some(key => !Object.is(line[key], patch[key]))) return;
     patchDraft((prev) => ({
       ...prev,
       items: prev.items.map((item) => {
@@ -2058,18 +2103,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     const targetGuid = sourceDraft.guid || null;
     setLoadingReceiptPrices(true);
     try {
-      const products = await getClientOrderProductsBatch({
-        productGuids,
-        organizationGuid: sourceDraft.organizationGuid || undefined,
-        counterpartyGuid: sourceDraft.counterpartyGuid,
-        agreementGuid: sourceDraft.agreementGuid || undefined,
-        warehouseGuid: sourceDraft.warehouseGuid || undefined,
-        priceTypeGuid: sourceDraft.priceTypeGuid || undefined,
-        receiptPriceAt: options?.receiptPriceAt,
-      });
+      const byLine = await readOrderLineProducts(sourceDraft, sourceDraft.items, {receiptPriceAt: options?.receiptPriceAt});
       if (pricingRequestIdRef.current !== requestId) return;
-
-      const productByGuid = new Map(products.map((product) => [product.guid, product]));
+      const originalLines = new Map(sourceDraft.items.map(line => [line.key, line]));
+      if (![...byLine.values()].some(Boolean)) return;
       if (options?.refreshCommercialData) setDirty(true);
       setDraft((prev) => {
         if (targetGuid && prev.guid !== targetGuid) return prev;
@@ -2078,10 +2115,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         return normalizeDraftOrder({
           ...prev,
           items: prev.items.map((item) => {
-            const product = productByGuid.get(item.productGuid);
-            if (!product) return item;
+            const product = byLine.get(item.key);
+            const original = originalLines.get(item.key);
+            if (!product || !original || original.productGuid !== item.productGuid) return item;
             const isManualPrice = hasManualPrice(item);
-            const refreshCommercialData = options?.refreshCommercialData === true;
+            const refreshCommercialData = options?.refreshCommercialData === true
+              && item.priceTypeGuid === original.priceTypeGuid && item.manualPrice === original.manualPrice;
             const packages = mergeDraftPackagesForProduct(product, item.packages, item.baseUnit);
             const hasProductPackages = Array.isArray(product.packages);
             return {
@@ -2095,10 +2134,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
               // только как резерв при недоступности коммерческих данных.
               receiptPrice: product.receiptPrice ?? item.receiptPrice ?? null,
               priceTypeGuid: refreshCommercialData && !isManualPrice
-                ? sourceDraft.priceTypeGuid ?? product.priceType?.guid ?? null
+                ? item.priceTypeGuid ?? sourceDraft.priceTypeGuid ?? product.priceType?.guid ?? null
                 : item.priceTypeGuid,
               priceTypeName: refreshCommercialData && !isManualPrice
-                ? sourceDraft.priceTypeName ?? product.priceType?.name ?? null
+                ? item.priceTypeName ?? sourceDraft.priceTypeName ?? product.priceType?.name ?? null
                 : item.priceTypeName,
               priceSource: refreshCommercialData && !isManualPrice
                 ? product.priceMatch?.source
@@ -2492,22 +2531,24 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const saveDraftOnDevice = React.useCallback(async (
     payload: ClientOrderSavePayload,
     syncError?: string | null,
-    operation?: { clientOrderId?: string; clientRevision?: number; intent: 'SAVE' | 'SUBMIT' }
+    operation?: { clientOrderId?: string; clientRevision?: number; intent: 'SAVE' | 'SUBMIT' },
+    snapshot = { draft, selections },
   ) => {
+    const { draft: orderDraft, selections: orderSelections } = snapshot;
     const nowIso = new Date().toISOString();
-    const existing = findDeviceDraftEntry(draft.guid, operation?.clientOrderId ?? draft.clientOrderId);
-    const serverGuid = existing?.serverGuid ?? (draft.guid && !isDeviceDraftGuid(draft.guid) ? draft.guid : null);
+    const existing = findDeviceDraftEntry(orderDraft.guid, operation?.clientOrderId ?? orderDraft.clientOrderId);
+    const serverGuid = existing?.serverGuid ?? (orderDraft.guid && !isDeviceDraftGuid(orderDraft.guid) ? orderDraft.guid : null);
     const clientOrderId = operation?.clientOrderId
       ?? existing?.clientOrderId
-      ?? draft.clientOrderId
+      ?? orderDraft.clientOrderId
       ?? (serverGuid ? `legacy-server:${serverGuid}` : makeClientOrderId());
     const clientRevision = operation?.clientRevision
       ?? existing?.clientRevision
-      ?? Math.max(1, draft.clientRevision || 0);
+      ?? Math.max(1, orderDraft.clientRevision || 0);
     const intent = operation?.intent === 'SUBMIT' ? 'SUBMIT' : 'SAVE';
-    const localGuid = existing?.order.guid ?? draft.guid ?? makeDeviceDraftGuid();
+    const localGuid = existing?.order.guid ?? orderDraft.guid ?? makeDeviceDraftGuid();
     const createdAt = existing?.createdAt ?? selectedOrder?.createdAt ?? nowIso;
-    const revision = Math.max(1, existing?.order.revision ?? draft.revision ?? 0);
+    const revision = Math.max(1, existing?.order.revision ?? orderDraft.revision ?? 0);
     const entry: DeviceDraftEntry = {
       id: existing?.id ?? makeDeviceDraftGuid(),
       clientOrderId,
@@ -2515,11 +2556,11 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       intent,
       status: intent === 'SUBMIT' ? 'READY_TO_SEND' : 'ON_DEVICE',
       serverGuid,
-      serverRevision: existing?.serverRevision ?? (serverGuid ? draft.revision : null),
+      serverRevision: existing?.serverRevision ?? (serverGuid ? orderDraft.revision : null),
       order: {
         ...buildDeviceOrderFromDraft({
-          draft: { ...draft, guid: localGuid, clientOrderId, clientRevision, revision, geoEvents: payload.geoEvents ?? draft.geoEvents },
-          selections,
+          draft: { ...orderDraft, guid: localGuid, clientOrderId, clientRevision, revision, geoEvents: payload.geoEvents ?? orderDraft.geoEvents },
+          selections: orderSelections,
           guid: localGuid,
           revision,
           createdAt,
@@ -2542,6 +2583,39 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     await replaceDeviceDraftEntries([entry, ...withoutCurrent]);
     return entry.order;
   }, [draft, findDeviceDraftEntry, replaceDeviceDraftEntries, selectedOrder, selections]);
+
+  const screenFailed = React.useContext(OrderScreenFailed);
+  const recoverEditor = React.useRef<() => void>(() => {});
+  React.useLayoutEffect(() => {
+    recoverEditor.current = () => {
+      if (activeOfflineUserRef.current !== offlineUserId || offlineUserId === 'anonymous'
+        || !deviceDraftsHydrated || readOnly || foregroundSaveRef.current || submitActionInFlightRef.current
+        || mutationLocked || deviceDraftSyncingRef.current) return;
+      const current = defaultsViewRef.current;
+      const edited = options.pendingLineInput?.current?.(current.draft) ?? current.draft;
+      if (!dirtyRef.current && edited === current.draft) return;
+      const snapshot = {...current, draft: edited};
+      const previous = findDeviceDraftEntry(edited.guid, edited.clientOrderId);
+      if (previous?.intent === 'SUBMIT' || (previous && previous.status !== 'ON_DEVICE')) return;
+      const clientRevision = Math.max(edited.clientRevision || 0, previous?.clientRevision || 0, selectedOrder?.clientRevision || 0) + 1;
+      let payload: ClientOrderSavePayload;
+      try {
+        payload = buildLocalDraftPayload(edited, 'autosave');
+      } catch (error) {
+        reportOfflineSyncFailure(error, { stage: 'draft.recovery', entity: 'drafts' });
+        return;
+      }
+      const write = saveDraftOnDevice(payload, null, { intent: 'SAVE', clientRevision }, snapshot)
+        .then(() => {}).catch(error => reportOfflineSyncFailure(error, { stage: 'draft.recovery', entity: 'drafts' }));
+      recoveryWrites.set(deviceDraftsStorageKey, write);
+      void write.finally(() => {
+        if (recoveryWrites.get(deviceDraftsStorageKey) === write) recoveryWrites.delete(deviceDraftsStorageKey);
+      });
+    };
+  });
+  React.useLayoutEffect(() => () => {
+    if (screenFailed()) recoverEditor.current();
+  }, [screenFailed]);
 
   const createDeviceCopyFromCurrentDraft = React.useCallback(async () => {
     const nowIso = new Date().toISOString();
@@ -4311,7 +4385,13 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     defaultsRequestIdRef.current += 1;
     readControllers.current.enums?.abort(); readControllers.current.defaults?.abort();
     setLoadingDefaults(false);
+    const previous = defaultsViewRef.current.draft;
+    const keepEarlyPrice = (!previous.organizationGuid || !previous.counterpartyGuid) && !!previous.priceTypeGuid;
     setDefaultsRefreshStatus('idle'); setDefaultsReadState(null); defaultsTouchedRef.current.clear();
+    if (keepEarlyPrice) {
+      defaultsTouchedRef.current.add('priceTypeGuid');
+      defaultsTouchedRef.current.add('priceTypeName');
+    }
     patchDraft((prev) => ({
       ...prev,
       ...patch,
@@ -4319,8 +4399,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       contractGuid: '',
       warehouseGuid: '',
       deliveryAddressGuid: '',
-      priceTypeGuid: null,
-      priceTypeName: null,
+      priceTypeGuid: keepEarlyPrice ? prev.priceTypeGuid : null,
+      priceTypeName: keepEarlyPrice ? prev.priceTypeName : null,
       paymentForm: null,
       deliveryMethod: deliveryMethodForNewOrder(prev.deliveryMethod),
       invoiceRequested: false,
@@ -4432,29 +4512,45 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     setSelections((prev) => ({ ...prev, deliveryAddress }));
   }, [patchDraft]);
 
-  const refreshItemPricing = React.useCallback(async (item: DraftItem, priceType: ClientOrderPriceTypeOption | null) => {
+  const refreshItemPricing = React.useCallback(async (requestedItem: DraftItem, priceType: ClientOrderPriceTypeOption | null) => {
     if (!draft.counterpartyGuid) return;
+    const sourceDraft = defaultsViewRef.current.draft;
+    const signature = buildPricingContextSignature(sourceDraft);
+    const request = Symbol();
+    const requests = linePricingRequests.current;
+    requests.set(requestedItem.key, request);
+    const currentLine = () => {
+      const current = defaultsViewRef.current.draft;
+      if (requests.get(requestedItem.key) !== request || activeOfflineUserRef.current !== offlineUserId
+        || current.guid !== sourceDraft.guid || buildPricingContextSignature(current) !== signature) return undefined;
+      const line = current.items.find((entry) => entry.key === requestedItem.key);
+      if (!line || line.lineGuid !== requestedItem.lineGuid || line.productGuid !== requestedItem.productGuid
+        || line.isCancelled || hasManualPrice(line) || (line.priceTypeGuid || null) !== (priceType?.guid || null)
+        || (line.packageGuid || null) !== (requestedItem.packageGuid || null)) return undefined;
+      return line;
+    };
     try {
       const products = await getClientOrderProductsBatch({
-        productGuids: [item.productGuid],
+        productGuids: [requestedItem.productGuid],
         organizationGuid: draft.organizationGuid || undefined,
         counterpartyGuid: draft.counterpartyGuid,
         agreementGuid: draft.agreementGuid || undefined,
         warehouseGuid: draft.warehouseGuid || undefined,
         priceTypeGuid: priceType?.guid || undefined,
       });
+      const item = currentLine();
+      if (!item) return;
       const product = products.find((next) => next.guid === item.productGuid);
       if (!product) return;
-      const isManualPrice = hasManualPrice(item);
       const packages = mergeDraftPackagesForProduct(product, item.packages, item.baseUnit);
       const hasProductPackages = Array.isArray(product.packages);
       setItemPatch(item.key, {
         packageGuid: normalizePackageGuid(item.packageGuid, packages),
-        basePrice: isManualPrice ? item.basePrice ?? product.basePrice ?? null : product.basePrice ?? null,
+        basePrice: product.basePrice ?? null,
         receiptPrice: product.receiptPrice ?? item.receiptPrice ?? null,
         currency: DEFAULT_ORDER_CURRENCY,
-        priceTypeGuid: isManualPrice ? item.priceTypeGuid ?? null : priceType?.guid ?? product.priceType?.guid ?? null,
-        priceTypeName: isManualPrice ? item.priceTypeName ?? null : priceType?.name ?? product.priceType?.name ?? null,
+        priceTypeGuid: priceType?.guid ?? product.priceType?.guid ?? null,
+        priceTypeName: priceType?.name ?? product.priceType?.name ?? null,
         baseUnit: product.baseUnit ?? item.baseUnit ?? null,
         productWeight: product.weight ?? item.productWeight ?? null,
         weightUnit: product.weightUnit ?? item.weightUnit ?? null,
@@ -4467,14 +4563,17 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         images: product.images ?? item.images ?? [],
       });
     } catch {
-      const isManualPrice = hasManualPrice(item);
+      const item = currentLine();
+      if (!item) return;
       setItemPatch(item.key, {
-        priceTypeGuid: isManualPrice ? item.priceTypeGuid ?? null : priceType?.guid || null,
-        priceTypeName: isManualPrice ? item.priceTypeName ?? null : priceType?.name || null,
-        basePrice: isManualPrice ? item.basePrice : null,
+        priceTypeGuid: priceType?.guid || null,
+        priceTypeName: priceType?.name || null,
+        basePrice: null,
       });
+    } finally {
+      if (requests.get(requestedItem.key) === request) requests.delete(requestedItem.key);
     }
-  }, [draft.agreementGuid, draft.counterpartyGuid, draft.organizationGuid, draft.warehouseGuid, setItemPatch]);
+  }, [offlineUserId, draft.agreementGuid, draft.counterpartyGuid, draft.organizationGuid, draft.warehouseGuid, setItemPatch]);
 
   const refreshItemsPricing = React.useCallback(async (
     items: DraftItem[],
@@ -4492,28 +4591,19 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         && original.manualPrice === line.manualPrice && !line.isCancelled;
     };
     const hasPriceTypeOverride = !!options && Object.prototype.hasOwnProperty.call(options, 'priceType');
-    const targetPriceTypeGuid = hasPriceTypeOverride
-      ? options?.priceType?.guid || undefined
-      : draft.priceTypeGuid || undefined;
-    const targetPriceTypeName = hasPriceTypeOverride
-      ? options?.priceType?.name || null
-      : draft.priceTypeName || null;
-    try {
-      const products = await getClientOrderProductsBatch({
-        productGuids: items.map((item) => item.productGuid),
-        organizationGuid: draft.organizationGuid || undefined,
-        counterpartyGuid: draft.counterpartyGuid,
-        agreementGuid: draft.agreementGuid || undefined,
-        warehouseGuid: draft.warehouseGuid || undefined,
-        priceTypeGuid: targetPriceTypeGuid,
-      });
-      if (pricingRequestIdRef.current !== requestId) return;
-      const productByGuid = new Map(products.map((product) => [product.guid, product]));
-      setDraft((prev) => normalizeDraftOrder({
+    const signature = buildPricingContextSignature(source);
+    const byLine = await readOrderLineProducts(source, [...requested.values()], options);
+    if (pricingRequestIdRef.current !== requestId || activeOfflineUserRef.current !== offlineUserId) return;
+    setDraft((prev) => {
+      if (prev.guid !== source.guid || buildPricingContextSignature(prev) !== signature) return prev;
+      return normalizeDraftOrder({
         ...prev,
         items: prev.items.map((item) => {
-          const product = productByGuid.get(item.productGuid);
-          if (!product || !matchesRequest(item)) return item;
+          if (!matchesRequest(item)) return item;
+          const product = byLine.get(item.key);
+          if (!product) return product === null && !hasManualPrice(item) ? {...item, basePrice: null} : item;
+          const targetPriceTypeGuid = hasPriceTypeOverride ? options?.priceType?.guid : item.priceTypeGuid ?? source.priceTypeGuid;
+          const targetPriceTypeName = hasPriceTypeOverride ? options?.priceType?.name : item.priceTypeName ?? source.priceTypeName;
           const isManualPrice = options?.forceAutomaticPrice ? false : hasManualPrice(item);
           const packages = mergeDraftPackagesForProduct(product, item.packages, item.baseUnit);
           const hasProductPackages = Array.isArray(product.packages);
@@ -4541,24 +4631,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
             images: product.images ?? item.images ?? [],
           };
         }),
-      }, prev));
-    } catch {
-      if (pricingRequestIdRef.current !== requestId) return;
-      setDraft((prev) => normalizeDraftOrder({
-        ...prev,
-        items: prev.items.map((item) => hasManualPrice(item) || !matchesRequest(item)
-          ? item
-          : { ...item, basePrice: null }),
-      }, prev));
-    }
-  }, [
-    draft.agreementGuid,
-    draft.counterpartyGuid,
-    draft.organizationGuid,
-    draft.priceTypeGuid,
-    draft.priceTypeName,
-    draft.warehouseGuid,
-  ]);
+      }, prev);
+    });
+  }, [draft.counterpartyGuid, offlineUserId]);
 
   React.useEffect(() => {
     if (!draft.organizationGuid || !draft.counterpartyGuid || !draft.items.length) {

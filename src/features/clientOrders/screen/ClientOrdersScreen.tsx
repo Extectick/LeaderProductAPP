@@ -1,4 +1,5 @@
 import React from 'react';
+import { ClientOrdersErrorBoundary } from './ClientOrdersErrorBoundary';
 import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { AuthContext } from '@/context/AuthContext';
@@ -6,51 +7,11 @@ import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderConte
 import { useNotificationViewport } from '@/context/NotificationViewportContext';
 import { useServicesHeaderSlot } from '@/src/features/services/headerSlotContext';
 import { logger } from '@/utils/logger';
-import { captureException } from '@/src/shared/monitoring';
 import { getProfile } from '@/utils/userService';
 import { isClientOrdersOnecUserLinked } from '../lib/clientOrdersAccess';
 import ClientOrdersMobileLayout from './mobile/ClientOrdersMobileLayout';
 import {ClientOrderLinkedScreen} from '../ClientOrderLinkedScreen';
 import ClientOrdersDesktopLayout from './desktop/ClientOrdersDesktopLayout';
-
-type ErrorBoundaryProps = {
-  children: React.ReactNode;
-  onExit: () => void;
-};
-
-type ErrorBoundaryState = {
-  error: Error | null;
-};
-
-class ClientOrdersErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  state: ErrorBoundaryState = { error: null };
-
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return { error };
-  }
-
-  componentDidCatch(error: Error, info: React.ErrorInfo) {
-    captureException(error, { contexts: { react_native_context: { componentStack: info.componentStack } } });
-  }
-
-  render() {
-    if (!this.state.error) return this.props.children;
-
-    return (
-      <View style={styles.errorRoot}>
-        <View style={styles.errorCard}>
-          <Text style={styles.errorTitle}>Не удалось открыть заказы клиентов</Text>
-          <Text style={styles.errorText} selectable>
-            {this.state.error.message || 'Произошла ошибка интерфейса.'}
-          </Text>
-          <Pressable style={styles.errorButton} onPress={this.props.onExit}>
-            <Text style={styles.errorButtonText}>В каталог сервисов</Text>
-          </Pressable>
-        </View>
-      </View>
-    );
-  }
-}
 
 function ClientOrdersScreenContent() {
   const linkedParams=useLocalSearchParams<{orderGuid?:string|string[];orderBaseKey?:string|string[]}>();
@@ -192,45 +153,6 @@ export default function ClientOrdersScreen() {
 }
 
 const styles = StyleSheet.create({
-  errorRoot: {
-    flex: 1,
-    justifyContent: 'center',
-    padding: 20,
-    backgroundColor: '#F8FAFC',
-  },
-  errorCard: {
-    gap: 14,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#DBEAFE',
-    backgroundColor: '#FFFFFF',
-    padding: 20,
-  },
-  errorTitle: {
-    color: '#0F172A',
-    fontSize: 18,
-    fontWeight: '900',
-    lineHeight: 23,
-  },
-  errorText: {
-    color: '#475569',
-    fontSize: 14,
-    fontWeight: '700',
-    lineHeight: 20,
-  },
-  errorButton: {
-    minHeight: 46,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 14,
-    backgroundColor: '#2563EB',
-    paddingHorizontal: 16,
-  },
-  errorButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '900',
-  },
   blockedRoot: {
     flex: 1,
     alignItems: 'center',

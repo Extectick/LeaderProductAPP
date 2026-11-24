@@ -7,6 +7,7 @@ import {
   getPickerItemMeta,
   isProductAlreadyInOrder,
   isWarehousePickerGroupRow,
+  pickerNeedsOrderContext,
   resolveProductPickerPressAction,
   toggleProductSelection,
   transferSelectedProductsToOrder,
@@ -17,6 +18,13 @@ import {
 } from '../src/features/clientOrders/lib/clientOrdersPrefs';
 
 describe('clientOrdersUi', () => {
+  it('opens the global price type catalogue before customer selection', () => {
+    expect(pickerNeedsOrderContext('priceType')).toBe(false);
+    expect(pickerNeedsOrderContext('agreement')).toBe(true);
+    expect(pickerNeedsOrderContext('product')).toBe(true);
+  });
+
+
   it('resolves saved picker flags with true as the missing-value default', () => {
     expect(resolveStoredBooleanDefaultTrue(null)).toBe(true);
     expect(resolveStoredBooleanDefaultTrue(undefined)).toBe(true);
