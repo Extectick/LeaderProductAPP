@@ -7,7 +7,8 @@ const help = SERVICE_CATALOG.find(item => item.key === 'help')!;
 test('Help is a real installed route, not just a server catalog entry', () => {
   expect(help.route).toBe('/services/help');
   expect(canOpenService(help, true, 'android')).toBe(true);
-  expect(fs.readFileSync(path.join(__dirname, '../app/(main)/services/help/index.tsx'), 'utf8')).toContain('HelpScreen');
+  jest.doMock('../src/features/help/schedules/HelpScheduleScreen', () => ({__esModule: true, default: jest.fn()}));
+  expect(require('../app/(main)/services/help/index').default).toBe(require('../src/features/help/schedules/HelpScheduleScreen').default);
 });
 test.each(Object.entries(INSTALLED_SERVICE_ROUTES))('%s has a bundled screen', (_, route) => {
   expect(fs.existsSync(path.join(__dirname, '../app/(main)', route, 'index.tsx'))).toBe(true);
