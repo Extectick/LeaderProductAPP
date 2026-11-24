@@ -24,6 +24,7 @@ import FilterModal from '@/components/QRcodes/Analytics/FilterModal';
 import PeriodModal from '@/components/QRcodes/Analytics/PeriodModal';
 import PresetsModal from '@/components/QRcodes/Analytics/PresetsModal';
 import { useAnalyticsController } from '@/hooks/useAnalyticsController';
+import { captureException } from '@/src/shared/monitoring';
 import { logger } from '@/utils/logger';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 
@@ -49,7 +50,7 @@ class ScreenErrorBoundary extends React.Component<{ children: React.ReactNode },
     return { hasError: true };
   }
   componentDidCatch(error: any, info: any) {
-    logger.captureException(error, { where: 'AnalyticsScreen', info });
+    captureException(error, { source: 'router_error_boundary' }, { componentStack: info.componentStack });
   }
   render() {
     if (this.state.hasError) {

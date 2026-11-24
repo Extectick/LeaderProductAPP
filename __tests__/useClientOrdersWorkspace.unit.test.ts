@@ -3,6 +3,8 @@ jest.mock('@/utils/apiClient', () => ({apiClient: jest.fn()}));
 
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
+import { captureException } from '../src/shared/monitoring';
+import { useOrderLoopStage } from '../src/features/clientOrders/screen/orderLoopStage';
 import { ClientOrdersErrorBoundary } from '../src/features/clientOrders/screen/ClientOrdersErrorBoundary';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState } from 'react-native';
@@ -797,6 +799,7 @@ describe('useClientOrdersWorkspace', () => {
     let current!: ReturnType<typeof useClientOrdersWorkspace>;
     let triggerError!: () => void;
     function Editor() {
+      useOrderLoopStage('line-editor');
       current = useClientOrdersWorkspace();
       const [fail, setFail] = React.useState(false);
       const [, setCount] = React.useState(0);
@@ -818,6 +821,9 @@ describe('useClientOrdersWorkspace', () => {
       await act(async () => { await jest.advanceTimersByTimeAsync(399); triggerError(); });
       const boundary = renderer.root.findByType(ClientOrdersErrorBoundary);
       expect((boundary.instance as ClientOrdersErrorBoundary).state.error?.message).toMatch(/maximum update depth/i);
+      expect(captureException).toHaveBeenCalledWith(expect.any(Error), expect.anything(), {
+        screen: 'orders', stage: 'line-editor', componentStack: expect.stringContaining('Editor'),
+      });
       expect(records.get(entry.clientOrderId).order.localDraft.items[0].productGuid).toBe('product-guid');
       expect(records.get(entry.clientOrderId).intent).toBe('SAVE');
       expect(records.get(entry.clientOrderId).clientRevision).toBe(2);

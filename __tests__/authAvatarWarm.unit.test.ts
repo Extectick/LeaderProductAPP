@@ -10,6 +10,7 @@ jest.mock('@/utils/pushRegistration',()=>({startPushTokenRegistration:jest.fn(()
 jest.mock('@/utils/trackingV2Service',()=>({stopTrackingV2:jest.fn()}));
 jest.mock('@/hooks/usePresenceHeartbeat',()=>({usePresenceHeartbeat:jest.fn()}));
 jest.mock('@/src/shared/monitoring',()=>({addMonitoringBreadcrumb:jest.fn(),captureException:jest.fn(),setMonitoringUser:jest.fn()}));
+import {setMonitoringUser} from '@/src/shared/monitoring';
 import {AuthProvider,AuthContext} from '@/context/AuthContext';
 import {primeOwnAvatar,clearAvatarMemory} from '@/src/shared/avatar/avatarSource';
 import {getAccessToken,getRefreshToken,hasAuthSessionExpired,logout,onAuthSessionExpired,refreshToken,handleBackendUnavailable} from '@/utils/tokenService';
@@ -79,4 +80,18 @@ test('manual sign out clears in-memory avatar before clearing authentication',as
  await mount();await act(async()=>context.signOut());
  expect(clearAvatarMemory).toHaveBeenCalledTimes(1);expect((clearAvatarMemory as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan((logout as jest.Mock).mock.invocationCallOrder[0]);
  expect(context.isAuthenticated).toBe(false);expect(context.profile).toBeNull();
+});
+
+test('a cached active profile alone cannot own crash reports; login activates reporting and expiry clears the owner',async()=>{
+ const activeProfile={...cached,profileStatus:'ACTIVE',currentProfileType:'EMPLOYEE',employeeProfile:{status:'ACTIVE'}};
+ await AsyncStorage.setItem('profile',JSON.stringify(activeProfile));
+ (getAccessToken as jest.Mock).mockResolvedValue(null);(getRefreshToken as jest.Mock).mockResolvedValue(null);
+ await mount();
+ expect(context.isAuthenticated).toBe(false);
+ expect(setMonitoringUser).not.toHaveBeenCalledWith(1);
+ await act(async()=>{context.setAuthenticated(true);});
+ expect(setMonitoringUser).toHaveBeenLastCalledWith(1);
+ const expired=jest.mocked(onAuthSessionExpired).mock.calls.at(-1)![0];
+ await act(async()=>{expired({reason:'invalid_refresh',status:403,at:Date.now()});});
+ expect(setMonitoringUser).toHaveBeenLastCalledWith(null);
 });

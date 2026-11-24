@@ -1,3 +1,4 @@
+import { useOrderLoopStage } from './screen/orderLoopStage';
 import { withPendingLineInput, type PendingLineInputReader } from './lib/pendingLineInput';
 import { Skeleton } from 'moti/skeleton';
 import { ReadSnapshotLabel } from './components/ReadSnapshotLabel';
@@ -625,6 +626,14 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     index: number;
   } | null>(null);
   const [referenceOpen, setReferenceOpen] = React.useState(false);
+  useOrderLoopStage(
+    editingItemKey || pendingProductItem ? 'line-editor' :
+    referenceOpen ? 'reference-picker' :
+    pickerKind === 'product' ? 'product-picker' :
+    pickerKind ? 'reference-picker' :
+    filtersOpen ? 'filters' :
+    mode === 'editor' ? (section === 'items' ? 'editor-items' : 'editor-header') : 'orders'
+  );
   const [referenceLoading, setReferenceLoading] = React.useState(false);
   const [referenceError, setReferenceError] = React.useState<string | null>(null);
   const [referenceDetails, setReferenceDetails] = React.useState<ClientOrderReferenceDetails | null>(null);

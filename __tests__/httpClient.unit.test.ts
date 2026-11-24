@@ -2,6 +2,7 @@ import { httpRequest } from '../src/shared/api/httpClient';
 import {
   getLastRefreshFailure,
   getAccessTokenForRequest,
+  getAccessToken,
   handleBackendUnavailable,
   hasAuthSessionExpired,
   logout,
@@ -15,6 +16,7 @@ jest.mock('@/utils/config', () => ({
 
 jest.mock('@/utils/tokenService', () => ({
   getAccessTokenForRequest: jest.fn(async () => null),
+  getAccessToken: jest.fn(async () => null),
   getLastRefreshFailure: jest.fn(() => null),
   handleBackendUnavailable: jest.fn(async () => undefined),
   hasAuthSessionExpired: jest.fn(() => false),
@@ -42,6 +44,27 @@ describe('httpRequest', () => {
   afterEach(() => {
     global.fetch = originalFetch;
     jest.useRealTimers();
+  });
+
+  it('keeps background diagnostic failures out of authentication and connectivity state and respects server backoff', async () => {
+    const options = { method: 'POST' as const, passive: true, expectedUserId: 121 };
+    const claims = Buffer.from(JSON.stringify({ userId: 121 })).toString('base64url');
+    jest.mocked(getAccessToken).mockResolvedValue('header.' + claims + '.signature');
+    const request = jest.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(new Response(null, { status: 429, headers: { 'Retry-After': '61' } }))
+      .mockRejectedValueOnce(new Error('offline'));
+    global.fetch = request;
+    await expect(httpRequest('/api/diagnostics/app-errors', options)).resolves.toMatchObject({status: 401});
+    await expect(httpRequest('/api/diagnostics/app-errors', options)).resolves.toMatchObject({status: 429, retryAfterMs: 61_000});
+    await expect(httpRequest('/api/diagnostics/app-errors', options)).resolves.toMatchObject({status: 0});
+    await expect(httpRequest('/api/diagnostics/app-errors', {...options, expectedUserId: 122})).resolves.toMatchObject({status: 409});
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(getAccessTokenForRequest).not.toHaveBeenCalled();
+    expect(refreshToken).not.toHaveBeenCalled();
+    expect(setServerReachable).not.toHaveBeenCalled();
+    expect(setServerUnavailable).not.toHaveBeenCalled();
+    expect(handleBackendUnavailable).not.toHaveBeenCalled();
   });
 
   it.each([91, '91'])('accepts a matching account guard %p for UI and durable outbox requests', async (expectedUserId) => {

@@ -3,14 +3,14 @@ import '@/utils/logbox';
 import WebInteractionStyles from '@/components/ui/WebInteractionStyles';
 import { Slot, useSegments, usePathname, ErrorBoundary as RouterErrorBoundary, type ErrorBoundaryProps } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import React, { useCallback, useContext, useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo } from 'react';
 import { Platform, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { MD3LightTheme, PaperProvider } from 'react-native-paper';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { enableScreens } from 'react-native-screens';
 
-import { AuthProvider, AuthContext } from '@/context/AuthContext';
+import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { useAuthRedirect } from '@/hooks/useAuthRedirect';
 import { useStartupOtaUpdate } from '@/hooks/useStartupOtaUpdate';
@@ -24,7 +24,8 @@ import { OtaUpdateStatusProvider } from '@/src/shared/ota/OtaUpdateStatusContext
 import { registerOtaBackgroundPrefetchTask } from '@/src/shared/ota/registerOtaBackgroundTask';
 import { registerOrderOutboxTask } from '@/src/features/clientOrders/offline/registerOrderOutboxTask';
 import { initPushNotifications } from '@/utils/pushNotifications';
-import { captureException, setMonitoringScreen, setMonitoringUser } from '@/src/shared/monitoring';
+import { captureException, setMonitoringScreen } from '@/src/shared/monitoring';
+import { AppRenderErrorBoundary } from '@/src/shared/monitoring/AppRenderErrorBoundary';
 import {AppThemeSurface} from '@/components/Navigation/AppThemeSurface';
 import {EntityCardProvider} from '@/src/features/entityCards/EntityCardProvider';
 import {StartupNavigationContext} from '@/src/features/navigation/StartupNavigationContext';
@@ -45,12 +46,9 @@ const nativeBottomSheetProvider = Platform.OS === 'web'
   : require('@gorhom/bottom-sheet').BottomSheetModalProvider;
 
 function InnerLayout() {
-  const auth = useContext(AuthContext);
-  const profile = auth?.profile;
   const segments = useSegments();
   const route = segments.join('/');
-  useEffect(() => { if (!auth?.isLoading) void setMonitoringUser(profile?.id); }, [profile?.id, auth?.isLoading]);
-  useEffect(() => { setMonitoringScreen(route); }, [route]);
+  React.useLayoutEffect(() => { setMonitoringScreen(route); }, [route]);
   const { isChecking, startupNavigationPending } = useAuthRedirect();
   useTelegramBackButton();
   if (isChecking) {
@@ -65,6 +63,10 @@ function InnerLayout() {
 }
 
 export default function RootLayout() {
+  return <AppRenderErrorBoundary><RootContents /></AppRenderErrorBoundary>;
+}
+
+function RootContents() {
   const pathname=usePathname();
   const Root = Platform.OS === 'web' ? View : GestureHandlerRootView;
   const MaybeBottomSheetProvider = Platform.OS === 'web' ? React.Fragment : nativeBottomSheetProvider;

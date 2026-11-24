@@ -1,6 +1,7 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { captureException } from '@/src/shared/monitoring';
+import { OrderLoopStageContext, type OrderLoopStage } from './orderLoopStage';
 import { OrderScreenFailed } from './orderErrorRecovery';
 
 type ErrorBoundaryProps = {
@@ -16,6 +17,8 @@ type ErrorBoundaryState = {
 export class ClientOrdersErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
   state: ErrorBoundaryState = { error: null, showDetails: false };
   private componentNames = '';
+  private lastStage: OrderLoopStage = 'unknown';
+  private recordStage = (stage: OrderLoopStage) => { this.lastStage = stage; };
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { error, showDetails: false };
@@ -27,13 +30,17 @@ export class ClientOrdersErrorBoundary extends React.Component<ErrorBoundaryProp
       .map(line => /^\s*(?:at|in)\s+([A-Za-z_$][\w.$]*)(?=\s|$)/.exec(line)?.[1])
       .filter((name): name is string => Boolean(name));
     this.componentNames = names.slice(0, 18).join(' → ');
-    captureException(error, { contexts: { react_native_context: { componentStack: info.componentStack } } });
+    captureException(error, { contexts: { react_native_context: { componentStack: info.componentStack } }, source: 'router_error_boundary' }, { screen: 'orders', stage: this.lastStage, componentStack: info.componentStack });
   }
 
   private readonly screenFailed = () => this.state.error !== null;
 
   render() {
-    if (!this.state.error) return <OrderScreenFailed.Provider value={this.screenFailed}>{this.props.children}</OrderScreenFailed.Provider>;
+    if (!this.state.error) return (
+      <OrderScreenFailed.Provider value={this.screenFailed}>
+        <OrderLoopStageContext.Provider value={this.recordStage}>{this.props.children}</OrderLoopStageContext.Provider>
+      </OrderScreenFailed.Provider>
+    );
 
     return (
       <View style={styles.errorRoot}>
@@ -42,7 +49,10 @@ export class ClientOrdersErrorBoundary extends React.Component<ErrorBoundaryProp
           <Text style={styles.errorText} selectable>
             {this.state.error.message || 'Произошла ошибка интерфейса.'}
           </Text>
-          <Pressable accessibilityRole="button" style={styles.errorButton} onPress={() => this.setState({ error: null, showDetails: false })}>
+          <Pressable accessibilityRole="button" style={styles.errorButton} onPress={() => {
+            this.lastStage = 'unknown';
+            this.setState({ error: null, showDetails: false });
+          }}>
             <Text style={styles.errorButtonText}>Вернуться в заказы</Text>
           </Pressable>
           <Pressable accessibilityRole="button" style={styles.errorSecondaryButton} onPress={this.props.onExit}>

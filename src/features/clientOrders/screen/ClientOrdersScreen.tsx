@@ -1,4 +1,5 @@
 import React from 'react';
+import { useOrderLoopStage } from './orderLoopStage';
 import { ClientOrdersErrorBoundary } from './ClientOrdersErrorBoundary';
 import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
@@ -25,6 +26,7 @@ function ClientOrdersScreenContent() {
   const [profileRefreshing, setProfileRefreshing] = React.useState(false);
   const [profileRefreshError, setProfileRefreshError] = React.useState<string | null>(null);
   const closeOverlayRef = React.useRef<(() => boolean) | null>(null);
+  useOrderLoopStage(linkedSource ? 'linked-order' : Platform.OS === 'web' ? 'web-workspace' : null);
   const isOnecUserMissing = Boolean(!linkedSource && auth && !auth.isLoading && !isClientOrdersOnecUserLinked(auth.profile));
   const exitToServices = React.useCallback(() => {if(linkedSource&&router.canGoBack())router.back();else router.replace('/services');}, [router,linkedSource]);
 

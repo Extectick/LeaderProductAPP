@@ -3,6 +3,7 @@ import { jwtDecode } from 'jwt-decode';
 import {
   getLastRefreshFailure,
   getAccessTokenForRequest,
+  getAccessToken,
   handleBackendUnavailable,
   hasAuthSessionExpired,
   logout,
@@ -30,11 +31,14 @@ export interface HttpResponse<T> {
   errorCode?: AppErrorCode;
   backendErrorCode?: string;
   errorDetails?: any;
+  retryAfterMs?: number;
 }
 
 export interface HttpRequestOptions<Req> {
   /** Pin credential-bearing requests to the initiating account, including token-refresh retries. */
   expectedUserId?: number | string;
+  /** Diagnostics use the existing token without refreshing the session or changing global reachability. */
+  passive?: boolean;
   method?: HttpMethod;
   body?: Req | BodyLike;
   headers?: Record<string, string>;
@@ -191,10 +195,10 @@ export async function httpRequest<Req = undefined, Res = any>(
 
   try {
     if (signal?.aborted) throw Object.assign(new Error('Request aborted'), { name: 'AbortError' });
-    token = !skipAuth ? await withDeadline(getAccessTokenForRequest(), AUTH_WAIT_TIMEOUT_MS, signal) : null;
+    token = !skipAuth ? await withDeadline(options.passive ? getAccessToken() : getAccessTokenForRequest(), AUTH_WAIT_TIMEOUT_MS, signal) : null;
     let result = await doFetchWithNetworkRetry(token);
 
-    if (result.response.status === 401 && !skipAuth) {
+    if (result.response.status === 401 && !skipAuth && !options.passive) {
       addMonitoringBreadcrumb('http_401_refresh_attempt', { path });
       const newToken = await withDeadline(refreshTokens(), AUTH_WAIT_TIMEOUT_MS, signal);
       if (!newToken) {
@@ -258,16 +262,18 @@ export async function httpRequest<Req = undefined, Res = any>(
       result = await doFetchWithNetworkRetry(token);
     }
 
-    setServerReachable();
+    if (!options.passive) setServerReachable();
     const { response, parsed } = result;
     const status = response.status;
     const { data, meta, message, backendErrorCode, errorDetails } = parsed;
 
     if (!response.ok) {
       addMonitoringBreadcrumb('http_error_response', { path, status });
+      const retryAfter = status === 429 || status === 503 ? response.headers.get('retry-after') : null;
       return {
         ok: false,
         status,
+        ...(retryAfter && /^\d{1,9}$/.test(retryAfter) ? { retryAfterMs: Number(retryAfter) * 1000 } : {}),
         message: message || `HTTP error ${status}`,
         errorCode: mapHttpStatusToErrorCode(status),
         backendErrorCode,
@@ -300,8 +306,10 @@ export async function httpRequest<Req = undefined, Res = any>(
       ? 'Request timeout'
       : error?.message || 'Network error';
     addMonitoringBreadcrumb('http_network_error', { path, message: technicalMessage });
-    setServerUnavailable(SERVER_CONNECTION_UNAVAILABLE_MESSAGE);
-    await handleBackendUnavailable(SERVER_CONNECTION_UNAVAILABLE_MESSAGE);
+    if (!options.passive) {
+      setServerUnavailable(SERVER_CONNECTION_UNAVAILABLE_MESSAGE);
+      await handleBackendUnavailable(SERVER_CONNECTION_UNAVAILABLE_MESSAGE);
+    }
     return {
       ok: false,
       status: 0,

@@ -5,7 +5,7 @@ import { acceptOwnProfile, isCurrentOwnProfile, persistOwnProfile, resetOwnProfi
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import isEqual from 'fast-deep-equal';
 import { jwtDecode } from 'jwt-decode';
-import React, { createContext, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 
 import { Profile } from '@/src/entities/user/types';
@@ -15,6 +15,7 @@ import { getProfileGate } from '@/utils/profileGate';
 import { unregisterPushToken } from '@/utils/pushNotifications';
 import {startPushTokenRegistration} from '@/utils/pushRegistration';
 import { usePresenceHeartbeat } from '@/hooks/usePresenceHeartbeat';
+import { useAppErrorDelivery } from '@/src/shared/monitoring/appErrorDelivery';
 import { addMonitoringBreadcrumb, captureException, setMonitoringUser } from '@/src/shared/monitoring';
 import { startOrderOutbox, stopOrderOutbox } from '@/src/features/clientOrders/offline/orderOutbox';
 
@@ -58,19 +59,33 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     return stopOrderOutbox;
   }, [isLoading, isAuthenticated, profileState?.id, outboxProfileActive]);
 
+  const reportOwner = !isLoading && isAuthenticated && isValidProfile(profileState) ? profileState!.id : null;
+  const lastReportOwner = useRef<number | null>(null);
+  const setReportOwner = useCallback((ownerId: number | null) => {
+    lastReportOwner.current = ownerId;
+    return setMonitoringUser(ownerId);
+  }, []);
+  useLayoutEffect(() => {
+    void setReportOwner(reportOwner);
+  }, [reportOwner, setReportOwner]);
+  useAppErrorDelivery(reportOwner);
+
   const setProfile = useCallback(async (newProfile: Profile | null) => {
     if (newProfile) {
       if (!acceptOwnProfile(newProfile) || !isCurrentOwnProfile(newProfile)) return;
     } else resetOwnProfileSession();
+    if (lastReportOwner.current !== null && (lastReportOwner.current !== newProfile?.id || !isValidProfile(newProfile))) {
+      void setReportOwner(null);
+    }
     setProfileState(prev => isEqual(prev, newProfile) ? prev : newProfile);
-    await Promise.all([setMonitoringUser(newProfile?.id), persistOwnProfile(newProfile)]);
-  }, []);
+    await persistOwnProfile(newProfile);
+  }, [setReportOwner]);
 
   const signOut = useCallback(async () => {
     stopPushRegistration.current?.();stopPushRegistration.current=null;
     stopOrderOutbox();
     addMonitoringBreadcrumb('auth_signout_start');
-    await setMonitoringUser(null);
+    await setReportOwner(null);
     try {
       const { stopTrackingV2 } = await import('@/utils/trackingV2Service');
       await stopTrackingV2({ revoke: true });
@@ -87,13 +102,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setAuthenticated(false); // контекст -> guest
     await setProfile(null);  // чистим профиль в контексте
     addMonitoringBreadcrumb('auth_signout_done');
-  }, [setProfile]);
+  }, [setProfile, setReportOwner]);
 
   useEffect(() => {
     return onAuthSessionExpired((event) => {
       stopPushRegistration.current?.();stopPushRegistration.current=null;
       stopOrderOutbox();
-      void setMonitoringUser(null);
+      void setReportOwner(null);
       addMonitoringBreadcrumb('auth_session_expired', {
         status: event.status,
         reason: event.reason,
@@ -102,7 +117,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setProfileState(null);
       setIsLoading(false);
     });
-  }, []);
+  }, [setReportOwner]);
 
   useEffect(() => {
     let isMounted = true;
