@@ -128,6 +128,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     ] : []),
     // MainApplication mods run in reverse order: initialize before tracking/React.
     "./plugins/with-dev-crash-reporting",
+    "./plugins/with-app-errors",
     "expo-router",
     "@maplibre/maplibre-react-native",
     "./plugins/with-traccar-kotlin-compat",
