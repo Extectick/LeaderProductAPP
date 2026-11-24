@@ -1,1 +1,1 @@
-export { default } from '@/src/features/help/HelpScreen';
+export { default } from '@/src/features/help/schedules/HelpScheduleScreen';

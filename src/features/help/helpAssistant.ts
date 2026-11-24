@@ -1,3 +1,5 @@
+import type {Draft as ScheduleDraft} from './schedules/model';
+
 /** UI event contract. The QA entry supplies events; this does not enable a backend AI. */
 export type HelpAssistantScenario = 'answer' | 'slow' | 'question' | 'error';
 export type HelpAssistantStatus = 'thinking' | 'streaming' | 'completed' | 'stopped' | 'error';
@@ -10,6 +12,7 @@ export const HELP_ASSISTANT_STEPS = [
 export type HelpAssistantRun = {
   runId: string; eventId: number; ticketId: number; status: HelpAssistantStatus;
   step: number; completedSteps: number; startedAt: number; updatedAt: number;
+  scheduleDraft?: ScheduleDraft;
   taskId?: string; taskStartSequence?: number; contextMessageCount?: number;
   stopReason?: 'user' | 'superseded';
   action?: { type: 'connect_onec'; baseKey?: string } | { type: 'request_it'; baseKey?: never };

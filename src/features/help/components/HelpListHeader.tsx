@@ -1,10 +1,10 @@
 import {appWebControlProps,appWebControlContentProps} from '@/components/ui/appWebInteraction';
 import React, { useEffect, useRef, useState } from 'react';
-import { Platform, Pressable, TextInput, View, useWindowDimensions } from 'react-native';
+import { Platform, Pressable, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useHelpTheme } from '../helpTheme';
 import { HelpIcon } from './HelpPrimitives';
-import { HELP_LIST_META_WIDTH } from '../helpLayout';
+import { HELP_LIST_INSET, HELP_LIST_META_WIDTH } from '../helpLayout';
 import { HelpHeaderFrame } from './HelpHeaderFrame';
 import type {HelpConnectionPhase} from '../helpConnectionState';
 import {HelpDropdown, HelpDropdownAction} from './HelpDropdown';
@@ -26,11 +26,14 @@ type Props = {
   scope?: 'mine' | 'queue';
   onScope?: () => void;
   onKnowledge?: () => void;
+  onOpenTasks?: () => void;
+  activeTaskCount?: number;
+  unreadTaskCount?: number;
   recovery?: {count: number; disabled?: boolean; onPress: () => void};
   onRetryLoad?: () => void;
 };
 
-export function HelpListHeader({ search, onSearch, archived, onArchive, onBack, canManage = false, scope = 'mine', onScope, onKnowledge, connecting=false, connectionPhase, onReconnect, desktop=false, recovery, onRetryLoad }: Props) {
+export function HelpListHeader({ search, onSearch, archived, onArchive, onBack, canManage = false, scope = 'mine', onScope, onKnowledge, onOpenTasks, activeTaskCount=0, unreadTaskCount=0, connecting=false, connectionPhase, onReconnect, desktop=false, recovery, onRetryLoad }: Props) {
   const c = useHelpTheme();
   const window = useWindowDimensions();
   const menuButton = useRef<View>(null);
@@ -55,6 +58,8 @@ export function HelpListHeader({ search, onSearch, archived, onArchive, onBack, 
   const scopeAction = () => { closeMenu(); onScope?.(); };
   useEffect(() => helpDevActions('header', { 'header.openMenu': openMenu, 'header.closeMenu': closeMenu, 'header.archive': archiveAction, ...(canManage ? { 'header.scope': scopeAction } : {}) }));
   useEffect(() => helpDevState({ menuVisible, archived, scope }), [menuVisible, archived, scope]);
+  const tasksLabel = ['Мои задания', activeTaskCount > 0 && `активных заданий ${activeTaskCount}`,
+    unreadTaskCount > 0 && `заданий с непрочитанными результатами ${unreadTaskCount}`].filter(Boolean).join(', ');
   const menuControl = desktop ? <AppListPanelMenuButton ref={node=>{menuButton.current=node;helpDevRef('header.menu',node);}}
     label="Меню поддержки" expanded={menuVisible} onPress={openMenu} color={archived?c.accentText:c.text}/>
     : <Pressable {...appWebControlProps()} ref={node=>{menuButton.current=node;helpDevRef('header.menu',node);}}
@@ -62,7 +67,7 @@ export function HelpListHeader({ search, onSearch, archived, onArchive, onBack, 
         style={({pressed})=>({width:HELP_LIST_META_WIDTH,height:48,borderRadius:24,backgroundColor:c.panel,alignItems:'center',justifyContent:'center',opacity:pressed?.65:1})}>
         <Ionicons {...appWebControlContentProps()} name="ellipsis-horizontal" size={24} color={archived?c.accentText:c.text}/>
       </Pressable>;
-  return <>{desktop ? <AppListPanelHeader title={archived?'Архив':scope==='queue'?'Очередь IT':'Помощь'} value={search} onChangeText={onSearch}
+  return <>{desktop ? <AppListPanelHeader title={archived?'Архив':scope==='queue'?'Очередь IT':'ИИ ассистент'} value={search} onChangeText={onSearch}
       searchLabel="Поиск обращений" renderToolbar={children=><HelpHeaderFrame connecting={connecting} connectionPhase={connectionPhase}
         onReconnect={onReconnect} trailing={menuControl}>{children}</HelpHeaderFrame>}/>
     : <HelpHeaderFrame connecting={connecting} connectionPhase={connectionPhase} onReconnect={onReconnect} onBack={onBack} trailing={menuControl}>
@@ -70,6 +75,25 @@ export function HelpListHeader({ search, onSearch, archived, onArchive, onBack, 
       <TextInput accessibilityLabel="Поиск обращений" value={search} onChangeText={onSearch} placeholder="Поиск" placeholderTextColor={c.muted} returnKeyType="search" autoCorrect={false} underlineColorAndroid="transparent" style={{flex:1,minWidth:0,height:44,padding:0,color:c.text,fontSize:16,includeFontPadding:false,textAlignVertical:'center',...(Platform.OS==='web'?{outlineStyle:'none'} as any:{})}}/>
       {search?<HelpIcon name="close" label="Очистить поиск" size={17} style={{width:28,height:44}} onPress={()=>onSearch('')}/>:null}
     </HelpHeaderFrame>}
+    {onOpenTasks && <View style={{paddingHorizontal:HELP_LIST_INSET,paddingBottom:8}}>
+      <Pressable {...appWebControlProps()} testID="help-open-schedules" accessibilityRole="button" accessibilityLabel={tasksLabel}
+        onPress={onOpenTasks} style={({pressed})=>({minHeight:44,borderRadius:16,paddingHorizontal:14,gap:10,
+          flexDirection:'row',alignItems:'center',backgroundColor:c.panel,opacity:pressed?.7:1})}>
+        <View style={{flexDirection:'row',alignItems:'flex-start'}}>
+          <Ionicons {...appWebControlContentProps()} name="calendar-outline" size={20} color={c.accentText}/>
+          {activeTaskCount > 0 && <View testID="help-schedules-active-count" style={{marginLeft:-5,marginTop:-6,minWidth:16,
+            paddingHorizontal:3,borderRadius:10,borderWidth:1,borderColor:c.panel,backgroundColor:c.accentText,alignItems:'center'}}>
+            <Text style={{color:'#fff',fontWeight:'700',fontSize:10,lineHeight:14,includeFontPadding:false}}>{activeTaskCount}</Text>
+          </View>}
+        </View>
+        <Text {...appWebControlContentProps()} style={{flex:1,color:c.text,fontSize:15,fontWeight:'600'}}>Мои задания</Text>
+        {unreadTaskCount > 0 && <View testID="help-schedules-unread-count" style={{minWidth:20,minHeight:20,paddingHorizontal:5,
+          borderRadius:12,backgroundColor:c.accentText,alignItems:'center',justifyContent:'center'}}>
+          <Text style={{color:'#fff',fontSize:11,fontWeight:'600'}}>{unreadTaskCount}</Text>
+        </View>}
+        <Ionicons {...appWebControlContentProps()} name="chevron-forward" size={16} color={c.muted}/>
+      </Pressable>
+    </View>}
     {menuVisible ? <HelpDropdown testID="help-header-menu" label="Закрыть меню поддержки" onClose={closeMenu} top={menuTop} left={menuLeft} width={menuWidth}>
       {recovery ? <HelpDropdownAction label={`Восстановить отправку (${recovery.count})`} accessibilityLabel="Восстановить отправку" icon="refresh-outline" disabled={recovery.disabled} onPress={()=>{closeMenu();recovery.onPress();}}/> : null}
       {onRetryLoad ? <HelpDropdownAction label="Обновить список" icon="reload-outline" onPress={()=>{closeMenu();onRetryLoad();}}/> : null}

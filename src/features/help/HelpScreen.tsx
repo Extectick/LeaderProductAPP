@@ -75,9 +75,18 @@ import { clearHelpAttachmentDraft, holdHelpAttachmentFiles, loadHelpAttachmentDr
 
 type SourceTicket = { id: number; number: number; title: string };
 type Overlay = { kind: 'menu' | 'it' | 'it-brief' } | { kind: 'row'; ticket: HelpTicket; anchor?:HelpTicketMenuAnchor } | { kind: 'forward'; message: HelpMessage; messages?:HelpMessage[] };
+const scheduleDraftPrefix = 'Создай регламентное задание ';
 type ReturnContext = { active: number | 'new'; filter: 'OPEN' | 'CLOSED'; source: SourceTicket | null; draft: string; files: HelpLocalFile[]; mode: HelpComposeMode; reply: HelpMessage | null; edit: HelpMessage | null; editAttachments: HelpAttachment[]; rating: number };
 
-export default function HelpScreen() {
+export type HelpSchedules = {
+  activeTaskCount: number;
+  unreadTaskCount: number;
+  onOpenTasks: (newChat: () => void) => void;
+  newChatRef?: React.RefObject<(() => void) | undefined>;
+  renderMessageAction: (message: HelpMessage) => React.ReactNode;
+};
+
+export default function HelpScreen({schedules}: {schedules?: HelpSchedules} = {}) {
   const entityCards=useEntityCards();
   const windowSize=useWindowDimensions();
   const [workspaceWidth,setWorkspaceWidth]=useState(0);
@@ -132,6 +141,7 @@ export default function HelpScreen() {
   const [active, setActive] = useState<number | 'new' | null>(null); const [filter, setFilter] = useState<'OPEN' | 'CLOSED'>('OPEN'); const [scope, setScope] = useState<'mine' | 'queue'>('mine');
   const listVisible=active===null||splitView||(desktopWeb&&listDrawerOpen);
   const listMotion=useAppSceneUnderlayMotion(chatProgress,active!==null&&!splitView&&!listDrawerOpen,sceneWidth);
+  const [newDraftKind, setNewDraftKind] = useState<'plain' | 'schedule'>('plain');
   const [search, setSearch] = useState(''); const [draft, setDraft] = useState(''); const [files, setFiles] = useState<HelpLocalFile[]>([]); const [source, setSource] = useState<SourceTicket | null>(null);
   const [listDrafts,setListDrafts]=useState<Record<number,string>>({});
   const [mode, setMode] = useState<HelpComposeMode>('message'); const [rating, setRating] = useState(0); const [reply, setReply] = useState<HelpMessage | null>(null); const [editing, setEditing] = useState<HelpMessage | null>(null); const [editAttachments, setEditAttachments] = useState<HelpAttachment[]>([]); const [focusKey, setFocusKey] = useState(0);
@@ -238,7 +248,7 @@ export default function HelpScreen() {
   const earlyClearedCreations=useRef(new Set<string>());
   for(const item of assistantActions.pendingMessages??[])if(item.create)seenPendingCreates.current.add(item.key);
   const activeAssistant = (assistantPreview||assistantActions.stopAssistant) && mode === 'message' && lastAssistant?.assistantRun && ['thinking','streaming'].includes(lastAssistant.assistantRun.status) ? lastAssistant : undefined;
-  const busy = sending || service.busy || requestingIt || continuingAi || managingIt; const draftKey = active === 'new' ? `new:${source?.id ?? 'plain'}` : `ticket:${active}`;
+  const busy = sending || service.busy || requestingIt || continuingAi || managingIt; const draftKey = active === 'new' ? `new:${source?.id ?? newDraftKind}` : `ticket:${active}`;
   const questionIdentity = lastAssistant?.assistantRun ? `${service.userId}:${lastAssistant.ticketId}:${lastAssistant.assistantRun.runId}` : '';
   const questionMessage = useMemo(() => canRequestIt && mode === 'message' && lastAssistant && !messages.some(message => message.authorId === service.userId && message.sequence > lastAssistant.sequence) && !(assistantActions.pendingMessages??[]).some(item => item.ticketId === ticket?.id) ? lastAssistant : null, [canRequestIt, mode, lastAssistant, messages, service.userId, assistantActions.pendingMessages, ticket?.id]);
   const questions = useMemo(() => questionMessage ? helpQuestions(questionMessage) : [], [questionMessage]);
@@ -412,13 +422,14 @@ export default function HelpScreen() {
     if(restoredDraft.current?.key===draftKey){
       setDraft(restoredDraft.current.text);restoredDraft.current=null;complete();return;
     }
-    draftLoaded.current=false;setDraft('');
+    const initialText = draftKey === 'new:schedule' ? scheduleDraftPrefix : '';
+    draftLoaded.current=false;setDraft(initialText);
     void Promise.all([
       service.getDraft(draftKey),
       fileDrafts.current.has(draftKey)?Promise.resolve(fileDrafts.current.get(draftKey)!):loadHelpAttachmentDraft(service.userId,draftKey),
     ]).then(([value,attachments])=>{
       if(generation!==draftGeneration.current)return;
-      setDraft(value);setFiles(attachments);fileDrafts.current.set(draftKey,attachments);complete();
+      setDraft(value || initialText);setFiles(attachments);fileDrafts.current.set(draftKey,attachments);complete();
     }).catch(()=>{if(generation===draftGeneration.current)complete();});
     return()=>{++draftGeneration.current;};
   },[draftKey,service.userId]);
@@ -566,8 +577,10 @@ export default function HelpScreen() {
     if(active!==null&&next===filter)void service.loadTickets(next,scope,false,search.trim(),true);
     else void service.loadTickets(next,scope,false,search.trim());
   }
-  function newTicket(linked: SourceTicket | null = null,recordHistory=true) {
+  function newTicket(linked: SourceTicket | null = null,recordHistory=true,kind: 'plain' | 'schedule' = 'plain') {
     setListDrawerOpen(false);
+    if (kind === 'schedule' && active === 'new' && newDraftKind === kind && !source) return;
+    setNewDraftKind(kind);
     if(recordHistory)recordWebSelection('new');
     pendingChatOpen.current?.cancel();pendingChatOpen.current=null;
     const navigation=++navigationGeneration.current,account=service.userId;
@@ -594,7 +607,7 @@ export default function HelpScreen() {
       setScene(scene=>({key:scene.key+1,bottomAligned:previous.active==='new'}));setEntrySettled(false);setLeavingChat(false);setEntryKeyboardReady(false);
       const restoreNavigation = ++navigationGeneration.current, restoreAccount = service.userId;
       void dismissHelpSceneKeyboard().then(()=>{if(screenMounted.current&&restoreNavigation===navigationGeneration.current&&restoreAccount===currentAccount.current)setEntryKeyboardReady(true);});
-      restoredDraft.current = {key: previous.active === 'new' ? `new:${previous.source?.id ?? 'plain'}` : `ticket:${previous.active}`, text: previous.draft};
+      restoredDraft.current = {key: previous.active === 'new' ? `new:${previous.source?.id ?? newDraftKind}` : `ticket:${previous.active}`, text: previous.draft};
       saveDraftNow(); Keyboard.dismiss(); setActive(previous.active); setSource(previous.source); setFilter(previous.filter); setMode(previous.mode); setReply(previous.reply); setEditing(previous.edit); setEditAttachments(previous.editAttachments); setRating(previous.rating); setFiles(previous.files); draftLoaded.current = false;
       if (previous.active === 'new') service.clearSelection(); else await run(() => service.openTicket(previous.active as number));
       if (currentAccount.current !== restoreAccount || navigationGeneration.current !== restoreNavigation) return;
@@ -805,8 +818,10 @@ export default function HelpScreen() {
   const renderMessage=useCallback((message:HelpMessage)=>{
     const wrap=(item:HelpMessage,child:React.ReactNode,incoming=Boolean(item.assistantRun)||item.authorId!==service.userId)=><HelpMessageSelectionRow key={item.id} messageId={item.id} active={selectingMessages} selected={messageSelection.has(item.id)} incoming={incoming} onToggle={()=>toggleMessageSelection(item)} onStart={()=>startMessageSelection(item)}>{child}</HelpMessageSelectionRow>;
     const exchange=message.assistantRun?questionExchanges.get(message.id):undefined;
-    return <>{wrap(message,renderMessageContent(message))}{exchange?wrap(exchange.message,renderHumanMessage(exchange.message,exchange),true):null}</>;
-  },[selectingMessages,messageSelection,service.userId,toggleMessageSelection,startMessageSelection,renderMessageContent,renderHumanMessage,questionExchanges]);
+    const content = renderMessageContent(message);
+    const action = isOwner && message.assistantRun && schedules?.renderMessageAction(message);
+    return <>{wrap(message,action ? <>{content}{action}</> : content)}{exchange?wrap(exchange.message,renderHumanMessage(exchange.message,exchange),true):null}</>;
+  },[selectingMessages,messageSelection,service.userId,toggleMessageSelection,startMessageSelection,renderMessageContent,renderHumanMessage,questionExchanges,schedules,isOwner]);
   const selectedMessages=[...messageSelection.values()].map(item=>messages.find(row=>row.id===item.id)??item).sort((a,b)=>a.sequence-b.sequence);
   const replySelected=()=>{if(selectedMessages.length!==1)return;const message=selectedMessages[0];clearMessageSelection();replyTo(message);};
   const canReplySelected=selectedMessages.length===1&&!waitingForIt&&mode==='message'&&ticket?.status==='OPEN'&&isParticipant;
@@ -832,7 +847,17 @@ export default function HelpScreen() {
   },[ticket,messages,service.hasNewer]);
   const timelineFooter=useMemo(()=><>{fallbackItStatus}{typingUsers?.length?<View style={{paddingHorizontal:16,paddingVertical:8}}><HelpTyping users={typingUsers}/></View>:null}</>,[typingUsers,fallbackItStatus]);
   const recoverPending=()=>void run(()=>Promise.all(recoverablePending.map(item=>service.retryPendingOperation(item.key))));
-  const listHeader = <HelpListHeader recovery={recoverablePending.length?{count:recoverablePending.length,disabled:busy,onPress:recoverPending}:undefined} onRetryLoad={service.error&&!service.loading&&!isHelpConnectionIssue(service.error)?()=>void run(()=>service.loadTickets(filter,scope,false,search.trim())):undefined} desktop={desktopWeb} connecting={!service.connected} connectionPhase={service.connectionPhase} onReconnect={service.reconnect} onKnowledge={assistantPreview ? undefined : () => router.push('/services/help/knowledge')} search={search} onSearch={setSearch} archived={filter === 'CLOSED'} onArchive={() => {const next=filter==='OPEN'?'CLOSED':'OPEN';if(splitView){setFilter(next);recordWebSelection(active,'push',next);}else void list(next);}} onBack={() => void back()} canManage={service.canManage} scope={scope} onScope={()=>{const next=scope==='mine' ? 'queue' : 'mine';setScope(next);void service.loadTickets(filter,next,false,search.trim());}} />; const header = active === null ? listHeader : <HelpChatHeader connecting={!service.connected} connectionPhase={service.connectionPhase} onReconnect={service.reconnect} search={chatSearchOpen && (ticket || active === 'new') ? {query:chatSearchQuery,onQueryChange:setChatSearchQuery,onClose:closeSearch,onSubmit:()=>Keyboard.dismiss(),autoFocus:true} : undefined} menuActive={overlay?.kind==='menu'} onSearch={ticket?()=>{saveDraftNow();Keyboard.dismiss();setChatSearchOpen(true);}:undefined} title={headerTicket?.title || (active==='new' ? 'Новое обращение' : 'Обращение')} number={headerTicket?.number} status={headerTicket?.status} meta={headerTicket ? helpCreated(headerTicket.createdAt) : ''} onBack={splitView?undefined:desktopWeb?()=>setListDrawerOpen(value=>!value):()=>void back()} backIcon={desktopWeb?'list-outline':undefined} backLabel={desktopWeb?'Список обращений':undefined} onMenu={ticket || assistantPreview || active === 'new' ? ()=>{Keyboard.dismiss();chatBounds.current?.measureInWindow((x,y,width)=>setChatMenuAnchor({top:y+listHeaderHeight-6,right:Math.max(16,windowSize.width-x-width+16)}));setOverlay(previous=>previous?.kind==='menu'?null:{kind:'menu'});} : undefined}/>;
+  useLayoutEffect(()=>{
+    const ref=schedules?.newChatRef;
+    if(!ref)return;
+    ref.current=()=>newTicket(null,true,'schedule');
+    return ()=>{ref.current=undefined;};
+  });
+  const openTasks = schedules ? () => {
+    Keyboard.dismiss();
+    schedules.onOpenTasks(() => newTicket(null, true, 'schedule'));
+  } : undefined;
+  const listHeader = <HelpListHeader onOpenTasks={openTasks} activeTaskCount={schedules?.activeTaskCount} unreadTaskCount={schedules?.unreadTaskCount} recovery={recoverablePending.length?{count:recoverablePending.length,disabled:busy,onPress:recoverPending}:undefined} onRetryLoad={service.error&&!service.loading&&!isHelpConnectionIssue(service.error)?()=>void run(()=>service.loadTickets(filter,scope,false,search.trim())):undefined} desktop={desktopWeb} connecting={!service.connected} connectionPhase={service.connectionPhase} onReconnect={service.reconnect} onKnowledge={assistantPreview ? undefined : () => router.push('/services/help/knowledge')} search={search} onSearch={setSearch} archived={filter === 'CLOSED'} onArchive={() => {const next=filter==='OPEN'?'CLOSED':'OPEN';if(splitView){setFilter(next);recordWebSelection(active,'push',next);}else void list(next);}} onBack={() => void back()} canManage={service.canManage} scope={scope} onScope={()=>{const next=scope==='mine' ? 'queue' : 'mine';setScope(next);void service.loadTickets(filter,next,false,search.trim());}} />; const header = active === null ? listHeader : <HelpChatHeader connecting={!service.connected} connectionPhase={service.connectionPhase} onReconnect={service.reconnect} search={chatSearchOpen && (ticket || active === 'new') ? {query:chatSearchQuery,onQueryChange:setChatSearchQuery,onClose:closeSearch,onSubmit:()=>Keyboard.dismiss(),autoFocus:true} : undefined} menuActive={overlay?.kind==='menu'} onSearch={ticket?()=>{saveDraftNow();Keyboard.dismiss();setChatSearchOpen(true);}:undefined} title={headerTicket?.title || (active==='new' ? 'Новое обращение' : 'Обращение')} number={headerTicket?.number} status={headerTicket?.status} meta={headerTicket ? helpCreated(headerTicket.createdAt) : ''} onBack={splitView?undefined:desktopWeb?()=>setListDrawerOpen(value=>!value):()=>void back()} backIcon={desktopWeb?'list-outline':undefined} backLabel={desktopWeb?'Список обращений':undefined} onMenu={ticket || assistantPreview || active === 'new' ? ()=>{Keyboard.dismiss();chatBounds.current?.measureInWindow((x,y,width)=>setChatMenuAnchor({top:y+listHeaderHeight-6,right:Math.max(16,windowSize.width-x-width+16)}));setOverlay(previous=>previous?.kind==='menu'?null:{kind:'menu'});} : undefined}/>;
 
   const legacyDockControls=hasNativeStableImeLayout&&!hasNativeDockControls;
   const renderDockControls=(bottom:number,presentation:HelpDockControlPresentation)=><>

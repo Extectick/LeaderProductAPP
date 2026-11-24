@@ -228,6 +228,23 @@ describe('Help screen integration with service boundary', () => {
       });
     });
   });
+  test('schedule entry prefills an editable draft and shows nonzero counters independently', async () => {
+    const schedules = {onOpenTasks: (start: () => void) => start(), renderMessageAction: () => null, activeTaskCount: 0, unreadTaskCount: 1};
+    await act(async () => { screen = TestRenderer.create(React.createElement(HelpScreen, {schedules})); });
+    const badge = (kind: string) => screen.root.findAllByProps({testID: `help-schedules-${kind}-count`});
+    expect(badge('active')).toHaveLength(0);
+    expect(badge('unread').length).toBeGreaterThan(0);
+    await act(async () => { screen.update(React.createElement(HelpScreen, {schedules: {...schedules, activeTaskCount: 2, unreadTaskCount: 0}})); });
+    expect(badge('active').length).toBeGreaterThan(0);
+    expect(badge('unread')).toHaveLength(0);
+    const openTasks = () => screen.root.findByProps({testID: 'help-open-schedules'}).props.onPress();
+    await act(async () => openTasks());
+    const composer = () => screen.root.findByType('HelpComposer' as any).props;
+    expect(composer().value).toBe('Создай регламентное задание ');
+    await act(async () => composer().onChange('Проверяй остатки каждый день'));
+    await act(async () => openTasks());
+    expect(composer().value).toBe('Проверяй остатки каждый день');
+  });
   test('web resize preserves the chat, composer draft and selected ticket while changing list presentation',async()=>{
     const previousPlatform=Platform.OS,previousWindow=Dimensions.get('window');
     const browser=globalThis as any,keys=['location','history','addEventListener','removeEventListener','innerHeight'],saved=keys.map(key=>browser[key]);

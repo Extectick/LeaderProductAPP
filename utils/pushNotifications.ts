@@ -32,6 +32,7 @@ const pushNavigation = createPushNavigationIntent<NativePushResponse>({
 export type StartupHelpNotification = { target: HelpPushTarget; response: NativePushResponse };
 export function helpPushNavigationTarget(target: HelpPushTarget) {
   return { pathname: '/services/help' as const, params: {
+    ...(target.scheduleId?{scheduleId:target.scheduleId,runId:target.runId}:{}),
     ticketId: String(target.ticketId), messageId: target.messageId ? String(target.messageId) : undefined,
     eventId: target.eventId ? String(target.eventId) : undefined, htmlId: undefined, entry: 'notification',
   } };
