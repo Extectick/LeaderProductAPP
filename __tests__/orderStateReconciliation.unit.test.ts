@@ -59,3 +59,12 @@ it('handles open bounds and rejects invalid calendar dates', () => {
   expect(matchesDeliveryDateRange('2026-10-27', '2026-10-26')).toBe(true);
   expect(orderCalendarDate('31.02.2026')).toBeNull();
 });
+
+it('retains a newer SAVE when the local line price type was cleared, even with unchanged amounts', () => {
+  const accepted = {...payload, items: [{...payload.items[0], priceTypeGuid: 'special'}]};
+  const edit = {...accepted, items: [{...accepted.items[0], priceTypeGuid: undefined}]};
+  const local = {clientOrderId: 'client-id', clientRevision: 26, intent: 'SAVE' as const, payload: edit};
+  const posted = {...state, clientRevision: 25, origin: 'local', acceptedClientOperation: {clientRevision: 25, intent: 'SUBMIT', payload: accepted}};
+  expect(acceptedInputMatchesDeviceDraft(local, posted, 98)).toBe(false);
+  expect(sameDeviceDraftInput(edit, accepted)).toBe(false);
+});
