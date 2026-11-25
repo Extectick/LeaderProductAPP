@@ -61,7 +61,7 @@ import { isRecoverableLegacySaveError, legacyOrderMatches, legacySubmissionAccep
 import { draftReviewItemMessages, reviewFromError } from './lib/draftReview';
 import { hasPriceReview, priceReviewPrompt, type PriceReviewPrompt, type PriceReviewChoice } from './lib/priceReview';
 import { prepareOrderAmendment } from './lib/orderAmendmentReview';
-import { preserveSubmittedVersion, persistedOrderSubmissionError, submittedVersionOf } from './lib/orderSubmissionPresentation';
+import { orderBusinessInputHash, preserveSubmittedVersion, persistedOrderSubmissionError, submittedVersionOf } from './lib/orderSubmissionPresentation';
 import {
   isNetworkUnavailableError as isSharedNetworkUnavailableError,
   isTechnicalErrorMessage,
@@ -903,6 +903,8 @@ function orderListContentSignature(order: ClientOrder) {
     order.syncState,
     order.isPostedIn1c,
     order.submittedVersion,
+    order.acceptedInputFingerprint,
+    order.localInputHash,
     order.draftReview,
     order.submissionErrorDetails,
     order.queuePosition,
@@ -1593,7 +1595,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const localWeight = draftMetrics.weight;
   const localProfitAvailable = draftMetrics.profitItems > 0;
   const visibleDeviceOrders = React.useMemo(
-    () => deviceDraftEntries.map((entry) => preserveSubmittedVersion(entry.order, orders.find(order => isSameListOrder(order, entry.order))))
+    () => deviceDraftEntries.map((entry) => preserveSubmittedVersion(entry.order, orders.find(order => isSameListOrder(order, entry.order)), entry.payload))
       .filter((order) => orderMatchesFilters(order, filters)),
     [deviceDraftEntries, filters, orders]
   );
@@ -2375,6 +2377,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
           lastSyncError: syncError ?? null,
         }),
         offlineDraftStatus: intent === 'SUBMIT' ? 'READY_TO_SEND' : 'ON_DEVICE',
+        localInputHash: orderBusinessInputHash(payload),
         submittedVersion: submittedVersionOf(existing?.order) ?? submittedVersionOf(selectedOrder),
         draftReview: intent === 'SUBMIT' ? null : existing?.order.draftReview,
         submissionErrorDetails: intent === 'SUBMIT' ? null : existing?.order.submissionErrorDetails,
@@ -3087,7 +3090,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const loadDetail = React.useCallback(async (guid: string) => {
     const deviceEntry = findDeviceDraftEntry(guid);
     if (deviceEntry) {
-      const order = preserveSubmittedVersion(deviceEntry.order, apiOrdersRef.current.find(item => isSameListOrder(item, deviceEntry.order)));
+      const order = preserveSubmittedVersion(deviceEntry.order, apiOrdersRef.current.find(item => isSameListOrder(item, deviceEntry.order)), deviceEntry.payload);
       applyOrderDetail(order);
       return order;
     }

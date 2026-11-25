@@ -307,6 +307,7 @@ export type ClientOrderInvoice = {
 };
 
 export type SubmittedOrderVersion = {
+  businessInputHash?: string;
   orderGuid: string; clientRevision: number | null; number1c: string | null; isPostedIn1c: boolean;
   status: string; syncState: string; revision: number; totalAmount: number | null; itemsCount: number; updatedAt: string;
 };
@@ -316,6 +317,9 @@ export type ClientOrderAmendmentReview = {
   changes: Array<{ lineGuid?: string; productName: string; reason: string; before: string | number | null; after: string | number | null }>;
 };
 export type ClientOrder = {
+  /** Device-only comparison evidence for the exact submitted client revision. */
+  acceptedInputFingerprint?: { orderGuid: string; clientRevision: number; hash: string };
+  localInputHash?: string;
   /** Independent accepted version; never proof that pending local edits were submitted. */
   submittedVersion?: SubmittedOrderVersion | null;
   submissionErrorDetails?: { backendErrorCode?: string; message?: string; errorDetails?: any } | null;
