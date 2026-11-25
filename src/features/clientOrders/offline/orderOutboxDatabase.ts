@@ -4,7 +4,7 @@ import { withSQLiteWriteTransaction } from '@/src/shared/storage/sqliteWriteQueu
 import { emitOrderOutboxChange } from './orderOutboxEvents';
 import { isAutomaticSubmission, matchingSubmissionReceipt, submittedOrderConfirmsPacket, submissionHash, type FrozenSubmission, type SubmissionReceipt } from './orderSubmissionProtocol';
 import { reviewFromError } from '../lib/draftReview';
-import { submittedVersionOf } from '../lib/orderSubmissionPresentation';
+import { orderBusinessInputHash, submittedVersionOf } from '../lib/orderSubmissionPresentation';
 import type { ClientOrder, ClientOrderState } from '@/utils/clientOrdersService';
 import { matchesOrderState, mergeOrderState } from '../lib/orderStateReconciliation';
 import { acceptedInputMatchesDeviceDraft } from '../lib/deviceDraftRecovery';
@@ -161,6 +161,10 @@ export async function completeOrderUpload(item: Delivery, order: ClientOrder, le
     throw new Error('Исходный заказ не совпал с отправленным пакетом. Копия сохранена.');
   }
   const db = await database();
+  if (exactReceipt && order.clientRevision === item.clientRevision) {
+    const hash = orderBusinessInputHash(item.payload);
+    if (hash) order = { ...order, acceptedInputFingerprint: { orderGuid: order.guid, clientRevision: item.clientRevision, hash } };
+  }
   let previousGuid: string | null = null;
   let completed = false;
   await withSQLiteWriteTransaction(db, async tx => {
