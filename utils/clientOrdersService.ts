@@ -333,6 +333,7 @@ export type ClientOrderInvoice = {
 };
 
 export type SubmittedOrderVersion = {
+  businessInputHash?: string;
   orderGuid: string; clientRevision: number | null; number1c: string | null; isPostedIn1c: boolean;
   status: string; syncState: string; revision: number; totalAmount: number | null; itemsCount: number; updatedAt: string;
 };
@@ -348,6 +349,9 @@ export type ClientOrder = {
   sourceTruncated?: boolean;
   commentTruncated?: boolean;
   sourceCurrencyName?: string;
+  /** Device-only comparison evidence for the exact submitted client revision. */
+  acceptedInputFingerprint?: { orderGuid: string; clientRevision: number; hash: string };
+  localInputHash?: string;
   /** Independent accepted version; never proof that pending local edits were submitted. */
   submittedVersion?: SubmittedOrderVersion | null;
   submissionErrorDetails?: { backendErrorCode?: string; message?: string; errorDetails?: any } | null;

@@ -1,4 +1,5 @@
 import type { ClientOrder } from '@/utils/clientOrdersService';
+import { orderBusinessInputHash } from './orderSubmissionPresentation';
 import { buildCopyPayload, orderToDraft } from '../clientOrdersShared';
 
 type Payload = ReturnType<typeof buildCopyPayload> & {
@@ -84,6 +85,11 @@ export function acceptedInputMatchesDeviceDraft(entry: RecoverableDeviceDraft, o
     || !Number.isInteger(entry.clientRevision) || entry.clientRevision < 1 || proof.clientRevision < 1) return false;
   try {
     const accepted = proof.payload as Payload;
+    if (entry.intent === 'SAVE') {
+      // Dropping a newer local edit requires the same exact commercial input as the badge.
+      const localHash = orderBusinessInputHash(entry.payload);
+      return !!localHash && localHash === orderBusinessInputHash(accepted);
+    }
     const policy = entry.payload.offlineReview?.pricePolicy;
     // ASK can be resolved by a later explicit choice. A new explicit choice is
     // not redundant unless that same choice was accepted too.
@@ -100,7 +106,10 @@ export function acceptedInputMatchesDeviceDraft(entry: RecoverableDeviceDraft, o
 export function sameDeviceDraftInput(left: Payload, right: Payload) {
   if (!sameDeviceDraftContent(left, right)) return false;
   if ((left.offlineReview?.pricePolicy || 'ASK') !== (right.offlineReview?.pricePolicy || 'ASK')) return false;
-  const other = new Map(right.items.map(item => [guid(item.lineGuid), item]));
-  return left.items.every(item => number(item.manualPrice) !== null
-    || number(item.basePrice) === number(other.get(guid(item.lineGuid))?.basePrice));
+  return left.items.every((item, index) => {
+    const other = right.items[index];
+    return guid(item.lineGuid) === guid(other.lineGuid)
+      && guid(item.priceTypeGuid) === guid(other.priceTypeGuid)
+      && (number(item.manualPrice) !== null || number(item.basePrice) === number(other.basePrice));
+  });
 }
