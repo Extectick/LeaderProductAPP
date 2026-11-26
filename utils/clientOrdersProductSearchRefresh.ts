@@ -19,8 +19,9 @@ export function refreshPendingProductSearch(
     async () => {
       try { return await load(); }
       catch (error) {
-        if ([401, 403].includes(Number((error as {status?: number})?.status))) {
-          return {items: [], meta: {accessDenied: true, hasMore: false}};
+        const status = (error as {status?: number} | null)?.status;
+        if (status === 401 || status === 403) {
+          return {items: [], meta: {accessDenied: true, accessStatus: status, hasMore: false}};
         }
         throw error;
       }

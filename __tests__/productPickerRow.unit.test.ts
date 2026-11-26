@@ -15,10 +15,15 @@ jest.mock('react-native', () => {
   });
   return { Pressable: host('Pressable'), View: host('View'), TextInput, StyleSheet: { create: (s: any) => s } };
 });
+const mockMetricRender = jest.fn();
 jest.mock('react-native-paper', () => {
   const React = require('react');
   const host = (name: string) => ({ children, ...props }: any) => React.createElement(name, props, children);
-  return { Text: host('Text'), Tooltip: host('Tooltip'), IconButton: host('IconButton') };
+  const Tooltip = (props: any) => {
+    mockMetricRender(props.title);
+    return React.createElement('Tooltip', props, props.children);
+  };
+  return { Text: host('Text'), Tooltip, IconButton: host('IconButton') };
 });
 jest.mock('@expo/vector-icons', () => ({ MaterialCommunityIcons: (props: any) => require('react').createElement('Icon', props) }));
 
@@ -26,7 +31,7 @@ const item = { guid: 'p', name: 'Угорь', code: 'УТ-123', packages: [], is
   baseUnit: { guid: 'kg', name: 'Килограмм', symbol: 'кг' }, receiptPrice: 1290, basePrice: 1650 };
 const renderThumbnail = jest.fn(() => React.createElement('Thumbnail' as any));
 const noOp = () => {};
-const rowProps = { item, quantity: 0, unit: 'кг', fractional: true, renderThumbnail,
+const rowProps = { item, baseQuantity: 0, lastPurchasedDate: null, renderThumbnail,
   hasPriceType: true, hasWarehouse: true, onChangeQuantity: noOp, onOpen: noOp, onLongPress: noOp };
 const button = (view: TestRenderer.ReactTestRenderer, icon: string) => view.root.findAllByType('IconButton' as any).find(node => node.props.icon === icon)!;
 const input = (view: TestRenderer.ReactTestRenderer) => view.root.findByType('TextInput' as any);
@@ -53,7 +58,9 @@ describe('compact product picker controls', () => {
     const plusStyle = button(view, 'plus').props.style;
     expect(button(view, 'plus').props.size).toBe(17);
     expect(view.root.findAllByType('IconButton' as any)).toHaveLength(1);
-    act(() => view.update(React.createElement(ProductPickerRow, { ...rowProps, quantity: 3 })));
+    mockMetricRender.mockClear();
+    act(() => view.update(React.createElement(ProductPickerRow, { ...rowProps, baseQuantity: 3 })));
+    expect(mockMetricRender).not.toHaveBeenCalled();
     expect(button(view, 'plus').props.style).toBe(plusStyle);
     expect(button(view, 'plus').props.size).toBe(17);
     expect(renderThumbnail).toHaveBeenCalledTimes(1);
@@ -68,7 +75,7 @@ describe('compact product picker controls', () => {
     let view!: TestRenderer.ReactTestRenderer;
     try {
       act(() => { view = TestRenderer.create(React.createElement(ProductPickerRow, {
-        ...rowProps, item: { ...item, lastPurchasedDate: '2026-09-24' },
+        ...rowProps, lastPurchasedDate: '2026-09-24',
       })); });
       const photo = () => view.root.findAllByType('View' as any).find(node => node.props.testID === 'product-thumbnail-p')!;
       const badge = () => photo().findAllByType('View' as any).find(node => node.props.testID === 'product-history-p')!;
@@ -77,11 +84,11 @@ describe('compact product picker controls', () => {
       expect(badge().props.accessibilityLabel).toBe('Брал 19 дн. назад');
       expect(badge().findByType('Text' as any).props.children.join('')).toBe('19 дн.');
       expect(view.root.findAllByType('Text' as any).map(node => node.props.children).join(' ')).not.toMatch(/Брал|назад/);
-      act(() => view.update(React.createElement(ProductPickerRow, { ...rowProps, item: { ...item, lastPurchasedDate: '2026-10-13' } })));
+      act(() => view.update(React.createElement(ProductPickerRow, { ...rowProps, lastPurchasedDate: '2026-10-13' })));
       expect(badge().findByType('Text' as any).props.children.join('')).toBe('0 дн.');
       expect(badge().props.accessibilityLabel).toBe('Брал сегодня');
       for (const lastPurchasedDate of [undefined, '2026-10-14', '2026-02-30']) {
-        act(() => view.update(React.createElement(ProductPickerRow, { ...rowProps, item: { ...item, lastPurchasedDate } })));
+        act(() => view.update(React.createElement(ProductPickerRow, { ...rowProps, lastPurchasedDate: lastPurchasedDate ?? null })));
         expect(badge()).toBeUndefined();
       }
     } finally {

@@ -70,7 +70,7 @@ test.each([401, 403])('authorization loss %s clears all search cards instead of 
   const load = jest.fn().mockRejectedValue(Object.assign(new Error('denied'), {status})), update = jest.fn();
   const task = refreshPendingProductSearch(pending, load, update, new AbortController().signal);
   await jest.advanceTimersByTimeAsync(2000); await task;
-  expect(update).toHaveBeenLastCalledWith({items: [], meta: {accessDenied: true, hasMore: false}});
+  expect(update).toHaveBeenLastCalledWith({items: [], meta: {accessDenied: true, accessStatus: status, hasMore: false}});
   expect(load).toHaveBeenCalledTimes(1);
 });
 
