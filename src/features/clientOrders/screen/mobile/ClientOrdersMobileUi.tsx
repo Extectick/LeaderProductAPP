@@ -22,6 +22,7 @@ import {
 
 const nativeBottomSheet = Platform.OS === 'web' ? null : require('@gorhom/bottom-sheet');
 const BottomSheetModal = nativeBottomSheet?.BottomSheetModal;
+const BottomSheet = nativeBottomSheet?.default;
 const BottomSheetScrollView = nativeBottomSheet?.BottomSheetScrollView;
 const BottomSheetTextInput = nativeBottomSheet?.BottomSheetTextInput;
 
@@ -308,6 +309,7 @@ export function SheetModal({
 }
 
 type PickerBottomSheetProps = {
+  screenSessionKey?: string;
   styles?: any;
   visible: boolean;
   topOffset: number;
@@ -339,6 +341,10 @@ type PickerBottomSheetProps = {
 };
 
 export function PickerBottomSheet(props: PickerBottomSheetProps) {
+  if (Platform.OS === 'android' && props.screenSessionKey !== undefined) {
+    // A new line can open even when the previous native dismissal never finishes.
+    return props.visible ? <NativePickerBottomSheet key={props.screenSessionKey} {...props} inScreen /> : null;
+  }
   if (Platform.OS !== 'web') {
     return <NativePickerBottomSheet {...props} />;
   }
@@ -396,6 +402,7 @@ function PickerBottomSheetNativeBackdrop({
 }
 
 function NativePickerBottomSheet({
+  inScreen = false,
   styles,
   visible,
   topOffset,
@@ -420,7 +427,7 @@ function NativePickerBottomSheet({
   androidKeyboardInputMode = 'adjustPan',
   enableBlurKeyboardOnGesture = true,
   fastDismiss = false,
-}: PickerBottomSheetProps) {
+}: PickerBottomSheetProps & { inScreen?: boolean }) {
   const ui = styles || pickerBottomSheetDefaultStyles;
   const { width, height } = useWindowDimensions();
   const bottomSheetRef = React.useRef<any>(null);
@@ -430,7 +437,6 @@ function NativePickerBottomSheet({
   const closeNotifiedRef = React.useRef(false);
   const onCloseRef = React.useRef(onClose);
   onCloseRef.current = onClose;
-  visibleRef.current = visible;
   const sheetWidth = fullWidth ? width : Math.min(520, Math.max(280, width - 16));
   const maxSheetHeight = Math.max(minHeight, Math.min(height - topOffset, Math.round(height * 0.95)));
   const preferredSheetHeight = typeof preferredHeight === 'number'
@@ -464,8 +470,13 @@ function NativePickerBottomSheet({
     [fastDismiss]
   );
 
+  React.useLayoutEffect(() => {
+    visibleRef.current = visible;
+    return () => { visibleRef.current = false; };
+  }, [visible]);
+
   const notifyClose = React.useCallback(() => {
-    if (closeNotifiedRef.current) return true;
+    if (!visibleRef.current || closeNotifiedRef.current) return true;
     closeNotifiedRef.current = true;
     try {
       Keyboard.dismiss();
@@ -517,6 +528,7 @@ function NativePickerBottomSheet({
   );
 
   React.useEffect(() => {
+    if (inScreen) return undefined;
     if (!visible) {
       if (presentedRef.current && !dismissRequestedRef.current) {
         dismissRequestedRef.current = true;
@@ -535,7 +547,7 @@ function NativePickerBottomSheet({
     });
 
     return () => cancelAnimationFrame(frame);
-  }, [animationConfigs, visible]);
+  }, [animationConfigs, inScreen, visible]);
 
   React.useEffect(() => {
     if (!visible) return undefined;
@@ -591,33 +603,33 @@ function NativePickerBottomSheet({
     </>
   );
 
-  // Keep the native modal mounted until its own dismiss/portal cleanup finishes.
-  // Conditional unmounts race keyboard restoration and can leave a touch-blocking portal.
-  return (
-    <BottomSheetModal
-      ref={bottomSheetRef}
-      index={startIndex}
-      snapPoints={snapPoints}
-      enablePanDownToClose={enablePanDownToClose}
-      enableDismissOnClose
-      enableDynamicSizing={false}
-      enableOverDrag
-      keyboardBehavior={keyboardBehavior}
-      keyboardBlurBehavior={keyboardBlurBehavior}
-      android_keyboardInputMode={androidKeyboardInputMode}
-      topInset={Math.max(0, keyboardTopInset)}
-      enableBlurKeyboardOnGesture={enableBlurKeyboardOnGesture}
-      overDragResistanceFactor={2.2}
-      backdropComponent={renderBackdrop}
-      onDismiss={handleDismiss}
-      containerStyle={containerStyle}
-      backgroundStyle={ui.pickerBottomSheetNativeBackground}
-      handleComponent={renderHandle}
-      animationConfigs={animationConfigs}
-    >
-      <View style={[ui.pickerBottomSheetNativeContent, sheetStyle]}>{content}</View>
-    </BottomSheetModal>
-  );
+  const sheetProps = {
+    ref: bottomSheetRef,
+    index: startIndex,
+    snapPoints,
+    enablePanDownToClose,
+    enableDynamicSizing: false,
+    enableOverDrag: true,
+    keyboardBehavior,
+    keyboardBlurBehavior,
+    android_keyboardInputMode: androidKeyboardInputMode,
+    topInset: Math.max(0, keyboardTopInset),
+    enableBlurKeyboardOnGesture,
+    overDragResistanceFactor: 2.2,
+    backdropComponent: renderBackdrop,
+    containerStyle,
+    backgroundStyle: ui.pickerBottomSheetNativeBackground,
+    handleComponent: renderHandle,
+    animationConfigs,
+  };
+  const body = <View style={[ui.pickerBottomSheetNativeContent, sheetStyle]}>{content}</View>;
+  if (inScreen) {
+    return <View accessibilityViewIsModal style={pickerBottomSheetDefaultStyles.screenSheetOverlay}>
+      <BottomSheet {...sheetProps} onClose={requestClose}>{body}</BottomSheet>
+    </View>;
+  }
+
+  return <BottomSheetModal {...sheetProps} enableDismissOnClose onDismiss={handleDismiss}>{body}</BottomSheetModal>;
 }
 
 function LegacyPickerBottomSheet({
@@ -866,6 +878,7 @@ function LegacyPickerBottomSheet({
 }
 
 const pickerBottomSheetDefaultStyles = StyleSheet.create({
+  screenSheetOverlay: { ...StyleSheet.absoluteFill, zIndex: 400, elevation: 400 },
   pickerBottomSheetOverlay: { ...StyleSheet.absoluteFill, zIndex: 14 },
   pickerBottomSheetBackdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(15,23,42,0.18)' },
   pickerBottomSheetNativeBackdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(15,23,42,0.18)' },

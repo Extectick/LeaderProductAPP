@@ -532,11 +532,12 @@ function sanitizeDeviceDraftEntries(value: unknown): DeviceDraftEntry[] {
 
 const recoveryWrites = new Map<string, Promise<void>>();
 
-async function readStoredDeviceDrafts(storageKey: string, userId: string, ids?: readonly string[]) {
+async function readStoredDeviceDrafts(storageKey: string, userId: string, ids?: readonly string[], signal?: AbortSignal) {
   const pendingRecovery = recoveryWrites.get(storageKey);
   if (pendingRecovery) await pendingRecovery;
   if (Platform.OS !== 'web') {
-    const stored = ids ? await readOfflineDrafts(userId, ids) : await readOfflineDrafts(userId);
+    const stored = ids ? await readOfflineDrafts(userId, ids) : await readOfflineDrafts(userId, undefined, signal);
+    if (signal?.aborted) throw new Error('Draft read cancelled');
     if (ids || stored.length) {
       return sanitizeDeviceDraftEntries(stored.map((entry) => ({
         ...entry,
@@ -1759,8 +1760,19 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const localWeight = draftMetrics.weight;
   const localProfitAvailable = draftMetrics.profitItems > 0;
   const visibleDeviceOrders = React.useMemo(
-    () => deviceDraftEntries.map((entry) => preserveSubmittedVersion(entry.order, orders.find(order => isSameListOrder(order, entry.order)), entry.payload))
-      .filter((order) => orderMatchesFilters(order, filters)),
+    () => {
+      // Multiple identities may match different rows. Preserve the earliest
+      // API list match, just as Array.find did, with one index per refresh.
+      const aliases = new Map<string, number>();
+      orders.forEach((order, index) => {
+        for (const key of orderIdentityKeys(order)) if (!aliases.has(key)) aliases.set(key, index);
+      });
+      return deviceDraftEntries.map(entry => {
+        let first = orders.length;
+        for (const key of orderIdentityKeys(entry.order)) first = Math.min(first, aliases.get(key) ?? orders.length);
+        return preserveSubmittedVersion(entry.order, orders[first], entry.payload);
+      }).filter(order => orderMatchesFilters(order, filters));
+    },
     [deviceDraftEntries, filters, orders]
   );
   const visibleApiOrders = React.useMemo(
@@ -1917,9 +1929,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   React.useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     setDeviceDraftsHydrated(false);
     const version = orderOutboxChangeVersion(offlineUserId);
-    void readStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId).then((entries) => {
+    void readStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId, undefined, controller.signal).then((entries) => {
       if (cancelled) return;
       observedDraftChange.current = { userId: offlineUserId, version };
       deviceDraftEntriesRef.current = entries;
@@ -1932,6 +1945,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [deviceDraftsStorageKey, offlineUserId]);
 
@@ -2452,7 +2466,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       const row = persisted.get(id);
       if (!row) {
         if (merged.delete(id)) changed = true;
-      } else if (!previous || (row.clientRevision >= previous.clientRevision && JSON.stringify(previous) !== JSON.stringify(row))) {
+      } else if (!previous || (row.clientRevision >= previous.clientRevision && (!ids || JSON.stringify(previous) !== JSON.stringify(row)))) {
         merged.set(id, row);
         changed = true;
       }
@@ -4116,7 +4130,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       // A different mounted workspace may have persisted a newer revision while
       // the conditional SQLite removal was in flight. Do not publish its predecessor.
       if (options?.serverOnly && clientOrderId) {
-        const persisted = await readStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId);
+        const persisted = await readStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId, [clientOrderId]);
         if (activeOfflineUserRef.current !== offlineUserId
           || persisted.some(entry => entry.clientOrderId === clientOrderId)) return null;
       }
@@ -4304,7 +4318,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
           : isReconciledOrderOperation(saved, entry));
       if (!confirmed) return fail('Сервер не подтвердил актуальную версию заказа. Локальная копия сохранена, ссылка не создана.');
       await removeDeviceDraftEntry(entry.order.guid, entry.clientRevision);
-      const persisted = userIsCurrent() ? await readStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId) : [];
+      const persisted = userIsCurrent() ? await readStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId, [entry.clientOrderId]) : [];
       if (!userIsCurrent() || persisted.some(current => current.clientOrderId === entry.clientOrderId)
         || selectedGuidRef.current !== selectedAtStart || draftEditVersionRef.current !== editVersion
         || findDeviceDraftEntry(entry.order.guid, entry.clientOrderId)) return null;

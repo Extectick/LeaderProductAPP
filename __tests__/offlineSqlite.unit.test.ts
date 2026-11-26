@@ -371,6 +371,42 @@ it('upserts by client identity, preserves independent drafts and guards late ack
   expect(await db.getAllAsync('SELECT * FROM offline_draft_lines WHERE user_id = ? AND draft_id = ?', 'u1', draft.id)).toEqual([]);
 });
 
+it('hydrates a large native draft archive through a cursor and reads one row for the next edit', async () => {
+  const count = 387;
+  const payload = JSON.stringify({ items: [{ lineGuid: 'line', productGuid: 'item', comment: 'x'.repeat(22 * 1024) }] });
+  await db.runAsync(`WITH RECURSIVE ids(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM ids WHERE n < ?)
+    INSERT INTO offline_drafts(user_id,id,client_order_id,client_revision,status,intent,order_json,payload_json,created_at,updated_at)
+    SELECT 'large', printf('d-%03d',n), printf('client-%03d',n), 1, 'ON_DEVICE','SAVE',?,?, '2026', printf('%03d',n) FROM ids`,
+    count, payload, payload);
+  const bulkRead = jest.spyOn(db, 'getAllAsync');
+  const cursor = jest.spyOn(db, 'getEachAsync');
+  const cold = await offline.readOfflineDrafts('large');
+  expect(cold).toHaveLength(count);
+  expect(cold[0].clientOrderId).toBe('client-387');
+  expect(cold[count - 1].payload.items[0].comment.length).toBe(22 * 1024);
+  expect(cursor).toHaveBeenCalledTimes(1);
+  const targeted = await offline.readOfflineDrafts('large', ['client-001']);
+  expect(targeted).toHaveLength(1);
+  expect(targeted[0].order.items[0].comment.length).toBe(22 * 1024);
+  expect(cursor).toHaveBeenCalledTimes(1);
+  expect(bulkRead).not.toHaveBeenCalled();
+
+  const controller = new AbortController();
+  let transferred = 0;
+  // Use the real adapter iterator; stop when the old workspace leaves.
+  cursor.mockRestore();
+  const actualStream = db.getEachAsync.bind(db);
+  jest.spyOn(db, 'getEachAsync').mockImplementation(async function*<T>(sql: string, ...params: any[]) {
+    for await (const row of actualStream<T>(sql, ...params)) {
+      transferred++;
+      if (transferred === 2) controller.abort();
+      yield row;
+    }
+  });
+  await expect(offline.readOfflineDrafts('large', undefined, controller.signal)).rejects.toThrow('cancelled');
+  expect(transferred).toBe(2);
+});
+
 it('reads scoped draft IDs and emits them only after the write succeeds', async () => {
   const { subscribeOrderOutboxChange } = require('../src/features/clientOrders/offline/orderOutboxEvents');
   const listener = jest.fn();

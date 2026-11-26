@@ -29,6 +29,9 @@ export class SQLiteTestDatabase {
     try { return await statement.executeAsync(...params); }
     finally { await statement.finalizeAsync(); }
   }
+  async *getEachAsync<T>(sql: string, ...params: any[]): AsyncIterableIterator<T> {
+    for (const row of this.native.prepare(sql).iterate(...params)) yield row as T;
+  }
   async getAllAsync<T>(sql: string, ...params: any[]): Promise<T[]> {
     return this.native.prepare(sql).all(...params) as T[];
   }

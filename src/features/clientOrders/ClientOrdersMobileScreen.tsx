@@ -1555,7 +1555,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     if (cancelOpeningOrder()) {
       return true;
     }
-    if (editingItemKey) {
+    if (editingItemKey || pendingProductItem) {
+      setPendingProductItem(null);
       setEditingItemKey(null);
       return true;
     }
@@ -1576,7 +1577,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       return true;
     }
     return false;
-  }, [cancelOpeningOrder, closeDocumentToOrders, editingItemKey, filtersOpen, invoicePickerOpen, mode, pickerKind, productGallery, referenceOpen, requestClosePicker]);
+  }, [cancelOpeningOrder, closeDocumentToOrders, editingItemKey, filtersOpen, invoicePickerOpen, mode, pendingProductItem, pickerKind, productGallery, referenceOpen, requestClosePicker]);
 
   React.useEffect(() => {
     if (!registerBackOverlayHandler) return undefined;
@@ -5656,6 +5657,14 @@ export function ProductLineEditorSheet({
     }, 180);
   }, [commitPrice]);
 
+  // System navigation can close this editor without pressing a sheet button.
+  React.useLayoutEffect(() => {
+    if (!visible) {
+      commitQuantity();
+      commitPrice();
+    }
+  }, [visible, commitQuantity, commitPrice]);
+
   // Read at error-boundary cleanup, before the debounced quantity/price can
   // reach workspace state. Ordinary typing still only renders this sheet.
   React.useLayoutEffect(() => {
@@ -5797,6 +5806,7 @@ export function ProductLineEditorSheet({
       visible={visible}
       topOffset={topOffset}
       title="Позиция"
+      screenSessionKey={displayedItemKey}
       onClose={() => {
         commitQuantity();
         commitPrice();
