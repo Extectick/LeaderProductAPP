@@ -28,7 +28,7 @@ jest.mock('react-native-paper', () => ({ Text: 'Text', Portal: 'PaperPortal', Mo
 }));
 jest.mock('@gorhom/bottom-sheet', () => {
   const React = require('react');
-  return { BottomSheetModal: React.forwardRef((props: any, ref: any) => {
+  return { __esModule: true, default: 'ScreenSheet', BottomSheetModal: React.forwardRef((props: any, ref: any) => {
     mockModalProps = props;
     React.useImperativeHandle(ref, () => ({ present: mockPresent, dismiss: mockDismiss }));
     return React.createElement('NativeModal', null, props.children);
@@ -59,6 +59,29 @@ describe('native picker sheet lifecycle', () => {
   }
   beforeEach(() => { jest.useFakeTimers(); jest.clearAllMocks(); mockClose.mockReset(); });
   afterEach(async () => { if (renderer) await act(async () => renderer.unmount()); jest.useRealTimers(); });
+
+  it('opens another Android line with no pending modal and ignores a late close from the first', async () => {
+    const onClose = jest.fn();
+    const renderLine = (key: string, visible: boolean) => React.createElement(PickerBottomSheet, {
+      visible, screenSessionKey: key, topOffset: 80, title: 'Position', onClose: () => onClose(key),
+      children: React.createElement('Content' as any, { itemKey: key }),
+    });
+    await act(async () => { renderer = TestRenderer.create(renderLine('A', true)); });
+    const sheet = () => renderer.root.findByType('ScreenSheet' as any);
+    const previousClose = sheet().props.onClose;
+    await act(async () => previousClose());
+    expect(onClose.mock.calls).toEqual([['A']]);
+    await act(async () => renderer.update(renderLine('A', false)));
+    expect(renderer.toJSON()).toBeNull();
+    await act(async () => renderer.update(renderLine('B', true)));
+    expect(sheet().findByType('Content' as any).props.itemKey).toBe('B');
+    await act(async () => previousClose());
+    expect(onClose.mock.calls).toEqual([['A']]);
+    const backListener = require('react-native').BackHandler.addEventListener.mock.calls.at(-1)[1];
+    await act(async () => { expect(backListener()).toBe(true); });
+    expect(onClose.mock.calls).toEqual([['A'], ['B']]);
+    expect(mockPresent).not.toHaveBeenCalled();
+  });
 
   it('passes touches and accessibility through a closed backdrop, including during a delayed modal unmount', async () => {
     await mount();

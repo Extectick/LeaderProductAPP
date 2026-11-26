@@ -428,29 +428,22 @@ export async function readOfflineDraftStamps(userId: string): Promise<DraftStamp
     updated_at AS updatedAt, status FROM offline_drafts WHERE user_id=?`, userId);
 }
 
-export async function readOfflineDrafts(userId: string, ids?: readonly string[]): Promise<StoredOfflineDraft[]> {
-  return measureOrderDraftRead(userId, ids ? 'draft_read_changed' : 'draft_read_all', () => loadOfflineDrafts(userId, ids));
+export async function readOfflineDrafts(userId: string, ids?: readonly string[], signal?: AbortSignal): Promise<StoredOfflineDraft[]> {
+  return measureOrderDraftRead(userId, ids ? 'draft_read_changed' : 'draft_read_all', () => loadOfflineDrafts(userId, ids, signal));
 }
 
-async function loadOfflineDrafts(userId: string, ids?: readonly string[]): Promise<StoredOfflineDraft[]> {
+async function loadOfflineDrafts(userId: string, ids?: readonly string[], signal?: AbortSignal): Promise<StoredOfflineDraft[]> {
   const db = await getCatalogDatabase();
   if (!db) throw new Error('SQLite draft storage is unavailable');
-  let rows: any[] = [];
-  if (ids) {
-    const unique = [...new Set(ids)];
-    for (let offset = 0; offset < unique.length; offset += 400) {
-      const batch = unique.slice(offset, offset + 400);
-      rows.push(...await db.getAllAsync(`SELECT * FROM offline_drafts WHERE user_id=? AND client_order_id IN (${batch.map(() => '?').join(',')})`, userId, ...batch));
-    }
-  } else {
-    rows = await db.getAllAsync('SELECT * FROM offline_drafts WHERE user_id = ? ORDER BY updated_at DESC', userId);
-  }
   const legacyScope = await legacyOrderApiScope(db);
-  return rows.flatMap((row) => {
+  const drafts: StoredOfflineDraft[] = [];
+  function decode(row: any) {
+    // A stopped reader exits the async iterator, finalizing its SQLite statement.
+    if (signal?.aborted) throw new Error('Draft read cancelled');
     try {
       const { _deviceApiBaseUrl, ...order } = JSON.parse(row.order_json);
-      if (localOrderApiScope({ _deviceApiBaseUrl }, legacyScope) !== ORDER_API_SCOPE) return [];
-      return [{
+      if (localOrderApiScope({ _deviceApiBaseUrl }, legacyScope) !== ORDER_API_SCOPE) return;
+      drafts.push({
         id: row.id,
         clientOrderId: row.client_order_id,
         clientRevision: number(row.client_revision, 1),
@@ -463,9 +456,26 @@ async function loadOfflineDrafts(userId: string, ids?: readonly string[]): Promi
         createdAt: row.created_at,
         updatedAt: row.updated_at,
         lastSendError: row.last_send_error,
-      } as StoredOfflineDraft];
-    } catch { return []; }
-  });
+      });
+    } catch { /* Preserve unreadable drafts in SQLite. */ }
+  }
+  if (ids?.length === 1) {
+    const row = await db.getFirstAsync('SELECT * FROM offline_drafts WHERE user_id=? AND client_order_id=?', userId, ids[0]);
+    if (row) decode(row);
+  } else if (ids) {
+    const unique = [...new Set(ids)];
+    for (let offset = 0; offset < unique.length; offset += 400) {
+      const batch = unique.slice(offset, offset + 400);
+      const sql = `SELECT * FROM offline_drafts WHERE user_id=? AND client_order_id IN (${batch.map(() => '?').join(',')})`;
+      for await (const row of db.getEachAsync(sql, userId, ...batch)) decode(row);
+    }
+  } else {
+    // A native cursor transfers one document per turn. Sorting the decoded
+    // references also avoids SQLite sorting multi-MB order/payload strings.
+    for await (const row of db.getEachAsync('SELECT * FROM offline_drafts WHERE user_id=?', userId)) decode(row);
+    drafts.sort((a, b) => a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0);
+  }
+  return drafts;
 }
 
 export async function canAdoptLegacyOfflineDrafts() {
@@ -481,11 +491,13 @@ async function writeDraft(tx: SQLiteDatabase, userId: string, draft: StoredOffli
   if (delivery) throw new Error('Этот заказ уже отправляется. Дождитесь подтверждения API. Другие заказы можно редактировать.');
   // The editor's UI guid can still be null while its first save is finishing.
   // The client identity, not the temporary row id, identifies the document.
-  const existing = await tx.getFirstAsync<{ id: string; client_revision: number; order_json: string }>(
-    'SELECT id, client_revision, order_json FROM offline_drafts WHERE user_id = ? AND client_order_id = ?',
+  const existing = await tx.getFirstAsync<{ id: string; client_revision: number; apiScope: string | null }>(
+    `SELECT id, client_revision, CASE WHEN json_type(order_json,'$._deviceApiBaseUrl')='text'
+      THEN json_extract(order_json,'$._deviceApiBaseUrl') END AS apiScope
+      FROM offline_drafts WHERE user_id = ? AND client_order_id = ?`,
     userId, draft.clientOrderId
   );
-  if (existing && localOrderApiScope(JSON.parse(existing.order_json), await legacyOrderApiScope(tx)) !== ORDER_API_SCOPE) {
+  if (existing && (existing.apiScope ?? await legacyOrderApiScope(tx)) !== ORDER_API_SCOPE) {
     throw new Error('Этот черновик принадлежит другому API. Он сохранён и не будет отправлен сюда.');
   }
   if (existing && existing.client_revision > draft.clientRevision) {
