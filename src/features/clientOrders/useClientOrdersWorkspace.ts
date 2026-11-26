@@ -1339,6 +1339,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const [selectedGuid, setSelectedGuid] = React.useState<string | null>(null);
   const [selectedOrder, setSelectedOrder] = React.useState<ClientOrder | null>(null);
   const [draft, setDraft] = React.useState<DraftOrder>(() => emptyDraft());
+  const currentDraftRef = React.useRef(draft);
+  currentDraftRef.current = draft;
   const geoCaptureInFlightRef = React.useRef(new Set<string>());
   const [selections, setSelections] = React.useState<DraftSelections>(emptySelections());
   const [paymentFormOptions, setPaymentFormOptions] = React.useState<ClientOrderEnumOption[]>([]);
@@ -2004,13 +2006,14 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, []);
 
   const enrichItemMetadata = React.useCallback((lineKey: string) => {
+    const draft = currentDraftRef.current;
     const item = draft.items.find((next) => next.key === lineKey);
     if (!item) return Promise.resolve();
     return enrichItemsMetadata(
       { ...draft, items: [item] },
       { receiptPriceAt: readOnly ? selectedOrder?.date1c ?? undefined : undefined }
     );
-  }, [draft, enrichItemsMetadata, readOnly, selectedOrder?.date1c]);
+  }, [enrichItemsMetadata, readOnly, selectedOrder?.date1c]);
 
   const refreshDocumentProfit = React.useCallback(() => {
     if (loadingReceiptPrices) return Promise.resolve();
@@ -4159,7 +4162,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [patchDraft]);
 
   const refreshItemPricing = React.useCallback(async (item: DraftItem, priceType: ClientOrderPriceTypeOption | null) => {
+    const draft = currentDraftRef.current;
     if (!draft.counterpartyGuid) return;
+    let product: ClientOrderProduct | undefined;
     try {
       const products = await getClientOrderProductsBatch({
         productGuids: [item.productGuid],
@@ -4169,42 +4174,49 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         warehouseGuid: draft.warehouseGuid || undefined,
         priceTypeGuid: priceType?.guid || undefined,
       });
-      const product = products.find((next) => next.guid === item.productGuid);
-      if (!product) return;
-      const isManualPrice = hasManualPrice(item);
-      const packages = mergeDraftPackagesForProduct(product, item.packages, item.baseUnit);
-      const hasProductPackages = Array.isArray(product.packages);
-      setItemPatch(item.key, {
-        packageGuid: normalizePackageGuid(item.packageGuid, packages),
-        basePrice: isManualPrice ? item.basePrice ?? product.basePrice ?? null : product.basePrice ?? null,
-        receiptPrice: product.receiptPrice ?? item.receiptPrice ?? null,
-        currency: DEFAULT_ORDER_CURRENCY,
-        priceTypeGuid: isManualPrice ? item.priceTypeGuid ?? null : priceType?.guid ?? product.priceType?.guid ?? null,
-        priceTypeName: isManualPrice ? item.priceTypeName ?? null : priceType?.name ?? product.priceType?.name ?? null,
-        baseUnit: product.baseUnit ?? item.baseUnit ?? null,
-        productWeight: product.weight ?? item.productWeight ?? null,
-        weightUnit: product.weightUnit ?? item.weightUnit ?? null,
-        stock: product.stock ?? item.stock ?? null,
-        packages: hasProductPackages ? packages : item.packages,
-        packagesLoaded: hasProductPackages ? true : item.packagesLoaded,
-        imageThumbUrl: product.imageThumbUrl ?? item.imageThumbUrl ?? null,
-        imagePreviewUrl: product.imagePreviewUrl ?? item.imagePreviewUrl ?? null,
-        imageHash: product.imageHash ?? item.imageHash ?? null,
-        images: product.images ?? item.images ?? [],
-      });
+      product = products.find(next => next.guid === item.productGuid);
     } catch {
-      const isManualPrice = hasManualPrice(item);
-      setItemPatch(item.key, {
-        priceTypeGuid: isManualPrice ? item.priceTypeGuid ?? null : priceType?.guid || null,
-        priceTypeName: isManualPrice ? item.priceTypeName ?? null : priceType?.name || null,
-        basePrice: isManualPrice ? item.basePrice : null,
-      });
+      // The selected automatic price remains unknown until a successful read.
     }
-  }, [draft.agreementGuid, draft.counterpartyGuid, draft.organizationGuid, draft.warehouseGuid, setItemPatch]);
+    if (!product) return;
+    const fresh = product;
+    patchDraft(prev => {
+      if (prev.guid !== draft.guid || prev.clientOrderId !== draft.clientOrderId
+          || buildPricingContextSignature(prev) !== buildPricingContextSignature(draft)) return prev;
+      const index = prev.items.findIndex(line => line.key === item.key);
+      const current = prev.items[index];
+      if (!current || current.productGuid !== item.productGuid || hasManualPrice(current)
+          || (current.priceTypeGuid || null) !== (priceType?.guid || null)
+          || current.packageGuid !== item.packageGuid) return prev;
+      const packages = mergeDraftPackagesForProduct(fresh, current.packages, current.baseUnit);
+      const hasProductPackages = Array.isArray(fresh.packages);
+      const items = prev.items.slice();
+      items[index] = {
+        ...current,
+        packageGuid: normalizePackageGuid(current.packageGuid, packages),
+        basePrice: fresh.basePrice ?? null,
+        receiptPrice: fresh.receiptPrice ?? current.receiptPrice ?? null,
+        currency: DEFAULT_ORDER_CURRENCY,
+        priceTypeGuid: priceType?.guid ?? fresh.priceType?.guid ?? null,
+        priceTypeName: priceType?.name ?? fresh.priceType?.name ?? null,
+        baseUnit: fresh.baseUnit ?? current.baseUnit ?? null,
+        productWeight: fresh.weight ?? current.productWeight ?? null,
+        weightUnit: fresh.weightUnit ?? current.weightUnit ?? null,
+        stock: fresh.stock ?? current.stock ?? null,
+        packages: hasProductPackages ? packages : current.packages,
+        packagesLoaded: hasProductPackages ? true : current.packagesLoaded,
+        imageThumbUrl: fresh.imageThumbUrl ?? current.imageThumbUrl ?? null,
+        imagePreviewUrl: fresh.imagePreviewUrl ?? current.imagePreviewUrl ?? null,
+        imageHash: fresh.imageHash ?? current.imageHash ?? null,
+        images: fresh.images ?? current.images ?? [],
+      };
+      return { ...prev, items };
+    });
+  }, [patchDraft]);
 
   const refreshItemsPricing = React.useCallback(async (
     items: DraftItem[],
-    options?: { priceType?: ClientOrderPriceTypeOption | null; forceAutomaticPrice?: boolean }
+    options?: { priceType?: ClientOrderPriceTypeOption | null }
   ) => {
     if (!draft.counterpartyGuid || !items.length) return;
     const requestId = ++pricingRequestIdRef.current;
@@ -4231,7 +4243,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         items: prev.items.map((item) => {
           const product = productByGuid.get(item.productGuid);
           if (!product) return item;
-          const isManualPrice = options?.forceAutomaticPrice ? false : hasManualPrice(item);
+          const isManualPrice = hasManualPrice(item);
           const packages = mergeDraftPackagesForProduct(product, item.packages, item.baseUnit);
           const hasProductPackages = Array.isArray(product.packages);
           return {
@@ -4382,6 +4394,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
           ? {
               ...item,
               packageGuid: nextPackageGuid,
+              basePrice: null,
               manualPrice: '',
               priceTypeGuid: priceType?.guid || null,
               priceTypeName: priceType?.name || null,
@@ -4476,7 +4489,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         basePrice: null,
       })),
     }));
-    void refreshItemsPricing(refreshTargets, { priceType, forceAutomaticPrice: true });
+    void refreshItemsPricing(refreshTargets, { priceType });
   }, [defaultHeaderPriceType, draft.agreementGuid, draft.counterpartyGuid, draft.items, draft.organizationGuid, draft.warehouseGuid, patchDraft, refreshItemsPricing]);
 
   const refreshAll = React.useCallback(async () => {

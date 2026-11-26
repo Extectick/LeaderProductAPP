@@ -6,20 +6,37 @@ const round = (value: number) => Math.round(value * 1000) / 1000;
 const numberOf = (value: string) => Number(value.replace(',', '.')) || 0;
 const matches = (item: DraftItem, guid: string) => item.productGuid === guid && !isCancelledDraftItem(item);
 
-/** The picker always counts base units, never a mixture of kg and boxes. */
-export function productPickerQuantity(items: readonly DraftItem[], product: ClientOrderProduct) {
+function baseQuantity(line: DraftItem) {
+  return Math.max(0, numberOf(line.quantity)) * getPackageMultiplier(line);
+}
+
+/** Only order lines contribute to the counters, regardless of the number of catalog pages loaded. */
+export function indexPickerBaseQuantities(items: readonly DraftItem[]) {
+  const totals = new Map<string, number>();
+  for (const item of items) {
+    if (isCancelledDraftItem(item)) continue;
+    totals.set(item.productGuid, (totals.get(item.productGuid) ?? 0) + baseQuantity(item));
+  }
+  return totals;
+}
+
+export function pickerQuantityFromBase(total: number, product: ClientOrderProduct) {
   const packages = product.packages || [];
   const pack = product.baseUnit ? null : packages.find(item => item.isDefault) ?? packages[0];
   const sample = { productIsWeight: product.isWeight, baseUnit: product.baseUnit, packages, packageGuid: pack?.guid, quantity: '0' } as DraftItem;
   const scale = product.baseUnit ? 1 : getPackageMultiplier(sample);
   const unit = product.baseUnit ?? sample.packages.find(pack => pack.guid === sample.packageGuid)?.unit;
   return {
-    quantity: round(items.reduce((sum, item) => matches(item, product.guid)
-      ? sum + Math.max(0, numberOf(item.quantity)) * getPackageMultiplier(item) / scale : sum, 0)),
+    quantity: round(total / scale),
     unit: unit?.symbol || unit?.name || 'шт',
     fractional: isWeightDraftItem(sample),
     scale,
   };
+}
+
+export function productPickerQuantity(items: readonly DraftItem[], product: ClientOrderProduct) {
+  const total = items.reduce((sum, line) => matches(line, product.guid) ? sum + baseQuantity(line) : sum, 0);
+  return pickerQuantityFromBase(total, product);
 }
 
 export function parsePickerQuantity(value: string, fractional: boolean): number | null {

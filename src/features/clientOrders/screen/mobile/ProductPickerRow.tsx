@@ -6,7 +6,7 @@ import type { ClientOrderProduct } from '@/utils/clientOrdersService';
 import { formatMoney } from '../../lib/clientOrdersShared';
 import { formatStockInlineLabel } from '../../lib/clientOrdersUi';
 import { purchaseHistoryDays, purchaseHistoryLabel } from '../../lib/customerPurchaseHistory';
-import type { ProductQuantityChange } from '../../lib/productPickerQuantity';
+import { pickerQuantityFromBase, type ProductQuantityChange } from '../../lib/productPickerQuantity';
 import { ProductPickerQuantityControl } from './ProductPickerQuantityControl';
 import { ProductListRow } from '@/src/shared/ui/ProductListRow';
 
@@ -19,7 +19,7 @@ function productMetrics(item: ClientOrderProduct, hasPriceType: boolean, hasWare
   ];
 }
 
-function ProductPickerMetric({ metric, compact = false, prominent = false }: {
+const ProductPickerMetric = React.memo(function ProductPickerMetric({ metric, compact = false, prominent = false }: {
   metric: ReturnType<typeof productMetrics>[number]; compact?: boolean; prominent?: boolean;
 }) {
   return <Tooltip title={metric.title}>
@@ -29,7 +29,7 @@ function ProductPickerMetric({ metric, compact = false, prominent = false }: {
         numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>{metric.value}</Text>
     </View>
   </Tooltip>;
-}
+});
 
 export function ProductPickerMetrics({ item, hasPriceType, hasWarehouse, compact = false }: {
   item: ClientOrderProduct; hasPriceType: boolean; hasWarehouse: boolean; compact?: boolean;
@@ -40,23 +40,26 @@ export function ProductPickerMetrics({ item, hasPriceType, hasWarehouse, compact
   </View>;
 }
 
-export const ProductPickerRow = React.memo(function ProductPickerRow({ item, quantity, unit, fractional, renderThumbnail,
+export const ProductPickerRow = React.memo(function ProductPickerRow({ item, baseQuantity, lastPurchasedDate, renderThumbnail,
   disabled = false, selected = false, hasPriceType, hasWarehouse, onOpen, onLongPress, onChangeQuantity,
 }: {
-  item: ClientOrderProduct; quantity: number; unit: string; fractional: boolean; renderThumbnail: (item: ClientOrderProduct) => React.ReactNode;
+  item: ClientOrderProduct; baseQuantity: number; lastPurchasedDate: string | null; renderThumbnail: (item: ClientOrderProduct) => React.ReactNode;
   disabled?: boolean; selected?: boolean; hasPriceType: boolean; hasWarehouse: boolean;
   onOpen: (item: ClientOrderProduct) => void; onLongPress: (item: ClientOrderProduct) => void;
   onChangeQuantity: (item: ClientOrderProduct, change: ProductQuantityChange) => void;
 }) {
   const longPressed = React.useRef(false);
-  const historyDays = purchaseHistoryDays(item.lastPurchasedDate);
-  const [stock, sale, cost] = productMetrics(item, hasPriceType, hasWarehouse);
+  const { quantity, unit, fractional } = pickerQuantityFromBase(baseQuantity, item);
+  const historyDays = purchaseHistoryDays(lastPurchasedDate);
+  const [stock, sale, cost] = React.useMemo(
+    () => productMetrics(item, hasPriceType, hasWarehouse), [item, hasPriceType, hasWarehouse],
+  );
   const thumbnail = React.useMemo(() => renderThumbnail(item), [item, renderThumbnail]);
   return <ProductListRow selected={selected} testID={`product-row-${item.guid}`} thumbnailTestID={`product-thumbnail-${item.guid}`} thumbnail={
     <>
       {thumbnail}
       {historyDays !== null ? <View style={styles.historyBadge} pointerEvents="none" accessible
-        accessibilityLabel={purchaseHistoryLabel(item.lastPurchasedDate) || undefined} testID={`product-history-${item.guid}`}>
+        accessibilityLabel={purchaseHistoryLabel(lastPurchasedDate) || undefined} testID={`product-history-${item.guid}`}>
         <MaterialCommunityIcons name="history" size={13} color="#15803D" />
         <Text style={styles.historyText} numberOfLines={1}>{historyDays} дн.</Text>
       </View> : null}

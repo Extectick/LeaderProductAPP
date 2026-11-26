@@ -191,6 +191,25 @@ describe('useClientOrdersWorkspace', () => {
     return { get current() { return current; }, renderer };
   }
 
+  it('keeps manual line pricing when an older automatic lookup completes', async () => {
+    const harness = await editableWorkspace();
+    try {
+      const enrich = harness.current.enrichItemMetadata;
+      let finish!: (products: any[]) => void;
+      jest.mocked(getClientOrderProductsBatch).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+      await act(async () => { harness.current.setItemPriceType('line-key', { guid: 'automatic', name: 'Automatic' }); });
+      await act(async () => {
+        harness.current.setItemPatch('line-key', { manualPrice: '19.97', priceTypeGuid: null, priceTypeName: 'Произвольный' });
+      });
+      await act(async () => { finish([{ guid: 'product-guid', basePrice: 98 }]); });
+      expect(harness.current.draft.items[0]).toMatchObject({ manualPrice: '19.97', priceTypeGuid: null, priceTypeName: 'Произвольный' });
+      expect(harness.current.enrichItemMetadata).toBe(enrich);
+      jest.mocked(getClientOrderProductsBatch).mockResolvedValueOnce([{ guid: 'product-guid', basePrice: 48.35 }] as any);
+      await act(async () => { harness.current.setItemPriceType('line-key', { guid: 'next', name: 'Next' }); });
+      expect(harness.current.draft.items[0]).toMatchObject({ manualPrice: '', basePrice: 48.35, priceTypeGuid: 'next' });
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
   it('does not lock a new order while an unrelated device packet is API_ACCEPTED', async () => {
     const entry = localEntry('previous-packet', 'API_ACCEPTED');
     memoryDraftStore([entry]);
