@@ -228,6 +228,9 @@ export function SearchPickerScreen<T>({
   const showFilterLabels = filters.length === 1 && windowWidth >= 350;
 
   if (!visible) return null;
+  // Editable product rows change layout during quantity entry. On Android
+  // FlashList can re-enter its synchronous measurement commit until React aborts.
+  const PickerList = Platform.OS === 'android' && pickerKey === 'product' ? FlatList<T> : FlashList<T>;
 
   return (
     <View style={styles.root}>
@@ -338,7 +341,7 @@ export function SearchPickerScreen<T>({
 
       </Surface>
 
-      <FlashList
+      <PickerList
         ref={listRef as any}
         {...(listProps as any)}
         style={[styles.list, listStyle]}
