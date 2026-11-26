@@ -71,6 +71,17 @@ describe('SearchPickerScreen', () => {
     return { renderer, onSearchChange, input: () => renderer.root.findByType('Searchbar' as any) };
   }
 
+  it.each([
+    ['android', 'product', 'FlatList'],
+    ['android', 'counterparty', 'FlashList'],
+    ['ios', 'product', 'FlashList'],
+  ])('uses the expected virtualized list on %s for %s', (platform, key, list) => {
+    require('react-native').Platform.OS = platform;
+    const { renderer } = renderSearch('молоко', key);
+    expect(renderer.root.findByType(list as any)).toBeDefined();
+    act(() => renderer.unmount());
+  });
+
   it('selects the entire current product query on focus and repeated taps without searching', () => {
     const onFocus = jest.fn();
     const onPressOut = jest.fn();
