@@ -16,7 +16,7 @@ export function refreshPendingProductSearch(
 ) {
   return refreshUnresolvedSnapshot(initial,
     result => result.items.some(needsRefresh),
-    async () => {
+    async (): Promise<PagedResult<ClientOrderProduct>> => {
       try { return await load(); }
       catch (error) {
         const status = (error as {status?: number} | null)?.status;
