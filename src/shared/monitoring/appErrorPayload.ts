@@ -4,8 +4,8 @@ import { getAppVersionInfo } from '@/utils/appVersion';
 import type { OrderLoopStage } from '@/src/features/clientOrders/screen/orderLoopStage';
 
 const screens = ['orders', 'help', 'profile', 'auth', 'services', 'home', 'admin', 'unknown'] as const;
-const kinds = ['maximum_update_depth', 'type_error', 'range_error', 'reference_error', 'syntax_error', 'error', 'unknown', 'java_exception', 'native_crash', 'anr'] as const;
-const sources = ['react_boundary', 'global_js', 'captured', 'android_native'] as const;
+const kinds = ['maximum_update_depth', 'type_error', 'range_error', 'reference_error', 'syntax_error', 'error', 'unknown', 'java_exception', 'native_crash', 'anr', 'slow_operation'] as const;
+const sources = ['react_boundary', 'global_js', 'captured', 'android_native', 'performance'] as const;
 const stages = ['unknown', 'orders', 'editor-header', 'editor-items', 'product-picker', 'reference-picker',
   'line-editor', 'linked-order', 'filters', 'web-workspace'] as const satisfies readonly OrderLoopStage[];
 const uuidPattern = /^[a-f\d]{8}-[a-f\d]{4}-[1-8][a-f\d]{3}-[89ab][a-f\d]{3}-[a-f\d]{12}$/i;
@@ -14,10 +14,21 @@ const coordinate = /^\d{1,9}:\d{1,9}$/;
 const dottedVersion = /^\d+(?:\.\d+){0,3}$/;
 const digits = /^\d{1,12}$/;
 
+const metrics = ['js_event_loop', 'input_dispatch', 'draft_read_all', 'draft_read_changed'] as const;
+export type OrderTimingMetric = typeof metrics[number];
+type TimingEvidence = { metric: OrderTimingMetric; durationMs: number };
+
+function validTiming(value: TimingEvidence | undefined): TimingEvidence | undefined {
+  if (value && metrics.includes(value.metric) && Number.isInteger(value.durationMs) &&
+      value.durationMs >= 500 && value.durationMs <= 120000) {
+    return { metric: value.metric, durationMs: value.durationMs };
+  }
+}
+
 export type AppErrorScreen = typeof screens[number];
 export type AppErrorInput = {
   ownerId?: number | null;
-  source: Exclude<typeof sources[number], 'android_native'>;
+  source: Exclude<typeof sources[number], 'android_native' | 'performance'>;
   error: unknown;
   screen?: AppErrorScreen;
   stage?: OrderLoopStage;
@@ -38,6 +49,7 @@ export type AppErrorPayload = {
   components: string[];
   jsFrames: string[];
   nativeEvidence?: NativeEvidence;
+  timing?: TimingEvidence;
 };
 
 type NativeEvidence = {
@@ -145,6 +157,12 @@ export function makeAppErrorPayload(input: AppErrorInput): AppErrorPayload | nul
   };
 }
 
+export function makeOrderTimingPayload(stage: OrderLoopStage, timing: TimingEvidence): AppErrorPayload | null {
+  if (Platform.OS !== 'android' || !validTiming(timing)) return null;
+  const base = makeAppErrorPayload({ source: 'captured', error: null, screen: 'orders', stage });
+  return base && { ...base, kind: 'slow_operation', source: 'performance', timing };
+}
+
 function nativeEvidenceFrom(value: NativeEvidence | undefined): NativeEvidence | undefined {
   if (!value || !Number.isInteger(value.androidApi) || value.androidApi < 1 || value.androidApi > 999) return;
   const javaClass = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/;
@@ -192,8 +210,13 @@ export function readAppErrorPayload(json: string, eventId: string): AppErrorPayl
     const isNativeKind = ['java_exception', 'native_crash', 'anr'].includes(p.kind);
     if ((p.source === 'android_native') !== isNativeKind ||
       (isNativeKind && (!evidence || p.platform !== 'android'))) return null;
+    const timing = validTiming(p.timing);
+    const isTiming = p.kind === 'slow_operation';
+    if ((p.source === 'performance') !== isTiming ||
+        (isTiming && (!timing || p.screen !== 'orders' || p.platform !== 'android' || p.components.length || p.jsFrames.length)) ||
+        (!isTiming && p.timing !== undefined)) return null;
     return {
-      nativeEvidence: evidence, eventId, occurredAt: p.occurredAt, kind: p.kind, platform: p.platform, source: p.source,
+      timing, nativeEvidence: evidence, eventId, occurredAt: p.occurredAt, kind: p.kind, platform: p.platform, source: p.source,
       screen: p.screen, stage: p.stage, components: p.components, jsFrames: p.jsFrames,
       appVersion: optionalString(p.appVersion, dottedVersion, 40), buildNumber: optionalString(p.buildNumber, digits, 12),
       runtimeVersion: optionalString(p.runtimeVersion, dottedVersion, 40), otaUpdateId: optionalString(p.otaUpdateId, uuidPattern, 36),

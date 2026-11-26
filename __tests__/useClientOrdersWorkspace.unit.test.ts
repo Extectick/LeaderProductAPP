@@ -41,6 +41,7 @@ jest.mock('../src/features/clientOrders/offline/offlineOrdersDatabase', () => ({
   readOfflineDatasetMeta: jest.fn(async () => null),
   readOfflineDataSyncTime: jest.fn(async () => null),
   readOfflineDrafts: jest.fn(async () => []),
+  readOfflineDraftStamps: jest.fn(async () => []),
   applyOfflineDraftChanges: jest.fn(async () => true),
   canAdoptLegacyOfflineDrafts: async () => true,
 }));
@@ -98,7 +99,7 @@ jest.mock('@/utils/clientOrdersService', () => ({
 import { AuthContext } from '@/context/AuthContext';
 import { useClientOrdersWorkspace } from '../src/features/clientOrders/useClientOrdersWorkspace';
 import { captureOrderGeoEvent } from '@/utils/orderGeo';
-import { isOfflineDataReady, readOfflineDataSyncTime, readOfflineDatasetMeta, readOfflineDrafts, applyOfflineDraftChanges } from '../src/features/clientOrders/offline/offlineOrdersDatabase';
+import { isOfflineDataReady, readOfflineDataSyncTime, readOfflineDatasetMeta, readOfflineDrafts, readOfflineDraftStamps, applyOfflineDraftChanges } from '../src/features/clientOrders/offline/offlineOrdersDatabase';
 import { setServerReachable, setServerUnavailable } from '../src/shared/network/serverStatus';
 import { syncOfflineOrderData } from '../src/features/clientOrders/offline/offlineOrdersSync';
 import { buildLocalDraftPayload, emptyDraft } from '../src/features/clientOrders/clientOrdersShared';
@@ -197,6 +198,31 @@ describe('useClientOrdersWorkspace', () => {
     await flush();
     return { get current() { return current; }, renderer };
   }
+
+  it('keeps the line editor callback stable across edits and fetches metadata for the current draft', async () => {
+    const harness = await editableWorkspace();
+    const batch = jest.mocked(getClientOrderProductsBatch);
+    batch.mockResolvedValue([]);
+    try {
+      const enrich = harness.current.enrichItemMetadata;
+      const line = harness.current.draft.items[0];
+      await act(async () => harness.current.patchDraft({ items: [
+        line, { ...line, key: 'untouched', lineGuid: 'other-line', productGuid: 'other-product' },
+      ] }));
+      const untouched = harness.current.draft.items[1];
+      await act(async () => harness.current.setItemPatch(line.key, { manualPrice: '151' }));
+      expect(harness.current.draft.items[1]).toBe(untouched);
+      expect(harness.current.enrichItemMetadata).toBe(enrich);
+      await act(async () => harness.current.patchDraft({ warehouseGuid: 'new-warehouse' }));
+      batch.mockClear();
+      await act(async () => { await enrich('untouched'); });
+      expect(batch).toHaveBeenCalledWith(expect.objectContaining({
+        warehouseGuid: 'new-warehouse', productGuids: ['other-product'],
+      }));
+    } finally {
+      await act(async () => harness.renderer.unmount());
+    }
+  });
 
   it('prices mobile picker additions and retries an existing missing line after another tap', async () => {
     const harness = await editableWorkspace();
@@ -429,6 +455,7 @@ describe('useClientOrdersWorkspace', () => {
     jest.mocked(getClientOrderByClientId).mockRejectedValue(new Error('Not found'));
     jest.mocked(getClientOrderStates).mockRejectedValue(new Error('Old API fallback'));
     jest.mocked(readOfflineDrafts).mockResolvedValue([]);
+    jest.mocked(readOfflineDraftStamps).mockResolvedValue([]);
     jest.mocked(applyOfflineDraftChanges).mockResolvedValue(true);
     jest.mocked(captureOrderGeoEvent).mockImplementation(async (type) => ({
       clientEventId: `test-${type.toLowerCase()}`,
@@ -762,7 +789,9 @@ describe('useClientOrdersWorkspace', () => {
 
   function memoryDraftStore(initial: any[] = []) {
     const records = new Map(initial.map(entry => [entry.clientOrderId, entry]));
-    jest.mocked(readOfflineDrafts).mockImplementation(async () => [...records.values()]);
+    jest.mocked(readOfflineDrafts).mockImplementation(async (_userId, ids) =>
+      [...records.values()].filter(entry => !ids || ids.includes(entry.clientOrderId)));
+    jest.mocked(readOfflineDraftStamps).mockImplementation(async () => [...records.values()]);
     jest.mocked(applyOfflineDraftChanges).mockImplementation(async (_userId, upserts, removals = []) => {
       for (const entry of upserts) records.set(entry.clientOrderId, JSON.parse(JSON.stringify(entry)));
       for (const entry of removals) if (records.get(entry.clientOrderId)?.clientRevision === entry.clientRevision) records.delete(entry.clientOrderId);
@@ -770,6 +799,30 @@ describe('useClientOrdersWorkspace', () => {
     });
     return records;
   }
+
+  it('reads only notified draft IDs during edits and observes cross-runtime changes via stamps', async () => {
+    const { emitOrderOutboxChange } = require('../src/features/clientOrders/offline/orderOutboxEvents');
+    const a = localEntry('first-target'), b = localEntry('second-target');
+    const records = memoryDraftStore([a, b]);
+    const harness = await ordersListWorkspace();
+    try {
+      jest.mocked(readOfflineDrafts).mockClear();
+      records.set(a.clientOrderId, { ...a, clientRevision: 3 });
+      await act(async () => {
+        emitOrderOutboxChange({ userId: '2', draftIds: [b.clientOrderId] });
+        emitOrderOutboxChange({ userId: '1', draftIds: [a.clientOrderId] });
+        emitOrderOutboxChange({ userId: '1', draftIds: [a.clientOrderId] });
+        await jest.advanceTimersByTimeAsync(50);
+      });
+      expect(readOfflineDrafts).toHaveBeenCalledTimes(1);
+      expect(readOfflineDrafts).toHaveBeenCalledWith('1', [a.clientOrderId]);
+      jest.mocked(readOfflineDrafts).mockClear();
+      records.delete(b.clientOrderId);
+      await act(async () => { await jest.advanceTimersByTimeAsync(30_000); });
+      expect(readOfflineDrafts).toHaveBeenCalledWith('1', [b.clientOrderId]);
+      expect(jest.mocked(readOfflineDrafts).mock.calls.every(call => call[1]?.length === 1)).toBe(true);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
 
   it('ignores a repeated line input commit and keeps its draft revision and item array stable', async () => {
     const entry = localEntry('repeat-quantity');

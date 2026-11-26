@@ -4,7 +4,7 @@ import { AppState } from 'react-native';
 import { drainNativeAppErrors } from './nativeAppErrors';
 import { API_BASE_URL } from '@/utils/config';
 import { subscribeServerStatus } from '@/src/shared/network/serverStatus';
-import { makeAppErrorPayload, nativeAppErrorPayload, readAppErrorPayload, type AppErrorInput, type AppErrorPayload, type NativeAppErrorRecord } from './appErrorPayload';
+import { makeAppErrorPayload, makeOrderTimingPayload, nativeAppErrorPayload, readAppErrorPayload, type AppErrorInput, type AppErrorPayload, type NativeAppErrorRecord } from './appErrorPayload';
 
 const prefix = 'app-error-reports:v1:' + encodeURIComponent(API_BASE_URL) + ':';
 const ttl = 7 * 24 * 60 * 60_000;
@@ -33,6 +33,8 @@ async function pendingKeys(ownerId?: number) {
 function persist(ownerId: number, payload: AppErrorPayload) {
   const key = prefix + Date.parse(payload.occurredAt) + ':' + ownerId + ':' + payload.eventId;
   const store = writes.then(async () => {
+    // Leave queue capacity for exceptions during a long offline period.
+    if (payload.timing && (await pendingKeys()).length >= 4) return false;
     await AsyncStorage.setItem(key, JSON.stringify(payload));
     const retained = await pendingKeys(ownerId);
     if (receiver?.ownerId === ownerId) receiver.wake();
@@ -40,6 +42,14 @@ function persist(ownerId: number, payload: AppErrorPayload) {
   });
   writes = store.then(() => {}, () => {});
   return store;
+}
+
+export async function queueOrderTiming(ownerId: number, ...args: Parameters<typeof makeOrderTimingPayload>) {
+  if (receiver?.ownerId !== ownerId) return;
+  try {
+    const payload = makeOrderTimingPayload(...args);
+    if (payload) await persist(ownerId, payload);
+  } catch { /* Performance reporting must never interfere with input or persistence. */ }
 }
 
 export async function queueNativeAppErrorReport(record: NativeAppErrorRecord): Promise<boolean> {
@@ -112,7 +122,7 @@ export function startAppErrorDelivery(ownerId: number) {
           method: 'POST', body: payload, expectedUserId: ownerId, passive: true, signal: controller.signal, timeoutMs: 8_000,
         });
         if (controller.signal.aborted) break;
-        if (result.status === 204 || [400, 413, 422].includes(result.status)) {
+        if (result.status === 204 || [400, 413, 422].includes(result.status) || (result.status === 429 && payload.timing)) {
           await AsyncStorage.removeItem(key);
           retryAt = 0;
           retryDelay = 15_000;

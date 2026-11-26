@@ -19,7 +19,7 @@ jest.mock('react-native', () => ({
 }));
 jest.mock('@expo/vector-icons', () => ({ MaterialCommunityIcons: 'Icon' }));
 jest.mock('react-native-reanimated', () => ({ __esModule: true, default: { View: 'AnimatedView' },
-  Extrapolation: { CLAMP: 'clamp' }, interpolate: jest.fn(), useAnimatedStyle: () => ({}),
+  Extrapolation: { CLAMP: 'clamp' }, interpolate: jest.fn(), useAnimatedStyle: () => ({}), useAnimatedProps: (worklet: () => unknown) => worklet(),
 }));
 jest.mock('react-native-paper', () => ({ Text: 'Text', Portal: 'PaperPortal', Modal: 'PaperModal',
   Surface: 'Surface', Divider: 'Divider', IconButton: 'IconButton', Button: 'PaperButton',
@@ -59,6 +59,32 @@ describe('native picker sheet lifecycle', () => {
   }
   beforeEach(() => { jest.useFakeTimers(); jest.clearAllMocks(); mockClose.mockReset(); });
   afterEach(async () => { if (renderer) await act(async () => renderer.unmount()); jest.useRealTimers(); });
+
+  it('passes touches and accessibility through a closed backdrop, including during a delayed modal unmount', async () => {
+    await mount();
+    const index = { value: -1 };
+    let backdrop!: TestRenderer.ReactTestRenderer;
+    const render = () => mockModalProps.backdropComponent({ animatedIndex: index });
+    await act(async () => { backdrop = TestRenderer.create(render()); });
+    const interaction = () => backdrop.root.findByType('AnimatedView' as any).props.animatedProps;
+    try {
+      expect(interaction()).toMatchObject({ pointerEvents: 'none', importantForAccessibility: 'no-hide-descendants' });
+      index.value = 0;
+      await act(async () => backdrop.update(render()));
+      expect(interaction()).toMatchObject({ pointerEvents: 'auto', accessibilityElementsHidden: false });
+      mockClose.mockReturnValueOnce(false);
+      const press = () => backdrop.root.findByProps({ accessibilityLabel: 'Закрыть панель' }).props.onPress();
+      await act(async () => press());
+      expect(mockDismiss).not.toHaveBeenCalled();
+      await act(async () => press());
+      await act(async () => backdrop.update(render()));
+      expect(mockClose).toHaveBeenCalledTimes(2);
+      expect(interaction()).toMatchObject({ pointerEvents: 'none', accessibilityElementsHidden: true });
+      expect(backdrop.root.findAllByProps({ accessibilityLabel: 'Закрыть панель' })).toHaveLength(0);
+    } finally {
+      await act(async () => backdrop.unmount());
+    }
+  });
 
   it('dismisses the mounted native modal instead of tearing it out during keyboard/portal cleanup', async () => {
     await mount();

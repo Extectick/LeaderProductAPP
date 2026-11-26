@@ -1,6 +1,7 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { getCatalogDatabase } from '@/src/features/productCatalog/data/catalogDatabase';
 import { withSQLiteWriteTransaction } from '@/src/shared/storage/sqliteWriteQueue';
+import { measureOrderDraftRead } from '@/src/shared/monitoring/orderPerformance';
 import { emitOrderOutboxChange } from './orderOutboxEvents';
 import { ORDER_API_SCOPE, legacyOrderApiScope, localOrderApiScope, initializeOrderApiScope } from './orderOutboxScope';
 
@@ -417,12 +418,33 @@ export async function markOfflineDataSynced(userId: string) {
   return true;
 }
 
-export async function readOfflineDrafts(userId: string): Promise<StoredOfflineDraft[]> {
+export type DraftStamp = Pick<StoredOfflineDraft, 'id' | 'clientOrderId' | 'clientRevision' | 'updatedAt' | 'status'>;
+
+/** Lightweight inventory used to notice writes by a background JS runtime. */
+export async function readOfflineDraftStamps(userId: string): Promise<DraftStamp[]> {
   const db = await getCatalogDatabase();
   if (!db) throw new Error('SQLite draft storage is unavailable');
-  const rows = await db.getAllAsync<any>(
-    'SELECT * FROM offline_drafts WHERE user_id = ? ORDER BY updated_at DESC', userId
-  );
+  return db.getAllAsync<DraftStamp>(`SELECT id, client_order_id AS clientOrderId, client_revision AS clientRevision,
+    updated_at AS updatedAt, status FROM offline_drafts WHERE user_id=?`, userId);
+}
+
+export async function readOfflineDrafts(userId: string, ids?: readonly string[]): Promise<StoredOfflineDraft[]> {
+  return measureOrderDraftRead(userId, ids ? 'draft_read_changed' : 'draft_read_all', () => loadOfflineDrafts(userId, ids));
+}
+
+async function loadOfflineDrafts(userId: string, ids?: readonly string[]): Promise<StoredOfflineDraft[]> {
+  const db = await getCatalogDatabase();
+  if (!db) throw new Error('SQLite draft storage is unavailable');
+  let rows: any[] = [];
+  if (ids) {
+    const unique = [...new Set(ids)];
+    for (let offset = 0; offset < unique.length; offset += 400) {
+      const batch = unique.slice(offset, offset + 400);
+      rows.push(...await db.getAllAsync(`SELECT * FROM offline_drafts WHERE user_id=? AND client_order_id IN (${batch.map(() => '?').join(',')})`, userId, ...batch));
+    }
+  } else {
+    rows = await db.getAllAsync('SELECT * FROM offline_drafts WHERE user_id = ? ORDER BY updated_at DESC', userId);
+  }
   const legacyScope = await legacyOrderApiScope(db);
   return rows.flatMap((row) => {
     try {
@@ -528,7 +550,8 @@ export async function applyOfflineDraftChanges(
       await tx.runAsync('DELETE FROM offline_drafts WHERE user_id = ? AND client_order_id = ? AND client_revision = ?', ...args);
     }
   });
-  emitOrderOutboxChange({ userId });
+  const draftIds = [...new Set([...upserts, ...removals].map(draft => draft.clientOrderId))];
+  if (draftIds.length) emitOrderOutboxChange({ userId, draftIds });
   return true;
 }
 
@@ -539,15 +562,18 @@ export async function upsertOfflineDraft(userId: string, draft: StoredOfflineDra
 export async function deleteOfflineDraft(userId: string, id: string) {
   const db = await getCatalogDatabase();
   if (!db) return false;
+  let removedId: string | undefined;
   await withSQLiteWriteTransaction(db, async (tx) => {
-    const candidate = await tx.getFirstAsync<{ order_json: string }>('SELECT order_json FROM offline_drafts WHERE user_id=? AND id=?', userId, id);
+    const candidate = await tx.getFirstAsync<{ order_json: string; client_order_id: string }>('SELECT order_json,client_order_id FROM offline_drafts WHERE user_id=? AND id=?', userId, id);
     if (candidate && localOrderApiScope(JSON.parse(candidate.order_json), await legacyOrderApiScope(tx)) !== ORDER_API_SCOPE) throw new Error('Черновик принадлежит другому API.');
     const active = await tx.getFirstAsync(`SELECT 1 FROM offline_order_deliveries x JOIN offline_drafts d
       ON d.user_id=x.user_id AND d.client_order_id=x.client_order_id WHERE d.user_id=? AND d.id=?
       AND x.state IN ('PENDING','UPLOADING','ACCEPTED')`, userId, id);
     if (active) throw new Error('Отправляемый заказ нельзя удалить до подтверждения API.');
     await tx.runAsync('DELETE FROM offline_drafts WHERE user_id = ? AND id = ?', userId, id);
+    removedId = candidate?.client_order_id;
   });
+  if (removedId) emitOrderOutboxChange({ userId, draftIds: [removedId] });
   return true;
 }
 
@@ -585,5 +611,6 @@ export async function replaceOfflineDrafts(userId: string, drafts: StoredOffline
       }
     }
   });
+  emitOrderOutboxChange({ userId });
   return true;
 }

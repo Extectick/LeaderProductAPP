@@ -3,8 +3,8 @@ import { addMonitoringBreadcrumb, captureException } from '@/src/shared/monitori
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React from 'react';
 import { Animated, BackHandler, Keyboard, PanResponder, Platform, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
-import type { ScrollViewProps, TextInputProps } from 'react-native';
-import Reanimated, { Extrapolation, interpolate, useAnimatedStyle } from 'react-native-reanimated';
+import type { ScrollViewProps, TextInputProps, ViewProps } from 'react-native';
+import Reanimated, { Extrapolation, interpolate, useAnimatedProps, useAnimatedStyle } from 'react-native-reanimated';
 import {
   Button as PaperButton,
   Card,
@@ -369,16 +369,25 @@ function PickerBottomSheetNativeBackdrop({
     };
   }, [animatedIndex]);
 
+  const interaction = useAnimatedProps<ViewProps>(() => {
+    const interactive = closeOnBackdropPress && (animatedIndex?.value ?? -1) > -1;
+    return {
+      pointerEvents: interactive ? 'auto' : 'none',
+      accessibilityElementsHidden: !interactive,
+      importantForAccessibility: interactive ? 'auto' : 'no-hide-descendants',
+    };
+  }, [animatedIndex, closeOnBackdropPress]);
+
   return (
     <Reanimated.View
-      pointerEvents={closeOnBackdropPress ? 'auto' : 'none'}
+      animatedProps={interaction}
       style={[pickerBottomSheetDefaultStyles.pickerBottomSheetNativeBackdrop, animatedStyle]}
     >
       {closeOnBackdropPress ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Закрыть панель"
-          onPressIn={onClose}
+          onPress={onClose}
           style={StyleSheet.absoluteFill}
         />
       ) : null}
@@ -500,11 +509,11 @@ function NativePickerBottomSheet({
     (props: any) => (
       <PickerBottomSheetNativeBackdrop
         animatedIndex={props.animatedIndex}
-        closeOnBackdropPress={closeOnBackdropPress}
+        closeOnBackdropPress={visible && closeOnBackdropPress}
         onClose={requestClose}
       />
     ),
-    [closeOnBackdropPress, requestClose]
+    [visible, closeOnBackdropPress, requestClose]
   );
 
   React.useEffect(() => {

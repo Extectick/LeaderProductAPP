@@ -189,10 +189,12 @@ export function unitLabel(unit: any) {
   return unit?.symbol || unit?.name || 'шт';
 }
 
+const quantityFormatter = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 });
+
 function formatPackageMultiplier(value: unknown) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0 || numeric === 1) return '';
-  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 }).format(numeric);
+  return quantityFormatter.format(numeric);
 }
 
 function normalizeUnitText(value?: string | null) {
@@ -243,7 +245,7 @@ export function getPackageDisplayText(item: any) {
 }
 
 function formatStockNumber(value: unknown) {
-  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 }).format(Number(value) || 0);
+  return quantityFormatter.format(Number(value) || 0);
 }
 
 export function stockAvailableValue(stock: any) {

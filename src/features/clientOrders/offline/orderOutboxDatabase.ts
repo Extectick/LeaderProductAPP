@@ -43,6 +43,7 @@ async function draftStatus(tx: SQLiteDatabase, item: FrozenSubmission, status: s
 export async function claimOrderUploads(userId: string, limit = 10, now = Date.now()): Promise<Delivery[]> {
   const db = await database();
   const claimed: Delivery[] = [];
+  const draftIds: string[] = [];
   await withSQLiteWriteTransaction(db, async tx => {
     const legacyScope = await legacyOrderApiScope(tx);
     // Bound the bridge/JSON work as well as the HTTP batch. A large local queue
@@ -63,6 +64,7 @@ export async function claimOrderUploads(userId: string, limit = 10, now = Date.n
       catch {
         await tx.runAsync(`UPDATE offline_drafts SET status='NEEDS_EDIT',last_send_error=? WHERE user_id=? AND id=?`,
         'Не удалось прочитать локальный заказ. Копия сохранена для восстановления.', userId, row.id);
+        draftIds.push(row.client_order_id);
         continue;
       }
       if (localOrderApiScope(localOrder, legacyScope) !== ORDER_API_SCOPE) continue;
@@ -87,9 +89,10 @@ export async function claimOrderUploads(userId: string, limit = 10, now = Date.n
       userId, row.client_order_id, row.client_revision, ORDER_API_SCOPE));
       await draftStatus(tx, delivery, 'SENDING');
       claimed.push(delivery);
+      draftIds.push(delivery.clientOrderId);
     }
   });
-  if (claimed.length) emitOrderOutboxChange({ userId });
+  if (draftIds.length) emitOrderOutboxChange({ userId, draftIds });
   return claimed;
 }
 
@@ -103,7 +106,7 @@ export async function acceptOrderUpload(item: Delivery, receipt: SubmissionRecei
     JSON.stringify(receipt), new Date().toISOString(), item.userId, item.clientOrderId, item.clientRevision, item.leaseToken, ORDER_API_SCOPE);
     if (changed.changes) await draftStatus(tx, item, 'API_ACCEPTED');
   });
-  emitOrderOutboxChange({ userId: item.userId });
+  emitOrderOutboxChange({ userId: item.userId, draftIds: [item.clientOrderId] });
 }
 
 export async function failOrderUpload(item: Delivery, failure: { retryable: boolean; message: string; code?: string; details?: any }) {
@@ -117,7 +120,7 @@ export async function failOrderUpload(item: Delivery, failure: { retryable: bool
     if (changed.changes) await draftStatus(tx, item, failure.retryable ? 'READY_TO_SEND' : 'NEEDS_EDIT',
       failure.retryable ? null : failure.message, { backendErrorCode: failure.code, message: failure.message, errorDetails: failure.details });
   });
-  emitOrderOutboxChange({ userId: item.userId });
+  emitOrderOutboxChange({ userId: item.userId, draftIds: [item.clientOrderId] });
 }
 
 export async function readAcceptedUploads(userId: string): Promise<Delivery[]> {
@@ -141,7 +144,7 @@ export async function updateSubmissionStatus(item: Delivery, receipt: Submission
       receipt.errorMessage || 'Заказ требует проверки', { backendErrorCode: receipt.errorCode, message: receipt.errorMessage, errorDetails: receipt.errorDetails }, receipt.submittedVersion);
     else if (changed.changes && receipt.submittedVersion) await draftStatus(tx, item, 'API_ACCEPTED', null, undefined, receipt.submittedVersion);
   });
-  emitOrderOutboxChange({ userId: item.userId });
+  emitOrderOutboxChange({ userId: item.userId, draftIds: [item.clientOrderId] });
 }
 
 /** Mirror is committed BEFORE deleting the exact local operation. Never a naked receipt. */
@@ -184,8 +187,8 @@ export async function completeOrderUpload(item: Delivery, order: ClientOrder, le
       await tx.runAsync("DELETE FROM offline_drafts WHERE user_id=? AND client_order_id=? AND client_revision=? AND intent='SUBMIT'", item.userId, item.clientOrderId, item.clientRevision);
     } else {
       const newer = await tx.getFirstAsync<any>('SELECT client_revision,order_json FROM offline_drafts WHERE user_id=? AND client_order_id=? AND client_revision>?', item.userId, item.clientOrderId, item.clientRevision);
-      if (newer && localOrderApiScope(JSON.parse(newer.order_json), legacyScope) === ORDER_API_SCOPE) await tx.runAsync('UPDATE offline_drafts SET order_json=? WHERE user_id=? AND client_order_id=? AND client_revision=?',
-        JSON.stringify({ ...JSON.parse(newer.order_json), submittedVersion: submittedVersionOf(order) }), item.userId, item.clientOrderId, newer.client_revision);
+      if (newer && localOrderApiScope(JSON.parse(newer.order_json), legacyScope) === ORDER_API_SCOPE) await tx.runAsync('UPDATE offline_drafts SET order_json=?,updated_at=? WHERE user_id=? AND client_order_id=? AND client_revision=?',
+        JSON.stringify({ ...JSON.parse(newer.order_json), submittedVersion: submittedVersionOf(order) }), new Date().toISOString(), item.userId, item.clientOrderId, newer.client_revision);
     }
     await tx.runAsync(`UPDATE offline_order_deliveries SET state='DONE',payload_json='null',lease_token=NULL,lease_until=NULL,updated_at=? WHERE user_id=? AND client_order_id=? AND client_revision=? AND api_scope=?`,
     new Date().toISOString(), item.userId, item.clientOrderId, item.clientRevision, ORDER_API_SCOPE);
@@ -196,8 +199,8 @@ export async function completeOrderUpload(item: Delivery, order: ClientOrder, le
     await tx.runAsync(`DELETE FROM offline_order_mirrors WHERE user_id=? AND api_scope=? AND client_order_id NOT IN (
       SELECT client_order_id FROM offline_order_mirrors WHERE user_id=? AND api_scope=? ORDER BY updated_at DESC LIMIT 100)`, item.userId, ORDER_API_SCOPE, item.userId, ORDER_API_SCOPE);
   });
-  if (previousGuid) emitOrderOutboxChange({ userId: item.userId, order, previousGuid });
-  else if (completed) emitOrderOutboxChange({ userId: item.userId });
+  if (previousGuid) emitOrderOutboxChange({ userId: item.userId, draftIds: [item.clientOrderId], order, previousGuid });
+  else if (completed) emitOrderOutboxChange({ userId: item.userId, draftIds: [item.clientOrderId] });
 }
 export async function readOrderMirrors(userId: string): Promise<ClientOrder[]> {
   const db = await database();
@@ -255,7 +258,7 @@ export async function retireRedundantDeviceDraft(userId: string, expected: { cli
     await tx.runAsync('DELETE FROM offline_draft_lines WHERE user_id=? AND draft_id=?', userId, row.id);
     await tx.runAsync('DELETE FROM offline_drafts WHERE user_id=? AND id=? AND client_revision=?', userId, row.id, expected.clientRevision);
   });
-  if (result) emitOrderOutboxChange({ userId });
+  if (result) emitOrderOutboxChange({ userId, draftIds: [expected.clientOrderId] });
   return result;
 }
 export async function hasPendingOrderUploads(userId: string) {

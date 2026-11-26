@@ -371,6 +371,29 @@ it('upserts by client identity, preserves independent drafts and guards late ack
   expect(await db.getAllAsync('SELECT * FROM offline_draft_lines WHERE user_id = ? AND draft_id = ?', 'u1', draft.id)).toEqual([]);
 });
 
+it('reads scoped draft IDs and emits them only after the write succeeds', async () => {
+  const { subscribeOrderOutboxChange } = require('../src/features/clientOrders/offline/orderOutboxEvents');
+  const listener = jest.fn();
+  const stop = subscribeOrderOutboxChange(listener);
+  try {
+    const other = { ...draft, id: 'other', clientOrderId: 'another' };
+    await offline.applyOfflineDraftChanges('u1', [draft, other]);
+    expect(listener).toHaveBeenLastCalledWith({ userId: 'u1', draftIds: [draft.clientOrderId, other.clientOrderId] });
+    await offline.upsertOfflineDraft('u2', other);
+    expect(await offline.readOfflineDrafts('u1', [draft.clientOrderId, draft.clientOrderId])).toEqual([draft]);
+    expect(await offline.readOfflineDrafts('u2', [draft.clientOrderId])).toEqual([]);
+    expect(await offline.readOfflineDrafts('u1', [])).toEqual([]);
+    expect(await offline.readOfflineDraftStamps('u2')).toEqual([{
+      id: other.id, clientOrderId: other.clientOrderId, clientRevision: 1, status: other.status, updatedAt: other.updatedAt,
+    }]);
+    listener.mockClear();
+    await expect(offline.upsertOfflineDraft('u1', { ...draft, clientRevision: 0 })).rejects.toThrow();
+    expect(listener).not.toHaveBeenCalled();
+    await offline.deleteOfflineDraft('u1', other.id);
+    expect(listener).toHaveBeenLastCalledWith({ userId: 'u1', draftIds: [other.clientOrderId] });
+  } finally { stop(); }
+});
+
 it('rolls back a failed draft line write without losing the prior order or unrelated documents', async () => {
   await offline.upsertOfflineDraft('u1', draft);
   const other = { ...draft, id: 'other', clientOrderId: 'other-client' };

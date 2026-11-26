@@ -632,7 +632,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     pickerKind === 'product' ? 'product-picker' :
     pickerKind ? 'reference-picker' :
     filtersOpen ? 'filters' :
-    mode === 'editor' ? (section === 'items' ? 'editor-items' : 'editor-header') : 'orders'
+    mode === 'editor' ? (section === 'items' ? 'editor-items' : 'editor-header') : 'orders',
+    screenFocused ? Number(workspace.offlineUserId) : null,
   );
   const [referenceLoading, setReferenceLoading] = React.useState(false);
   const [referenceError, setReferenceError] = React.useState<string | null>(null);
