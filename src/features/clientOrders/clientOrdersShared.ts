@@ -857,9 +857,11 @@ export function isValidManualPriceValue(value: unknown) {
   return decimalRegex(2).test(trimmed) && normalizePriceForPayload(trimmed) > 0;
 }
 
+const moneyAmountFormatter = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 });
+
 export function formatMoney(value?: number | null, currency?: string | null) {
   if (value === null || value === undefined) return '—';
-  const formatted = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(value);
+  const formatted = moneyAmountFormatter.format(value);
   const label = (currency || DEFAULT_ORDER_CURRENCY).toUpperCase() === 'RUB' ? '₽' : (currency || DEFAULT_ORDER_CURRENCY);
   return `${formatted} ${label}`;
 }

@@ -1,4 +1,4 @@
-import { applyProductPickerQuantity, parsePickerQuantity, productPickerQuantity } from '../src/features/clientOrders/lib/productPickerQuantity';
+import { applyProductPickerQuantity, indexPickerBaseQuantities, parsePickerQuantity, pickerQuantityFromBase, productPickerQuantity } from '../src/features/clientOrders/lib/productPickerQuantity';
 import { buildNewItem } from '../src/features/clientOrders/lib/clientOrdersShared';
 import type { ClientOrderProduct } from '../utils/clientOrdersService';
 
@@ -13,6 +13,18 @@ describe('product picker quantities', () => {
     expect(items).toHaveLength(1);
     expect(items[0].quantity).toBe('30');
     expect(items[0].receiptPrice).toBe(1290);
+  });
+  it('indexes only active order lines and uses the same conversion as a picker edit', () => {
+    const pack = { guid: 'box', name: 'Коробка', multiplier: 5, isDefault: true, unit: { guid: 'box-unit', name: 'Коробка', symbol: 'кор' } };
+    const packaged = { ...product, baseUnit: null, packages: [pack] };
+    const items = [
+      line(0.25), line(2, { packageGuid: 'box', packages: [pack] }),
+      line(20, { isCancelled: true }), line(7, { productGuid: 'other' }),
+    ];
+    const totals = indexPickerBaseQuantities(items);
+    expect([...totals]).toEqual([[product.guid, 10.25], ['other', 7]]);
+    expect(pickerQuantityFromBase(totals.get(product.guid)!, packaged)).toEqual(productPickerQuantity(items, packaged));
+    expect(pickerQuantityFromBase(totals.get(product.guid)!, packaged)).toMatchObject({ quantity: 2.05, unit: 'кор' });
   });
   it('subtracts and removes at zero without affecting other products or cancelled lines', () => {
     const other = line(3, { productGuid: 'other' });

@@ -1,7 +1,8 @@
+import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { apiClient } from '@/utils/apiClient';
 import { getAppVersionInfo } from '@/utils/appVersion';
-import { queueAppErrorReport, queueNativeAppErrorReport, startAppErrorDelivery } from '@/src/shared/monitoring/appErrorDelivery';
+import { queueOrderTiming, queueAppErrorReport, queueNativeAppErrorReport, startAppErrorDelivery } from '@/src/shared/monitoring/appErrorDelivery';
 import { appErrorScreenFromPath, makeAppErrorPayload, type NativeAppErrorRecord } from '@/src/shared/monitoring/appErrorPayload';
 
 jest.mock('expo', () => ({ uuid: { v4: () => require('node:crypto').randomUUID() } }));
@@ -128,4 +129,17 @@ it('only imports authenticated native incidents from this environment and sends 
     nativeEvidence:{androidApi:28, frames:['com.leader.Main.run:32'], exitReason:4},
   });
   expect(JSON.stringify(post.mock.calls[0][1]?.body)).not.toMatch(/secret|ownerId|environment/);
+});
+
+it('sends only numeric timing evidence under the currently authenticated owner', async () => {
+  const platform = jest.replaceProperty(Platform, 'OS', 'android');
+  try {
+  start(121);
+  await queueOrderTiming(122, 'editor-items', { metric:'draft_read_all', durationMs:2000 });
+  await queueOrderTiming(121, 'editor-items', { metric:'draft_read_all', durationMs:2000 });
+  await jest.advanceTimersByTimeAsync(1);
+  expect(post).toHaveBeenCalledTimes(1);
+  expect(post.mock.calls[0][1]).toMatchObject({expectedUserId:121,body:{source:'performance',kind:'slow_operation',platform:'android',
+    screen:'orders',stage:'editor-items',timing:{metric:'draft_read_all',durationMs:2000},components:[],jsFrames:[]}});
+  } finally { platform.restore(); }
 });

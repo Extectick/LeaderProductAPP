@@ -1,5 +1,5 @@
 import type { ClientOrderProduct } from '../utils/clientOrdersService';
-import { mergeRefreshedProductPage, fillUnknownSelectedProduct, productFreshnessLabel, productMetricFreshness, productMetricPending } from '../src/features/clientOrders/lib/productFreshness';
+import { mergeHydratedPickerProducts, pausePendingPickerProducts, mergeRefreshedProductPage, fillUnknownSelectedProduct, productFreshnessLabel, productMetricFreshness, productMetricPending } from '../src/features/clientOrders/lib/productFreshness';
 import { buildNewItem, normalizeDraftOrder, validateDraft } from '../src/features/clientOrders/lib/clientOrdersShared';
 import { applyProductPickerQuantity } from '../src/features/clientOrders/lib/productPickerQuantity';
 
@@ -77,4 +77,26 @@ test('exhausted refresh stops skeletons but keeps unknown values and a recovery 
   expect(productMetricFreshness(paused, 'price', 'Цена', '0 ₽')).toEqual({title:'Цена: обновление не завершено, повторите поиск', value:'—'});
   expect(productFreshnessLabel(paused)).toContain('Повторите');
   expect(paused.freshness.commercialPending).toBe(true);
+});
+
+test('loading another page in a 1,200-product picker updates only pending rows', () => {
+  const settled = Array.from({length: 1200}, (_, i) => ({
+    ...product, guid: String(i), freshness: {...product.freshness!, commercialPending: false},
+  }));
+  expect(pausePendingPickerProducts(settled)).toBe(settled);
+  const mixed = settled.map((p, i) => i === 1100 ? {...p, freshness: {...p.freshness, receiptPricePending: true}} : p);
+  const paused = pausePendingPickerProducts(mixed);
+  expect(paused.filter((p, i) => p !== mixed[i])).toHaveLength(1);
+  expect(paused[1100].freshness?.refreshPaused).toBe(true);
+  expect(pausePendingPickerProducts(paused)).toBe(paused);
+});
+
+test('offline price hydration preserves identities outside its 24-product batch', () => {
+  const rows = Array.from({length: 1200}, (_, i) => ({...product, guid: String(i)}));
+  const fresh = rows.slice(-24).map(p => ({...p, basePrice: 45}));
+  const changed = mergeHydratedPickerProducts(rows, fresh);
+  expect(changed.filter((p, i) => p !== rows[i])).toHaveLength(24);
+  expect(changed.slice(-24).every(p => p.basePrice === 45)).toBe(true);
+  expect(mergeHydratedPickerProducts(rows, [{...product, guid: 'out-of-page'}])).toBe(rows);
+  expect(mergeHydratedPickerProducts(rows, [])).toBe(rows);
 });

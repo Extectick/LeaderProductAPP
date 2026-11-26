@@ -62,7 +62,7 @@ import { acceptedSubmissionConfirmsDeviceDraft, sameDeviceDraftInput } from './l
 import { matchesDeliveryDateRange, matchesOrderState, mergeOrderState } from './lib/orderStateReconciliation';
 import { kickOrderOutbox, retryOrderOutboxNow, isAsyncOrderOutboxEnabled } from './offline/orderOutbox';
 import { readOrderMirrors, refreshOrderMirrors, retireRedundantDeviceDraft } from './offline/orderOutboxDatabase';
-import { subscribeOrderOutboxChange } from './offline/orderOutboxEvents';
+import { orderOutboxChangeVersion, subscribeOrderOutboxChange } from './offline/orderOutboxEvents';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { getServerStatus } from '@/src/shared/network/serverStatus';
 import { probeClientOrdersConnection } from '@/utils/clientOrdersService';
@@ -120,6 +120,7 @@ import {
   readOfflineDatasetMeta,
   readOfflineDataSyncTime,
   readOfflineDrafts,
+  readOfflineDraftStamps,
   applyOfflineDraftChanges,
   canAdoptLegacyOfflineDrafts,
   type OfflineDraftStatus,
@@ -531,12 +532,12 @@ function sanitizeDeviceDraftEntries(value: unknown): DeviceDraftEntry[] {
 
 const recoveryWrites = new Map<string, Promise<void>>();
 
-async function readStoredDeviceDrafts(storageKey: string, userId: string) {
+async function readStoredDeviceDrafts(storageKey: string, userId: string, ids?: readonly string[]) {
   const pendingRecovery = recoveryWrites.get(storageKey);
   if (pendingRecovery) await pendingRecovery;
   if (Platform.OS !== 'web') {
-    const stored = await readOfflineDrafts(userId);
-    if (stored.length) {
+    const stored = ids ? await readOfflineDrafts(userId, ids) : await readOfflineDrafts(userId);
+    if (ids || stored.length) {
       return sanitizeDeviceDraftEntries(stored.map((entry) => ({
         ...entry,
         lastSyncError: entry.lastSendError,
@@ -1478,6 +1479,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   ordersPollingEnabledRef.current = ordersPollingEnabled;
   const ordersRef = React.useRef<ClientOrder[]>([]);
   const deviceDraftEntriesRef = React.useRef<DeviceDraftEntry[]>([]);
+  const observedDraftChange = React.useRef({ userId: offlineUserId, version: 0 });
   const documentStartedRef = React.useRef(false);
   const dirtyRef = React.useRef(false);
   const draftEditVersionRef = React.useRef(0);
@@ -1843,10 +1845,6 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [sortedOrders]);
 
   React.useEffect(() => {
-    deviceDraftEntriesRef.current = deviceDraftEntries;
-  }, [deviceDraftEntries]);
-
-  React.useEffect(() => {
     documentStartedRef.current = documentStarted;
   }, [documentStarted]);
 
@@ -1920,8 +1918,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   React.useEffect(() => {
     let cancelled = false;
     setDeviceDraftsHydrated(false);
+    const version = orderOutboxChangeVersion(offlineUserId);
     void readStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId).then((entries) => {
       if (cancelled) return;
+      observedDraftChange.current = { userId: offlineUserId, version };
       deviceDraftEntriesRef.current = entries;
       setDeviceDraftEntries(entries);
       setDeviceDraftsHydrated(true);
@@ -2170,13 +2170,14 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, []);
 
   const enrichItemMetadata = React.useCallback((lineKey: string) => {
-    const item = draft.items.find((next) => next.key === lineKey);
+    const currentDraft = defaultsViewRef.current.draft;
+    const item = currentDraft.items.find((next) => next.key === lineKey);
     if (!item) return Promise.resolve();
     return enrichItemsMetadata(
-      { ...draft, items: [item] },
+      { ...currentDraft, items: [item] },
       { receiptPriceAt: readOnly ? selectedOrder?.date1c ?? undefined : undefined }
     );
-  }, [draft, enrichItemsMetadata, readOnly, selectedOrder?.date1c]);
+  }, [enrichItemsMetadata, readOnly, selectedOrder?.date1c]);
 
   const refreshDocumentProfit = React.useCallback(() => {
     if (loadingReceiptPrices) return Promise.resolve();
@@ -2394,13 +2395,18 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }
     if (activeOfflineUserRef.current !== offlineUserId) return;
     // Other independent documents can be changed while SQLite is writing.
-    const changed = entries.filter(entry => !previous.includes(entry));
-    const removed = previous.filter(entry => !entries.some(item => item.clientOrderId === entry.clientOrderId));
-    entries = uniqueDeviceDraftEntries([
-      ...changed,
-      ...deviceDraftEntriesRef.current.filter(entry => !changed.some(item => item.clientOrderId === entry.clientOrderId)
-        && !removed.some(item => isSameOrderOperation(entry, item))),
-    ]);
+    const previousById = new Map(previous.map(entry => [entry.clientOrderId, entry]));
+    const nextIds = new Set(entries.map(entry => entry.clientOrderId));
+    const changed = entries.filter(entry => previousById.get(entry.clientOrderId) !== entry);
+    const changedById = new Map(changed.map(entry => [entry.clientOrderId, entry]));
+    const retained = deviceDraftEntriesRef.current.filter(entry => {
+      const written = changedById.get(entry.clientOrderId);
+      if (written) return entry.clientRevision > written.clientRevision
+        || (entry.clientRevision === written.clientRevision && entry.updatedAt > written.updatedAt);
+      const old = previousById.get(entry.clientOrderId);
+      return nextIds.has(entry.clientOrderId) || !old || !isSameOrderOperation(entry, old);
+    });
+    entries = uniqueDeviceDraftEntries([...changed, ...retained]);
     deviceDraftEntriesRef.current = entries;
     setDeviceDraftEntries(entries);
     setSelectedOrder(current => {
@@ -2429,6 +2435,54 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     await replaceDeviceDraftEntries(next);
   }, [replaceDeviceDraftEntries]);
 
+  // Keep unrelated objects (and an in-flight editor save) intact when a SQLite read completes.
+  const refreshPersistedDrafts = React.useCallback(async (ids: readonly string[] | undefined, isCurrent: () => boolean) => {
+    const before = deviceDraftEntriesRef.current;
+    const rows = await readStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId, ids);
+    if (!isCurrent() || activeOfflineUserRef.current !== offlineUserId) return;
+    const current = deviceDraftEntriesRef.current;
+    const atRead = new Map(before.map(entry => [entry.clientOrderId, entry]));
+    const persisted = new Map(rows.map(entry => [entry.clientOrderId, entry]));
+    const changedIds = new Set(ids ?? [...atRead.keys(), ...persisted.keys()]);
+    const merged = new Map(current.map(entry => [entry.clientOrderId, entry]));
+    let changed = false;
+    for (const id of changedIds) {
+      const previous = merged.get(id);
+      if (previous !== atRead.get(id)) continue;
+      const row = persisted.get(id);
+      if (!row) {
+        if (merged.delete(id)) changed = true;
+      } else if (!previous || (row.clientRevision >= previous.clientRevision && JSON.stringify(previous) !== JSON.stringify(row))) {
+        merged.set(id, row);
+        changed = true;
+      }
+    }
+    if (changed) {
+      const entries = [...merged.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      deviceDraftEntriesRef.current = entries;
+      setDeviceDraftEntries(entries);
+    }
+  }, [deviceDraftsStorageKey, offlineUserId]);
+
+  // Other Android JS runtimes can commit to the same SQLite file without sending
+  // this runtime an event. Poll only scalar stamps and load the affected rows.
+  const refreshExternalDrafts = React.useCallback(async (isCurrent: () => boolean) => {
+    const before = deviceDraftEntriesRef.current;
+    const stamps = await readOfflineDraftStamps(offlineUserId);
+    if (!isCurrent() || before !== deviceDraftEntriesRef.current) return;
+    const previous = new Map(before.map(entry => [entry.clientOrderId, entry]));
+    const ids: string[] = [];
+    for (const stamp of stamps) {
+      const entry = previous.get(stamp.clientOrderId);
+      previous.delete(stamp.clientOrderId);
+      const status = !isAsyncOrderOutboxEnabled() && stamp.status === 'SENDING' ? 'SEND_ERROR' : stamp.status;
+      if (!entry || entry.id !== stamp.id || entry.clientRevision !== stamp.clientRevision
+        || entry.updatedAt !== stamp.updatedAt || entry.status !== status) ids.push(stamp.clientOrderId);
+    }
+    for (const id of previous.keys()) ids.push(id);
+    if (ids.length) await refreshPersistedDrafts(ids, isCurrent);
+  }, [offlineUserId, refreshPersistedDrafts]);
+
   const stateReconcileRunningRef = React.useRef(false);
   const reconcileCanonicalStates = React.useCallback(async () => {
     if (stateReconcileRunningRef.current || !getServerStatus().isReachable
@@ -2437,6 +2491,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     stateReconcileRunningRef.current = true;
     const isCurrent = () => activeOfflineUserRef.current === offlineUserId;
     try {
+      if (Platform.OS !== 'web') await refreshExternalDrafts(isCurrent);
+      if (!isCurrent()) return false;
       const mirrors = Platform.OS === 'web' ? [] : await readOrderMirrors(offlineUserId);
       if (!isCurrent()) return false;
       const candidates = [...deviceDraftEntriesRef.current.map(entry => entry.order), ...mirrors,
@@ -2471,20 +2527,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
             readOnly: !!state.hasRealization, status1c: null, currentState1c: null, documentStatus1c: null });
         }
       }
-      if (Platform.OS !== 'web' && isCurrent()) {
-        const previousEntries = deviceDraftEntriesRef.current;
-        const entries = await readStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId);
-        // Unchanged hydration must not retrigger the draft-change reconciliation effect.
-        // A concurrent local save owns its newer in-memory entries.
-        if (isCurrent() && deviceDraftEntriesRef.current === previousEntries
-          && JSON.stringify(entries) !== JSON.stringify(previousEntries)) {
-          deviceDraftEntriesRef.current = entries; setDeviceDraftEntries(entries);
-        }
-      }
       return true;
     } catch { return false; } // Keep all data on timeout/old API; no resubmission as a fallback.
     finally { stateReconcileRunningRef.current = false; }
-  }, [offlineUserId, deviceDraftsStorageKey, applySavedOrderToList]);
+  }, [offlineUserId, refreshExternalDrafts, applySavedOrderToList]);
 
   /** Read-only: retire only this exact, accepted operation; never resend it or
    * compare against quantities which an operator has since adjusted in 1C. */
@@ -2684,29 +2730,55 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     if (Platform.OS === 'web' || !deviceDraftsHydrated) return;
     let cancelled = false;
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-    const refresh = async (event?: { order?: ClientOrder; previousGuid?: string | null }) => {
-      const entries = await readStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId);
-      if (cancelled || activeOfflineUserRef.current !== offlineUserId) return;
-      if (JSON.stringify(entries) !== JSON.stringify(deviceDraftEntriesRef.current)) {
-        deviceDraftEntriesRef.current = entries;
-        setDeviceDraftEntries(entries);
-      }
-      if (event?.order) {
-        applySavedOrderToList(event.order);
-        if (!dirtyRef.current && selectedGuidRef.current && [event.previousGuid, event.order.guid].includes(selectedGuidRef.current)) {
-          applyOrderDetail(event.order);
-          setError(null);
+    let pendingIds = new Set<string>();
+    let fullRefresh = false;
+    let pendingAcks: { order: ClientOrder; previousGuid?: string | null }[] = [];
+    let running = false;
+    const isCurrent = () => !cancelled && activeOfflineUserRef.current === offlineUserId;
+    const flush = async () => {
+      if (running || !isCurrent()) return;
+      running = true;
+      try {
+        while (isCurrent() && (fullRefresh || pendingIds.size || pendingAcks.length)) {
+          const version = orderOutboxChangeVersion(offlineUserId);
+          const ids = fullRefresh ? undefined : [...pendingIds];
+          const acks = pendingAcks;
+          pendingIds = new Set(); fullRefresh = false; pendingAcks = [];
+          const before = deviceDraftEntriesRef.current;
+          await refreshPersistedDrafts(ids, isCurrent);
+          if (!isCurrent()) return;
+          observedDraftChange.current = { userId: offlineUserId, version };
+          for (const event of acks) {
+            applySavedOrderToList(event.order);
+            if (!dirtyRef.current && selectedGuidRef.current && [event.previousGuid, event.order.guid].includes(selectedGuidRef.current)) {
+              applyOrderDetail(event.order);
+              setError(null);
+            }
+          }
+          if (!acks.length && before !== deviceDraftEntriesRef.current) {
+            const selected = deviceDraftEntriesRef.current.find(entry => entry.order.guid === selectedGuidRef.current || entry.serverGuid === selectedGuidRef.current);
+            if (selected && !before.includes(selected)) setSelectedOrder(current => current ? { ...current, ...selected.order } : current);
+          }
         }
-      } else {
-        const selected = entries.find(entry => entry.order.guid === selectedGuidRef.current || entry.serverGuid === selectedGuidRef.current);
-        if (selected) setSelectedOrder(current => current ? { ...current, ...selected.order } : current);
-      }
+      } finally { running = false; }
     };
     const unsubscribe = subscribeOrderOutboxChange(event => {
       if (event.userId !== offlineUserId) return;
-      if (event.order) void refresh(event).catch(() => {});
-      else if (!refreshTimer) refreshTimer = setTimeout(() => { refreshTimer = null; void refresh().catch(() => {}); }, 40);
+      if (event.draftIds) { for (const id of event.draftIds) pendingIds.add(id); }
+      else fullRefresh = true;
+      if (event.order) {
+        pendingAcks.push({ order: event.order, previousGuid: event.previousGuid });
+        void flush().catch(() => {});
+      } else if (!refreshTimer) {
+        refreshTimer = setTimeout(() => { refreshTimer = null; void flush().catch(() => {}); }, 40);
+      }
     });
+    // Cover commits that raced the initial SQLite snapshot or a listener replacement.
+    if (observedDraftChange.current.userId === offlineUserId
+      && observedDraftChange.current.version !== orderOutboxChangeVersion(offlineUserId)) {
+      fullRefresh = true;
+      void flush().catch(() => {});
+    }
     // Rehydrate the canonical mirror even if no order list screen was open at ACK.
     void readOrderMirrors(offlineUserId).then(mirrors => {
       if (cancelled) return;
@@ -2717,7 +2789,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }).catch(() => {});
     kickOrderOutbox();
     return () => { cancelled = true; unsubscribe(); if (refreshTimer) clearTimeout(refreshTimer); };
-  }, [offlineUserId, deviceDraftsHydrated, deviceDraftsStorageKey, ordersCacheHydrated, applySavedOrderToList, applyOrderDetail]);
+  }, [offlineUserId, deviceDraftsHydrated, refreshPersistedDrafts, ordersCacheHydrated, applySavedOrderToList, applyOrderDetail]);
 
   const syncDeviceDrafts = React.useCallback(async (syncOptions: {
     force?: boolean;
@@ -2999,11 +3071,14 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }) : null;
     return () => { ++draftReconcileScopeRef.current; clearInterval(timer); listener?.remove(); };
   }, [deviceDraftsHydrated, serverStatus.isReachable, offlineUserId, options.isScreenActive]);
+  const pendingSubmissionStates = React.useMemo(() => JSON.stringify(deviceDraftEntries
+    .filter(entry => entry.intent === 'SUBMIT')
+    .map(entry => [entry.clientOrderId, entry.clientRevision, entry.status])), [deviceDraftEntries]);
   React.useEffect(() => {
     if (deviceDraftsHydrated && serverStatus.isReachable && options.isScreenActive !== false) {
       void draftReconcileRunRef.current(draftReconcileScopeRef.current);
     }
-  }, [deviceDraftEntries, deviceDraftsHydrated, serverStatus.isReachable, options.isScreenActive]);
+  }, [pendingSubmissionStates, deviceDraftsHydrated, serverStatus.isReachable, options.isScreenActive]);
 
   const removeItem = React.useCallback((lineKey: string) => {
     patchDraft((prev) => ({ ...prev, items: prev.items.filter((item) => item.key !== lineKey) }));

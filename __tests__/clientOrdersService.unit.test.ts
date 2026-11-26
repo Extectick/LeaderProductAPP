@@ -105,6 +105,14 @@ describe("clientOrdersService", () => {
     expect(readActiveOfflineEntityItems).not.toHaveBeenCalled();
   });
 
+  it.each([401, 403])('propagates status %i from a product page, even if SQLite has catalog data', async status => {
+    setServerReachable();
+    apiClientMock.mockResolvedValueOnce({ok: false, status} as any);
+    await expect(searchClientOrderProducts({organizationGuid: 'org', counterpartyGuid: 'client', offset: 50},
+      {signal: new AbortController().signal})).rejects.toMatchObject({status});
+    expect(searchCatalogProducts).not.toHaveBeenCalled();
+  });
+
   it('defaults denied by the current server never use an offline agreement snapshot', async () => {
     apiClientMock.mockResolvedValueOnce({ok: false, status: 403} as any);
     await expect(getClientOrderDefaults({organizationGuid: 'org', counterpartyGuid: 'denied'}, {signal: new AbortController().signal})).rejects.toMatchObject({status: 403});
@@ -575,6 +583,6 @@ it('refreshes pending reference pages invisibly and clears them after access rev
   const result = await searchClientOrderCounterparties({search:'old'}, {signal:signal.signal,onRefresh});
   expect(result.meta.pending).toBe(true); expect(result.items[0].guid).toBe('old');
   await jest.advanceTimersByTimeAsync(2000);
-  expect(onRefresh).toHaveBeenCalledWith({items:[],meta:{accessDenied:true}});
+  expect(onRefresh).toHaveBeenCalledWith({items:[],meta:{accessDenied:true,accessStatus:403}});
   signal.abort(); jest.useRealTimers();
 });

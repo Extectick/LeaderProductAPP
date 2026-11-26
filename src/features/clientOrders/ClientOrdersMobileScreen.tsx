@@ -3,7 +3,8 @@ import { withPendingLineInput, type PendingLineInputReader } from './lib/pending
 import { Skeleton } from 'moti/skeleton';
 import { ReadSnapshotLabel } from './components/ReadSnapshotLabel';
 import { orderProfitFreshnessHint, summaryFreshnessHint } from './lib/orderReadFreshness';
-import { fillUnknownSelectedProduct, mergeRefreshedProductPage } from './lib/productFreshness';
+import { productPickerReadError, type ProductPickerReadError } from './lib/productPickerReadError';
+import { fillUnknownSelectedProduct, mergeHydratedPickerProducts, mergeRefreshedProductPage, pausePendingPickerProducts } from './lib/productFreshness';
 ﻿import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 import { InvoiceRequestField } from './screen/mobile/InvoiceRequestField';
@@ -96,7 +97,7 @@ import {
 import { useClientOrdersWorkspace } from './hooks/useClientOrdersWorkspace';
 import { useCustomerPurchaseHistory } from './hooks/useCustomerPurchaseHistory';
 import { ProductPickerSnapshot } from './lib/productPickerSnapshot';
-import { productPickerQuantity, type ProductQuantityChange } from './lib/productPickerQuantity';
+import { indexPickerBaseQuantities, type ProductQuantityChange } from './lib/productPickerQuantity';
 import { ProductPickerRow, ProductPickerMetrics } from './screen/mobile/ProductPickerRow';
 import { getClientOrderInvoices, getClientOrderProductsBatch, getClientOrderReferenceDetails, requestClientOrderInvoice } from '@/utils/clientOrdersService';
 import type { ClientOrder, ClientOrderCounterpartyOption, ClientOrderInvoice, ClientOrderOrganization, ClientOrderPriceTypeOption, ClientOrderProduct, ClientOrderReferenceDetails, ClientOrderReferenceKind, ClientOrdersTodaySummary, ClientOrderWarehouseOption } from '@/utils/clientOrdersService';
@@ -567,9 +568,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const [pickerItems, setPickerItems] = React.useState<any[]>([]);
   const [pickerOffset, setPickerOffset] = React.useState(0);
   const [pickerHasMore, setPickerHasMore] = React.useState(false);
-  const [pickerScrollOffset, setPickerScrollOffset] = React.useState(0);
   const [pickerLoading, setPickerLoading] = React.useState(false);
   const [pickerLoadError, setPickerLoadError] = React.useState(false);
+  const [productReadError, setProductReadError] = React.useState<ProductPickerReadError | null>(null);
   const [pickerReferencePending, setPickerReferencePending] = React.useState(false);
   const [pickerAppendLoading, setPickerAppendLoading] = React.useState(false);
   const [pickerHasLoadedOnce, setPickerHasLoadedOnce] = React.useState(false);
@@ -632,7 +633,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     pickerKind === 'product' ? 'product-picker' :
     pickerKind ? 'reference-picker' :
     filtersOpen ? 'filters' :
-    mode === 'editor' ? (section === 'items' ? 'editor-items' : 'editor-header') : 'orders'
+    mode === 'editor' ? (section === 'items' ? 'editor-items' : 'editor-header') : 'orders',
+    screenFocused ? Number(workspace.offlineUserId) : null,
   );
   const [referenceLoading, setReferenceLoading] = React.useState(false);
   const [referenceError, setReferenceError] = React.useState<string | null>(null);
@@ -843,7 +845,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const visiblePickerItems = React.useMemo(() => {
     if (pickerKind === 'product') {
       if (!productPickerSnapshotRef.current.matches(productPickerContextSignature)) return [];
-      return pickerItems.map(item => ({ ...item, lastPurchasedDate: purchaseHistory.dates.get(String(item.guid).toLowerCase()) || null }));
+      return pickerItems;
     }
     if (pickerKind === 'warehouse') {
       return buildWarehousePickerRows(pickerItems as ClientOrderWarehouseOption[]);
@@ -852,7 +854,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     const selectedItem = pickerItems.find((item) => item?.guid === selectedPickerGuid);
     if (!selectedItem) return pickerItems;
     return [selectedItem, ...pickerItems.filter((item) => item?.guid !== selectedPickerGuid)];
-  }, [pickerItems, pickerKind, selectedPickerGuid, purchaseHistory.dates, productPickerContextSignature]);
+  }, [pickerItems, pickerKind, selectedPickerGuid, productPickerContextSignature]);
   React.useEffect(() => {
     setSelectedProducts((current) => removeOrderItemsFromProductSelection(current, workspace.draft.items));
   }, [workspace.draft.items]);
@@ -1202,7 +1204,6 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     setPickerItems([]);
     setPickerOffset(0);
     setPickerHasMore(false);
-    setPickerScrollOffset(0);
     pickerScrollYRef.current = 0;
     pickerScrollMetricsRef.current = { y: 0, contentHeight: 0, viewportHeight: 0 };
     pickerAppendLoadingRef.current = false;
@@ -1233,7 +1234,6 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     setPickerSearch(value);
     setPickerOffset(0);
     setPickerHasMore(false);
-    setPickerScrollOffset(0);
     pickerScrollYRef.current = 0;
     pickerScrollMetricsRef.current = { y: 0, contentHeight: 0, viewportHeight: pickerScrollMetricsRef.current.viewportHeight };
     pickerAppendLoadingRef.current = false;
@@ -1254,12 +1254,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     const counterpartyFilter = (kind === 'counterparty' || kind === 'filterCounterparty') && counterpartyManagerOnly ? 'manager' : 'all';
     const signature = `${kind}|${contextSignature}|${search}|${offset}|${append ? 'append' : 'reset'}|${productFilter}|${counterpartyFilter}`;
     if ((append && pickerAppendLoadingRef.current) || pickerLoadSignatureRef.current === signature) return;
-    if (append) {
-      pickerAppendLoadingRef.current = true;
-      setPickerAppendLoading(true);
-    } else {
-      setPickerAppendLoading(false);
-    }
+    pickerAppendLoadingRef.current = append;
+    setPickerAppendLoading(append);
     pickerLoadSignatureRef.current = signature;
     const requestId = ++pickerRequestIdRef.current;
     pickerProductRequestRef.current?.abort();
@@ -1283,8 +1279,21 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     let refreshedPageGuids = new Set<string>();
     if (!append) productPickerSnapshotRef.current.invalidate();
     if (!append) setPickerItems([]);
-    else setPickerItems(current => current.map(item => item.freshness ? {...item,
-      freshness: {...item.freshness, refreshPaused: item.freshness.refreshPaused || item.freshness.commercialPending || item.freshness.receiptPricePending}} : item));
+    else if (kind === 'product') setPickerItems(pausePendingPickerProducts);
+    setProductReadError(null);
+    const recordProductFailure = (status: unknown) => {
+      if (controller.signal.aborted || pickerRequestIdRef.current !== requestId || pickerKindRef.current !== 'product') return;
+      const failure = productPickerReadError(status, offset);
+      setProductReadError(failure);
+      setPickerHasMore(false);
+      pickerLoadSignatureRef.current = '';
+      if (failure.kind === 'retry') return;
+      controller.abort();
+      productPickerSnapshotRef.current.invalidate();
+      setPickerItems([]);
+      setSelectedProducts(new Map());
+      setPickerOffset(0);
+    };
     setPickerLoadError(false);
     setPickerLoading(true);
     try {
@@ -1316,7 +1325,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         signal: controller?.signal,
         onRefresh: (fresh) => {
           if (controller?.signal.aborted || pickerRequestIdRef.current !== requestId || pickerKindRef.current !== kind) return;
-          if (fresh.meta.accessDenied) { setPickerItems([]); setPickerHasMore(false); return; }
+          if (fresh.meta.accessDenied) {
+            recordProductFailure(fresh.meta.accessStatus ?? 403);
+            return;
+          }
           const freshByGuid = new Map(fresh.items.map(item => [item.guid, item]));
           const previousPage = refreshedPageGuids;
           refreshedPageGuids = new Set(fresh.items.map(item => item.guid));
@@ -1338,7 +1350,6 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         return;
       }
       if (!append) {
-        setPickerScrollOffset(0);
         requestAnimationFrame(() => scrollPickerListToTop(false));
       }
       const nextItems = kind === 'deliveryAddress' ? sortDeliveryAddressOptions(items) : items;
@@ -1368,10 +1379,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
             if (pickerRequestIdRef.current !== requestId) return;
             if (pickerKindRef.current !== 'product') return;
             if (!productPickerSnapshotRef.current.matches(hydrationContextSignature)) return;
-            const freshByGuid = new Map(freshItems.map((item) => [item.guid, item]));
-            setPickerItems((current) => current.map((item: any) => ({ ...item, ...freshByGuid.get(item?.guid) })));
-          }).catch(() => {
-            // Локальный каталог уже показан. Ошибка актуализации не должна очищать список.
+            setPickerItems(current => mergeHydratedPickerProducts(current, freshItems));
+          }).catch(error => {
+            const status = error?.status;
+            if (status === 401 || status === 403) recordProductFailure(status);
           });
         }, 350);
       }
@@ -1380,11 +1391,15 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       setPickerOffset(nextOffset);
       setPickerHasMore(kind === 'product' && typeof result?.meta?.hasMore === 'boolean'
         ? result.meta.hasMore : hasMorePage(items.length, pageSize, offset, result?.meta?.total));
-    } catch {
+    } catch (error) {
       if (pickerRequestIdRef.current === requestId && pickerKindRef.current === kind) {
-        setPickerLoadError(true);
-        setPickerHasMore(false);
-        pickerLoadSignatureRef.current = '';
+        if (kind === 'product') {
+          recordProductFailure((error as {status?: number} | null)?.status);
+        } else {
+          setPickerLoadError(true);
+          setPickerHasMore(false);
+          pickerLoadSignatureRef.current = '';
+        }
       }
     } finally {
       if (append && pickerRequestIdRef.current === requestId && pickerKindRef.current === kind) {
@@ -1591,7 +1606,6 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     const viewportHeight = Math.max(0, layoutMeasurement.height || 0);
     pickerScrollYRef.current = y;
     pickerScrollMetricsRef.current = { y, contentHeight, viewportHeight };
-    setPickerScrollOffset(y <= 1 ? 0 : 2);
     maybeLoadMorePickerItems({ y, contentHeight, viewportHeight });
   }, [maybeLoadMorePickerItems]);
 
@@ -3215,12 +3229,21 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           loading={pickerLoading}
           appendLoading={pickerAppendLoading}
           hasLoadedOnce={pickerHasLoadedOnce}
-          loadError={pickerLoadError}
-          onRetryProducts={() => {pickerLoadSignatureRef.current = ''; void loadPickerPage('product', pickerSearch, 0, false);}}
+          loadError={productReadError}
+          onRetryProducts={() => {
+            const offset = productReadError?.retryOffset ?? 0;
+            pickerLoadSignatureRef.current = '';
+            void loadPickerPage('product', pickerSearch, offset, offset > 0);
+          }}
+          onReviewOrderContext={() => {
+            closePicker();
+            handleEditorSectionChange('header');
+          }}
           inStockOnly={inStockOnly}
           onToggleInStockOnly={() => setInStockOnly((prev) => !prev)}
           purchasedOnly={purchasedOnly}
           onTogglePurchasedOnly={() => setPurchasedOnly(prev => !prev)}
+          purchaseDates={purchaseHistory.dates}
           purchaseHistoryReady={purchaseHistory.ready}
           historyNotice={purchaseHistory.loading && !purchaseHistory.ready ? 'Загружается история покупок…'
             : !purchaseHistory.ready ? 'История покупок ещё не загружена'
@@ -4532,11 +4555,13 @@ function ProductPickerFullscreenPanel({
   hasLoadedOnce,
   loadError,
   onRetryProducts,
+  onReviewOrderContext,
   inStockOnly,
   onToggleInStockOnly,
   purchasedOnly,
   onTogglePurchasedOnly,
   purchaseHistoryReady,
+  purchaseDates,
   historyNotice,
   onRetryHistory,
   items,
@@ -4574,13 +4599,15 @@ function ProductPickerFullscreenPanel({
   loading: boolean;
   appendLoading: boolean;
   hasLoadedOnce: boolean;
-  loadError: boolean;
+  loadError: ProductPickerReadError | null;
   onRetryProducts: () => void;
+  onReviewOrderContext: () => void;
   inStockOnly: boolean;
   onToggleInStockOnly: () => void;
   purchasedOnly: boolean;
   onTogglePurchasedOnly: () => void;
   purchaseHistoryReady: boolean;
+  purchaseDates: ReadonlyMap<string, string>;
   historyNotice: string | null;
   onRetryHistory?: () => void;
   items: ClientOrderProduct[];
@@ -4614,30 +4641,21 @@ function ProductPickerFullscreenPanel({
   const renderThumbnail = React.useCallback((item: ClientOrderProduct) => (
     <ProductThumb item={item} style={styles.productPickerQuantityThumb} iconSize={24} onPress={() => rowActions.current.onOpenImages(item)} />
   ), [styles]);
-  const quantities = React.useMemo(() => {
-    const lines = new Map<string, DraftItem[]>();
-    for (const line of orderItems) {
-      const group = lines.get(line.productGuid) || [];
-      group.push(line);
-      lines.set(line.productGuid, group);
-    }
-    return new Map(items.map(item => [item.guid, productPickerQuantity(lines.get(item.guid) || [], item)]));
-  }, [items, orderItems]);
+  const quantities = React.useMemo(() => indexPickerBaseQuantities(orderItems), [orderItems]);
+  const pricesPaused = React.useMemo(() => items.some(item => item.freshness?.refreshPaused), [items]);
   const hasSearch = !!search.trim();
   const isResetLoading = loading && !appendLoading;
   const showInitialLoader = isResetLoading && hasOrderContext && !hasLoadedOnce && !items.length && !hasSearch;
   const showSearchLoader = isResetLoading && hasOrderContext && !showInitialLoader;
   const showFooterLoader = appendLoading && !!items.length;
-  const selectedProductGuidKey = React.useMemo(() => Array.from(selectedProducts.keys()).join('|'), [selectedProducts]);
   const keyExtractor = React.useCallback((item: ClientOrderProduct, index: number) => item.guid || item.code || item.name || `product-${index}`, []);
   const renderProductItem = React.useCallback(({ item }: { item: ClientOrderProduct }) => (
     <ProductPickerRow
       item={item}
       selected={!!item.guid && selectedProducts.has(item.guid)}
       disabled={mutationLocked || !hasOrderContext}
-      quantity={quantities.get(item.guid)?.quantity || 0}
-      unit={quantities.get(item.guid)?.unit || unitLabel(item.baseUnit)}
-      fractional={quantities.get(item.guid)?.fractional || false}
+      baseQuantity={quantities.get(item.guid) ?? 0}
+      lastPurchasedDate={purchaseDates.get(String(item.guid).toLowerCase()) ?? null}
       hasPriceType={hasPriceType}
       hasWarehouse={hasWarehouse}
       onOpen={openProduct}
@@ -4656,7 +4674,7 @@ function ProductPickerFullscreenPanel({
     hasOrderContext,
     onChangeQuantity,
     selectedProducts,
-    styles,
+    purchaseDates,
   ]);
   const listHeader = React.useMemo(() => (
     <>
@@ -4664,15 +4682,22 @@ function ProductPickerFullscreenPanel({
       <OfflineProductDataNote online={online} syncedAt={offlineDataSyncedAt} />
       {hasOrderContext && historyNotice ? <Text style={{ color: '#64748B', fontSize: 11, paddingHorizontal: 14, paddingVertical: 4 }}>{historyNotice}</Text> : null}
       {hasOrderContext && onRetryHistory ? <PaperButton compact icon="refresh" onPress={onRetryHistory}>Повторить загрузку истории</PaperButton> : null}
-      {items.some(item => item.freshness?.refreshPaused) ? <PaperButton compact icon="refresh" onPress={onRetryProducts}>Цены ещё не уточнены. Повторить</PaperButton> : null}
-      {loadError ? <PaperButton compact icon="refresh" onPress={onRetryProducts}>Не удалось загрузить товары. Повторить</PaperButton> : null}
+      {pricesPaused ? <PaperButton compact icon="refresh" onPress={onRetryProducts}>Цены ещё не уточнены. Повторить</PaperButton> : null}
+      {loadError ? (
+        <View>
+          <InfoText styles={styles} text={loadError.message} />
+          {loadError.kind === 'forbidden'
+            ? <PaperButton compact icon="clipboard-text-outline" onPress={onReviewOrderContext}>Проверить шапку заказа</PaperButton>
+            : <PaperButton compact icon="refresh" onPress={onRetryProducts}>Повторить загрузку</PaperButton>}
+        </View>
+      ) : null}
       {showInitialLoader ? (
         <View style={styles.productPickerInitialLoader}>
           <ActivityIndicator size="large" color="#2563EB" />
         </View>
       ) : null}
     </>
-  ), [hasOrderContext, offlineDataSyncedAt, online, showInitialLoader, styles, historyNotice, onRetryHistory, loadError, onRetryProducts, items]);
+  ), [hasOrderContext, offlineDataSyncedAt, online, showInitialLoader, styles, historyNotice, onRetryHistory, loadError, onRetryProducts, onReviewOrderContext, pricesPaused]);
   const listEmpty = React.useMemo(() => {
     if (isResetLoading || !hasOrderContext || loadError || (purchasedOnly && !purchaseHistoryReady)) return null;
     return <Text style={styles.filtersLookupEmpty}>Ничего не найдено.</Text>;
@@ -4704,6 +4729,11 @@ function ProductPickerFullscreenPanel({
       onPress: onTogglePurchasedOnly, accessibilityLabel: 'Только товары, которые клиент уже брал',
     },
   ]), [inStockOnly, onToggleInStockOnly, purchasedOnly, onTogglePurchasedOnly, purchaseHistoryReady, hasOrderContext]);
+  const showSelectionFooter = selectedCount > 0;
+  const listContentStyle = React.useMemo(() => [
+    styles.pickerListContent,
+    { paddingBottom: Math.max(bottomInset, 10) + (showSelectionFooter ? 92 : 22) },
+  ], [bottomInset, showSelectionFooter, styles]);
   const footer = selectedCount > 0 ? (
     <Surface mode="flat" style={[styles.filtersFullscreenFooter, { paddingBottom: Math.max(bottomInset, 10) + 8 }]}>
       <Pressable
@@ -4747,12 +4777,11 @@ function ProductPickerFullscreenPanel({
       searchLoading={showSearchLoader}
       filters={filters}
       data={items}
-      extraData={[selectedProductGuidKey, quantities, mutationLocked, hasPriceType, hasWarehouse]}
       keyExtractor={keyExtractor}
       renderItem={renderProductItem}
       listRef={listRef}
       listStyle={styles.productPickerFullscreenList}
-      contentContainerStyle={[styles.pickerListContent, { paddingBottom: Math.max(bottomInset, 10) + (selectedCount > 0 ? 92 : 22) }]}
+      contentContainerStyle={listContentStyle}
       ListHeaderComponent={listHeader}
       ListEmptyComponent={listEmpty}
       ListFooterComponent={listFooter}

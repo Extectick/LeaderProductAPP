@@ -77,6 +77,8 @@ export type SearchPickerScreenProps<T> = {
   footer?: React.ReactNode;
 };
 
+// A picker row contains an image, editable quantity and three price/stock indicators.
+const PRODUCT_LIST_WINDOW = { windowSize: 7, maxToRenderPerBatch: 6, updateCellsBatchingPeriod: 40 };
 const DEFAULT_SEARCH_INPUT_PROPS = getClientOrdersSearchTextInputProps(Platform.OS);
 
 export function SearchPickerScreen<T>({
@@ -227,10 +229,12 @@ export function SearchPickerScreen<T>({
   };
   const showFilterLabels = filters.length === 1 && windowWidth >= 350;
 
+  const pickerListStyle = React.useMemo(() => [styles.list, listStyle], [listStyle]);
   if (!visible) return null;
   // Editable product rows change layout during quantity entry. On Android
   // FlashList can re-enter its synchronous measurement commit until React aborts.
-  const PickerList = Platform.OS === 'android' && pickerKey === 'product' ? FlatList<T> : FlashList<T>;
+  const androidProductList = Platform.OS === 'android' && pickerKey === 'product';
+  const PickerList = androidProductList ? FlatList<T> : FlashList<T>;
 
   return (
     <View style={styles.root}>
@@ -343,8 +347,9 @@ export function SearchPickerScreen<T>({
 
       <PickerList
         ref={listRef as any}
+        {...(androidProductList ? PRODUCT_LIST_WINDOW : undefined)}
         {...(listProps as any)}
-        style={[styles.list, listStyle]}
+        style={pickerListStyle}
         contentContainerStyle={contentContainerStyle}
         data={data as T[]}
         renderItem={renderItem as any}
