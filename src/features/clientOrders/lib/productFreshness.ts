@@ -59,3 +59,26 @@ export function productMetricPending(product: ClientOrderProduct, kind: 'price' 
   // Zero is a known value; a background refresh must never hide an existing snapshot.
   return pending === true && !product.freshness?.refreshPaused && value == null;
 }
+
+/** Appending a page cancels the previous page's refresh. Keep settled rows memoizable. */
+export function pausePendingPickerProducts(products: ClientOrderProduct[]) {
+  const needsPause = ({freshness}: ClientOrderProduct) =>
+    !freshness?.refreshPaused && (freshness?.commercialPending || freshness?.receiptPricePending);
+  if (!products.some(needsPause)) return products;
+  return products.map(product => needsPause(product)
+    ? {...product, freshness: {...product.freshness!, refreshPaused: true}}
+    : product);
+}
+
+export function mergeHydratedPickerProducts(products: ClientOrderProduct[], fresh: ClientOrderProduct[]) {
+  if (!fresh.length) return products;
+  const byGuid = new Map(fresh.map(product => [product.guid, product]));
+  let updated = products;
+  products.forEach((product, index) => {
+    const hydration = byGuid.get(product.guid);
+    if (!hydration) return;
+    if (updated === products) updated = [...products];
+    updated[index] = {...product, ...hydration};
+  });
+  return updated;
+}
