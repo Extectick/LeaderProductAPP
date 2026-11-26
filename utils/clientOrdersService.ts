@@ -957,7 +957,7 @@ async function getPagedSelector<T>(
   if (result.meta.readState?.refreshPending && options.signal && options.onRefresh) {
     void refreshPendingSnapshot(result, value => !!value.meta.readState?.refreshPending,
       value => pricePageAfterRefresh({...value, meta: {...value.meta, readState: value.meta.readState ? {...value.meta.readState, refreshPending: false} : undefined}}),
-      async () => {
+      async (): Promise<PagedResult<T>> => {
         try {return await load();}
         catch (error) {
           const status = (error as {status?: number} | null)?.status;
