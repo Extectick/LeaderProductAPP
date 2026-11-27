@@ -1,3 +1,4 @@
+import { isPickerActionList, recentPickerActions, type PickerAction } from './pickerActions';
 import { uuid } from 'expo';
 import { Platform } from 'react-native';
 import { getAppVersionInfo } from '@/utils/appVersion';
@@ -48,6 +49,7 @@ export type AppErrorPayload = {
   otaUpdateId?: string;
   components: string[];
   jsFrames: string[];
+  pickerActions?: PickerAction[];
   nativeEvidence?: NativeEvidence;
   timing?: TimingEvidence;
 };
@@ -111,6 +113,10 @@ function lines(stack: unknown) {
   return typeof stack === 'string' ? stack.slice(0, 24000).split('\n', 48) : [];
 }
 
+const namedBundlePosition = /\.(?:bundle|hbc|[cm]?js|tsx?)(?:\?[^\s)]*)?:(\d{1,9}:\d{1,9})(?=\)|\s*$)/;
+// Expo can install the OTA launch asset under its flat MD5 or SHA-256 key with no extension.
+const otaBundlePosition = /^\s*(?:at|in)\s+[^\n(]+\((?:address at )?(?:[^()\s]*\/)?(?:[a-f\d]{32}){1,2}:(\d{1,9}:\d{1,9})\)\s*$/i;
+
 function extractFrames(componentStack: unknown, jsStack: unknown) {
   const components = new Set<string>();
   const jsFrames = new Set<string>();
@@ -121,7 +127,7 @@ function extractFrames(componentStack: unknown, jsStack: unknown) {
   }
   // JS frames come first so production Hermes offsets survive the frame cap.
   for (const line of [...lines(jsStack).slice(1), ...componentLines]) {
-    const position = /\.(?:bundle|hbc|[cm]?js|tsx?)(?:\?[^\s)]*)?:(\d{1,9}:\d{1,9})(?=\)|\s*$)/.exec(line)?.[1];
+    const position = (namedBundlePosition.exec(line) ?? otaBundlePosition.exec(line))?.[1];
     if (position) jsFrames.add(position);
     if (jsFrames.size === 24) break;
   }
@@ -140,12 +146,17 @@ function kindFor(error: { message?: unknown; name?: unknown }): AppErrorPayload[
   }
 }
 
+function allowsPickerActions(platform: string, screen: string | undefined, source: string) {
+  return platform === 'android' && screen === 'orders' && (source === 'react_boundary' || source === 'global_js');
+}
+
 export function makeAppErrorPayload(input: AppErrorInput): AppErrorPayload | null {
   const platform = Platform.OS;
   if (platform !== 'android' && platform !== 'ios' && platform !== 'web') return null;
   const error = input.error && typeof input.error === 'object'
     ? input.error as { message?: unknown; name?: unknown; stack?: unknown } : {};
   const version = getAppVersionInfo();
+  const pickerActions = allowsPickerActions(platform, input.screen, input.source) ? recentPickerActions(input.ownerId) : undefined;
   return {
     eventId: uuidV4(), occurredAt: new Date().toISOString(), kind: kindFor(error), platform,
     source: input.source, screen: input.screen ?? 'unknown', stage: input.stage ?? 'unknown',
@@ -154,6 +165,7 @@ export function makeAppErrorPayload(input: AppErrorInput): AppErrorPayload | nul
     runtimeVersion: optionalString(version.runtimeVersion, dottedVersion, 40),
     otaUpdateId: optionalString(version.updateId, uuidPattern, 36),
     ...extractFrames(input.componentStack, error.stack),
+    ...(pickerActions && { pickerActions }),
   };
 }
 
@@ -216,6 +228,7 @@ export function readAppErrorPayload(json: string, eventId: string): AppErrorPayl
         (isTiming && (!timing || p.screen !== 'orders' || p.platform !== 'android' || p.components.length || p.jsFrames.length)) ||
         (!isTiming && p.timing !== undefined)) return null;
     return {
+      ...(allowsPickerActions(p.platform, p.screen, p.source) && isPickerActionList(p.pickerActions) && { pickerActions: p.pickerActions }),
       timing, nativeEvidence: evidence, eventId, occurredAt: p.occurredAt, kind: p.kind, platform: p.platform, source: p.source,
       screen: p.screen, stage: p.stage, components: p.components, jsFrames: p.jsFrames,
       appVersion: optionalString(p.appVersion, dottedVersion, 40), buildNumber: optionalString(p.buildNumber, digits, 12),

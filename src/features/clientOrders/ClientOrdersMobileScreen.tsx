@@ -14,6 +14,7 @@ import DateTimeInput from '@/components/ui/DateTimeInput';
 import { OrderShareFeedback } from './components/OrderShareFeedback';
 import { useOrderShareActions } from './hooks/useOrderShareActions';
 import { hasPriceReview } from './lib/priceReview';
+import { recordPickerAction, type PickerAction } from '@/src/shared/monitoring/pickerActions';
 import { useOrderAction } from './hooks/useOrderAction';
 import { amendmentStatusLabel, persistedOrderSubmissionError, submittedVersionOf } from './lib/orderSubmissionPresentation';
 import ContextMenuTrigger from '@/components/ui/ContextMenuTrigger';
@@ -1169,7 +1170,16 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     Keyboard.dismiss();
   }, [clearPickerFocusTimers]);
 
+  const tracePickerAction = React.useCallback((action: PickerAction) => {
+    if (Platform.OS === 'android') recordPickerAction(Number(workspace.offlineUserId), action);
+  }, [workspace.offlineUserId]);
+  const changePickerQuantity = useOrderAction((product: ClientOrderProduct, change: ProductQuantityChange) => {
+    tracePickerAction('delta' in change ? (change.delta > 0 ? 'quantity_plus' : 'quantity_minus') : 'quantity_input');
+    workspace.changePickerQuantity(product, change);
+  });
+
   const openPicker = React.useCallback((kind: PickerKind, lineKey?: string) => {
+    if (kind === 'product') tracePickerAction('picker_open');
     // Invalidate the previous picker request synchronously. Without this an
     // organization response can arrive between the tap on "Подбор товаров"
     // and the next effect, replacing the product rows with stale data.
@@ -1213,6 +1223,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     pickerSkipNextResetLoadRef.current = false;
     requestAnimationFrame(() => scrollPickerListToTop(false));
   }, [
+    tracePickerAction,
     clearEditorFocusTimers,
     clearPickerFocusTimers,
     clearEditorScrollRestoreTimers,
@@ -1224,6 +1235,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
 
   const handlePickerSearchChange = React.useCallback((value: string) => {
     if (value === pickerSearch) return;
+    if (pickerKindRef.current === 'product') tracePickerAction(value ? 'search_changed' : 'search_cleared');
     pickerRequestIdRef.current += 1;
     pickerProductRequestRef.current?.abort();
     productPickerSnapshotRef.current.invalidate();
@@ -1239,7 +1251,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     pickerAppendLoadingRef.current = false;
     pickerLoadSignatureRef.current = '';
     requestAnimationFrame(() => scrollPickerListToTop(false));
-  }, [scrollPickerListToTop, pickerSearch]);
+  }, [scrollPickerListToTop, pickerSearch, tracePickerAction]);
 
   const loadPickerPage = React.useCallback(async (kind: PickerKind, search: string, offset = 0, append = false) => {
     const pageSize = kind === 'product' ? PRODUCT_PICKER_PAGE_SIZE : kind === 'warehouse' ? 100 : PAGE_SIZE;
@@ -1254,6 +1266,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     const counterpartyFilter = (kind === 'counterparty' || kind === 'filterCounterparty') && counterpartyManagerOnly ? 'manager' : 'all';
     const signature = `${kind}|${contextSignature}|${search}|${offset}|${append ? 'append' : 'reset'}|${productFilter}|${counterpartyFilter}`;
     if ((append && pickerAppendLoadingRef.current) || pickerLoadSignatureRef.current === signature) return;
+    if (kind === 'product') tracePickerAction(append ? 'page_append' : 'page_load');
     pickerAppendLoadingRef.current = append;
     setPickerAppendLoading(append);
     pickerLoadSignatureRef.current = signature;
@@ -1423,6 +1436,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     workspace.draft.organizationGuid,
     workspace.draft.priceTypeGuid,
     workspace.draft.warehouseGuid,
+    tracePickerAction,
     workspace.searchAgreements,
     workspace.searchContracts,
     workspace.searchCounterparties,
@@ -1542,6 +1556,12 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     lastService?.clearLastServiceRoute();
     router.replace('/services');
   }, [lastService, router]);
+  const closeLineEditor = React.useCallback(() => {
+    tracePickerAction('editor_close');
+    setPendingProductItem(null);
+    setEditingItemKey(null);
+  }, [tracePickerAction]);
+
   const closeTopOverlay = React.useCallback(() => {
     if (invoicePickerOpen) {
       setInvoicePickerOpen(false);
@@ -1556,8 +1576,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       return true;
     }
     if (editingItemKey || pendingProductItem) {
-      setPendingProductItem(null);
-      setEditingItemKey(null);
+      closeLineEditor();
       return true;
     }
     if (referenceOpen) {
@@ -1577,7 +1596,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       return true;
     }
     return false;
-  }, [cancelOpeningOrder, closeDocumentToOrders, editingItemKey, filtersOpen, invoicePickerOpen, mode, pendingProductItem, pickerKind, productGallery, referenceOpen, requestClosePicker]);
+  }, [cancelOpeningOrder, closeDocumentToOrders, closeLineEditor, editingItemKey, filtersOpen, invoicePickerOpen, mode, pendingProductItem, pickerKind, productGallery, referenceOpen, requestClosePicker]);
 
   React.useEffect(() => {
     if (!registerBackOverlayHandler) return undefined;
@@ -1687,6 +1706,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
 
   const openProductEditorForProduct = React.useCallback((product: ClientOrderProduct) => {
     if (workspace.readOnly || workspace.mutationLocked) return;
+    tracePickerAction('editor_open');
     const existingIndex = workspace.draft.items.findIndex((line: any) => line.productGuid === product.guid && !isCancelledDraftItem(line));
     const existingKey = existingIndex >= 0 ? workspace.draft.items[existingIndex]?.key : null;
     setSection('items');
@@ -1711,7 +1731,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     }
     setEditingItemKey(null);
     setPendingProductItem({ ...buildNewItem(product), quantity: '0' });
-  }, [requestScrollToLineItem, workspace]);
+  }, [requestScrollToLineItem, tracePickerAction, workspace]);
 
   React.useEffect(() => {
     if (!pendingProductItem || !hasPositiveQuantity(pendingProductItem)) return;
@@ -2429,9 +2449,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     });
   }, [workspace.enrichItemMetadata]);
   const openLineEditor = React.useCallback((lineKey: string) => {
+    tracePickerAction('editor_open');
     requestLineMetadata(lineKey);
     setEditingItemKey(lineKey);
-  }, [requestLineMetadata]);
+  }, [requestLineMetadata, tracePickerAction]);
   const editingItem = React.useMemo(() => workspace.draft.items.find((item) => item.key === editingItemKey) || null, [editingItemKey, workspace.draft.items]);
   const editingItemIndex = React.useMemo(() => editingItem ? workspace.draft.items.findIndex((item) => item.key === editingItem.key) : -1, [editingItem, workspace.draft.items]);
   React.useEffect(() => {
@@ -3260,7 +3281,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           online={isReachable}
           onPressProduct={handleProductPickerPress}
           onLongPressProduct={handleProductPickerLongPress}
-          onChangeQuantity={workspace.changePickerQuantity}
+          onChangeQuantity={changePickerQuantity}
           mutationLocked={workspace.readOnly || workspace.mutationLocked}
           onOpenImages={openProductGallery}
           onScroll={handlePickerScroll}
@@ -3410,10 +3431,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         workspace={productEditorWorkspace}
         allowZeroQuantity={!!pendingProductItem}
         metadataLoading={!!editingItemKey && metadataLoadingItemKeys.has(editingItemKey)}
-        onClose={() => {
-          setPendingProductItem(null);
-          setEditingItemKey(null);
-        }}
+        onClose={closeLineEditor}
         onOpenImages={openProductGallery}
       />
 

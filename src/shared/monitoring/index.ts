@@ -1,3 +1,4 @@
+import { setPickerActionOwner } from './pickerActions';
 import type { AppErrorScreen } from './appErrorPayload';
 import type { OrderLoopStage } from '../../features/clientOrders/screen/orderLoopStage';
 import { updateNativeAppErrorIdentity, updateNativeAppErrorScreen, updateNativeAppErrorRuntime } from './nativeAppErrors';
@@ -210,6 +211,7 @@ export async function setMonitoringUser(id: number | string | null | undefined) 
   const value = id == null ? '' : String(id);
   const safeId = /^\d{1,20}$/.test(value) ? value : null;
   reportOwner = safeId && Number.isSafeInteger(Number(safeId)) ? Number(safeId) : null;
+  setPickerActionOwner(reportScreen === 'orders' ? reportOwner : null);
   updateNativeAppErrorIdentity(reportOwner);
   try { sentry?.setUser?.(safeId ? { id: safeId } : null); } catch { /* Diagnostics must not break authentication. */ }
   try { await getNativeDiagnostics()?.setUser(safeId); } catch { /* Diagnostics must not break login/logout. */ }
@@ -221,6 +223,7 @@ export function setMonitoringScreen(route: string) {
     reportScreen = appErrorScreenFromPath(route);
     updateNativeAppErrorScreen(reportScreen);
   } catch { reportScreen = 'unknown'; }
+  setPickerActionOwner(reportScreen === 'orders' ? reportOwner : null);
   // useSegments supplies route templates, not actual document/customer IDs.
   sentry?.setTag?.('screen', route.split('?')[0].slice(0, 160));
   invokeNativeDiagnostic(n => n.setScreen(route.split('?')[0].slice(0, 160)));
