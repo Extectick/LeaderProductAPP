@@ -23,6 +23,26 @@ const draft: StoredOfflineDraft = {
   createdAt: '2026-09-21T00:00:00Z', updatedAt: '2026-09-21T00:00:00Z', lastSendError: null,
 };
 
+it('only identifies the writing workspace when its saved identities match SQLite', async () => {
+  const { subscribeOrderOutboxChange } = require('../src/features/clientOrders/offline/orderOutboxEvents');
+  const listener = jest.fn();
+  const unsubscribe = subscribeOrderOutboxChange(listener);
+  const writer = Symbol('editor');
+  try {
+    const save = async (row: StoredOfflineDraft) => {
+      await offline.applyOfflineDraftChanges('u1', [row], [], writer);
+      return listener.mock.lastCall![0].writer;
+    };
+    expect(await save(draft)).toBeUndefined();
+    expect(await save({ ...draft, clientRevision: 2 })).toBe(writer);
+    expect(await save({ ...draft, clientRevision: 3, id: 'stale-local-id' })).toBeUndefined();
+    expect(await save({ ...draft, clientRevision: 4, createdAt: '2026-11-01T00:00:00Z' })).toBeUndefined();
+    await offline.applyOfflineDraftChanges('u1', [], [draft], writer);
+    expect(listener.mock.lastCall![0].writer).toBeUndefined();
+    expect(await offline.readOfflineDrafts('u1')).toMatchObject([{ id: draft.id, createdAt: draft.createdAt, clientRevision: 4 }]);
+  } finally { unsubscribe(); }
+});
+
 async function redundantSaveFixture() {
   const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
   const payload = { organizationGuid: 'org', counterpartyGuid: 'customer',
@@ -369,6 +389,35 @@ it('upserts by client identity, preserves independent drafts and guards late ack
   expect(await offline.readOfflineDrafts('u1')).toEqual([other]);
   expect(await offline.readOfflineDrafts('u2')).toEqual([draft]);
   expect(await db.getAllAsync('SELECT * FROM offline_draft_lines WHERE user_id = ? AND draft_id = ?', 'u1', draft.id)).toEqual([]);
+});
+
+it('reads the legacy API scope and draft in one query for full, single and multi-ID reads', async () => {
+  const { ORDER_API_SCOPE } = require('../src/features/clientOrders/offline/orderOutboxScope');
+  for (const id of ['legacy', 'current', 'foreign', 'damaged']) {
+    await offline.upsertOfflineDraft('scoped', { ...draft, id, clientOrderId: id });
+  }
+  await db.runAsync("UPDATE offline_drafts SET order_json='{}' WHERE client_order_id='legacy'");
+  await db.runAsync("UPDATE offline_drafts SET order_json=? WHERE client_order_id='foreign'",
+    JSON.stringify({ _deviceApiBaseUrl: 'https://other.example' }));
+  await db.runAsync("UPDATE offline_drafts SET order_json='{' WHERE client_order_id='damaged'");
+  const single = jest.spyOn(db, 'getFirstAsync');
+  const cursor = jest.spyOn(db, 'getEachAsync');
+  const names = async (ids?: string[]) => (await offline.readOfflineDrafts('scoped', ids)).map(d => d.id).sort();
+  for (const [scope, expected] of [
+    ['https://other.example', ['current']],
+    [ORDER_API_SCOPE, ['current', 'legacy']],
+    [null, ['current', 'legacy']],
+  ] as const) {
+    if (scope === null) await db.runAsync("DELETE FROM catalog_meta WHERE key='offlineDraftLegacyApiScope'");
+    else await db.runAsync("INSERT OR REPLACE INTO catalog_meta(key,value) VALUES('offlineDraftLegacyApiScope',?)", scope);
+    single.mockClear(); cursor.mockClear();
+    expect(await names()).toEqual(expected);
+    expect(await names(['foreign', 'current', 'legacy', 'damaged', 'missing'])).toEqual(expected);
+    expect(await names(['legacy'])).toEqual(scope === 'https://other.example' ? [] : ['legacy']);
+    expect(await names([])).toEqual([]);
+    expect(cursor).toHaveBeenCalledTimes(2);
+    expect(single).toHaveBeenCalledTimes(1);
+  }
 });
 
 it('hydrates a large native draft archive through a cursor and reads one row for the next edit', async () => {

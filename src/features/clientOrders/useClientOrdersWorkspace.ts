@@ -568,14 +568,14 @@ async function readStoredDeviceDrafts(storageKey: string, userId: string, ids?: 
   return sanitizeDeviceDraftEntries(JSON.parse(raw));
 }
 
-async function writeStoredDeviceDrafts(storageKey: string, userId: string, entries: DeviceDraftEntry[], previous: DeviceDraftEntry[]) {
+async function writeStoredDeviceDrafts(storageKey: string, userId: string, entries: DeviceDraftEntry[], previous: DeviceDraftEntry[], writer?: symbol) {
   if (Platform.OS !== 'web') {
     const old = new Map(previous.map(entry => [entry.clientOrderId, entry]));
     const nextIds = new Set(entries.map(entry => entry.clientOrderId));
     const saved = await applyOfflineDraftChanges(userId, entries.filter(entry => old.get(entry.clientOrderId) !== entry).map((entry) => ({
       ...entry,
       lastSendError: entry.lastSyncError ?? null,
-    })), previous.filter(entry => !nextIds.has(entry.clientOrderId)));
+    })), previous.filter(entry => !nextIds.has(entry.clientOrderId)), writer);
     if (!saved) throw new Error('SQLite draft storage is unavailable');
     return;
   }
@@ -1375,6 +1375,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   );
   const [orders, setOrders] = React.useState<ClientOrder[]>([]);
   const [deviceDraftEntries, setDeviceDraftEntries] = React.useState<DeviceDraftEntry[]>([]);
+  const [sendingEnabled, setSendingEnabled] = React.useState(isAsyncOrderOutboxEnabled);
   const [deviceDraftsHydrated, setDeviceDraftsHydrated] = React.useState(false);
   useDraftBackups(offlineUserId, deviceDraftEntries,
     deviceDraftsHydrated && !!auth?.isAuthenticated && serverStatus.isReachable && options.isScreenActive !== false);
@@ -1480,6 +1481,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   ordersPollingEnabledRef.current = ordersPollingEnabled;
   const ordersRef = React.useRef<ClientOrder[]>([]);
   const deviceDraftEntriesRef = React.useRef<DeviceDraftEntry[]>([]);
+  const draftWriter = React.useMemo(() => Symbol(offlineUserId), [offlineUserId]);
   const observedDraftChange = React.useRef({ userId: offlineUserId, version: 0 });
   const documentStartedRef = React.useRef(false);
   const dirtyRef = React.useRef(false);
@@ -1742,7 +1744,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     settings?.deliveryDateIssueMessage,
   ]);
   const canSubmitOrder =
-    !readOnly && (!verificationRequired || isAsyncOrderOutboxEnabled()) && validation.canSubmit &&
+    !readOnly && (!verificationRequired || sendingEnabled) && validation.canSubmit &&
     (!(selectedOrder?.origin === 'device' && (selectedOrder as any).offlineDraftStatus === 'READY_TO_SEND') || dirty) &&
     (!selectedOrderQueued || dirty || selectedOrderHas1cError) &&
     (!selectedOrderSynced || dirty || selectedOrderHas1cError);
@@ -2397,12 +2399,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     setAutosaveError(null);
   }, [enrichItemsMetadata, loadEnumOptionsForContext]);
 
-  const replaceDeviceDraftEntries = React.useCallback(async (next: DeviceDraftEntry[]) => {
+  const replaceDeviceDraftEntries = React.useCallback(async (next: DeviceDraftEntry[], writer?: symbol) => {
     if (activeOfflineUserRef.current !== offlineUserId) throw new Error('Пользователь изменён. Откройте список заказов заново.');
     const previous = deviceDraftEntriesRef.current;
     let entries = uniqueDeviceDraftEntries(next);
     try {
-      await writeStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId, entries, previous);
+      await writeStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId, entries, previous, writer);
     } catch (error) {
       reportOfflineSyncFailure(error, { stage: 'draft.write', entity: 'drafts' });
       throw error;
@@ -2643,9 +2645,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       nextSyncAt: null,
     };
     const withoutCurrent = deviceDraftEntriesRef.current.filter((item) => item.clientOrderId !== clientOrderId && item.id !== entry.id && item.order.guid !== localGuid && (!serverGuid || item.serverGuid !== serverGuid));
-    await replaceDeviceDraftEntries([entry, ...withoutCurrent]);
+    await replaceDeviceDraftEntries([entry, ...withoutCurrent], intent === 'SAVE' && !syncError ? draftWriter : undefined);
     return entry.order;
-  }, [draft, findDeviceDraftEntry, replaceDeviceDraftEntries, selectedOrder, selections]);
+  }, [draftWriter, draft, findDeviceDraftEntry, replaceDeviceDraftEntries, selectedOrder, selections]);
 
   const screenFailed = React.useContext(OrderScreenFailed);
   const recoverEditor = React.useRef<() => void>(() => {});
@@ -2745,7 +2747,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     let cancelled = false;
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
     let pendingIds = new Set<string>();
+    setSendingEnabled(isAsyncOrderOutboxEnabled());
     let fullRefresh = false;
+    let capabilityChanged = false;
     let pendingAcks: { order: ClientOrder; previousGuid?: string | null }[] = [];
     let running = false;
     const isCurrent = () => !cancelled && activeOfflineUserRef.current === offlineUserId;
@@ -2753,13 +2757,16 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       if (running || !isCurrent()) return;
       running = true;
       try {
-        while (isCurrent() && (fullRefresh || pendingIds.size || pendingAcks.length)) {
+        while (isCurrent() && (fullRefresh || capabilityChanged || pendingIds.size || pendingAcks.length)) {
           const version = orderOutboxChangeVersion(offlineUserId);
           const ids = fullRefresh ? undefined : [...pendingIds];
+          const checkStamps = capabilityChanged && !fullRefresh;
+          capabilityChanged = false;
           const acks = pendingAcks;
           pendingIds = new Set(); fullRefresh = false; pendingAcks = [];
           const before = deviceDraftEntriesRef.current;
-          await refreshPersistedDrafts(ids, isCurrent);
+          if (!ids || ids.length) await refreshPersistedDrafts(ids, isCurrent);
+          if (checkStamps && isCurrent()) await refreshExternalDrafts(isCurrent);
           if (!isCurrent()) return;
           observedDraftChange.current = { userId: offlineUserId, version };
           for (const event of acks) {
@@ -2778,7 +2785,19 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     };
     const unsubscribe = subscribeOrderOutboxChange(event => {
       if (event.userId !== offlineUserId) return;
-      if (event.draftIds) { for (const id of event.draftIds) pendingIds.add(id); }
+      if (event.writer === draftWriter) {
+        // The successful local save installs the same entry. A gap still
+        // belongs to the pending refresh (or a replacement subscription).
+        const version = orderOutboxChangeVersion(offlineUserId);
+        if (observedDraftChange.current.userId === offlineUserId && observedDraftChange.current.version === version - 1) {
+          observedDraftChange.current = { userId: offlineUserId, version };
+        }
+        return;
+      }
+      if (event.capabilityChanged) {
+        setSendingEnabled(isAsyncOrderOutboxEnabled());
+        capabilityChanged = true;
+      } else if (event.draftIds) { for (const id of event.draftIds) pendingIds.add(id); }
       else fullRefresh = true;
       if (event.order) {
         pendingAcks.push({ order: event.order, previousGuid: event.previousGuid });
@@ -2803,7 +2822,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }).catch(() => {});
     kickOrderOutbox();
     return () => { cancelled = true; unsubscribe(); if (refreshTimer) clearTimeout(refreshTimer); };
-  }, [offlineUserId, deviceDraftsHydrated, refreshPersistedDrafts, ordersCacheHydrated, applySavedOrderToList, applyOrderDetail]);
+  }, [draftWriter, offlineUserId, deviceDraftsHydrated, refreshPersistedDrafts, refreshExternalDrafts, ordersCacheHydrated, applySavedOrderToList, applyOrderDetail]);
 
   const syncDeviceDrafts = React.useCallback(async (syncOptions: {
     force?: boolean;
