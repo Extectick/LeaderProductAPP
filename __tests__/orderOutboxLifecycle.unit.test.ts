@@ -14,7 +14,8 @@ import { AppState, NativeModules } from 'react-native';
 import { apiClient } from '../utils/apiClient';
 import { getAccessTokenForRequest } from '../utils/tokenService';
 import * as storage from '../src/features/clientOrders/offline/orderOutboxDatabase';
-import { startOrderOutbox, stopOrderOutbox, isAsyncOrderOutboxEnabled } from '../src/features/clientOrders/offline/orderOutbox';
+import { startOrderOutbox, stopOrderOutbox, isAsyncOrderOutboxEnabled, runOrderOutboxInBackground } from '../src/features/clientOrders/offline/orderOutbox';
+import { subscribeOrderOutboxChange } from '../src/features/clientOrders/offline/orderOutboxEvents';
 import { setServerReachable, setServerUnavailable } from '../src/shared/network/serverStatus';
 import { submissionHash } from '../src/features/clientOrders/offline/orderSubmissionProtocol';
 let pending: boolean;
@@ -62,6 +63,23 @@ it('does not automatically drain when the server explicitly disables the rollout
   startOrderOutbox('90'); await flush();
   expect(uploads()).toHaveLength(0); expect(storage.claimOrderUploads).not.toHaveBeenCalled();
   expect(isAsyncOrderOutboxEnabled()).toBe(false); expect(NativeModules.LeaderOrderOutbox.setPending).toHaveBeenLastCalledWith(false);
+});
+it('notifies the screen of a capability transition without invalidating every draft', async () => {
+  pending = false;
+  const changed = jest.fn();
+  const unsubscribe = subscribeOrderOutboxChange(changed);
+  try {
+    startOrderOutbox('90');
+    await flush();
+    expect(changed.mock.calls).toEqual([[{ userId: '90', capabilityChanged: true }]]);
+    jest.mocked(apiClient).mockResolvedValue({ ok: false, status: 403, message: 'Forbidden' });
+    jest.setSystemTime(Date.now() + 31_000);
+    await runOrderOutboxInBackground();
+    expect(isAsyncOrderOutboxEnabled()).toBe(false);
+    expect(changed.mock.calls).toEqual(Array(2).fill([{ userId: '90', capabilityChanged: true }]));
+  } finally {
+    unsubscribe();
+  }
 });
 it('stops before transmission on logout', async () => {
   startOrderOutbox('90'); stopOrderOutbox(); await flush(); expect(apiClient).not.toHaveBeenCalled();

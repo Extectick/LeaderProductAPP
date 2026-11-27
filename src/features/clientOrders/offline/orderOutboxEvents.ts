@@ -1,4 +1,4 @@
-type Event = { userId: string; draftIds?: readonly string[]; order?: any; previousGuid?: string | null };
+type Event = { userId: string; capabilityChanged?: true; writer?: symbol; draftIds?: readonly string[]; order?: any; previousGuid?: string | null };
 const listeners = new Set<(event: Event) => void>();
 const versions = new Map<string, number>();
 export function orderOutboxChangeVersion(userId: string) {

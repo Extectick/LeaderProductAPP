@@ -26,6 +26,12 @@ let capabilityKnown = false;
 let capabilityCache: { userId: string; checkedAt: number; value: { enabled: boolean; protocol: string } } | null = null;
 export function isAsyncOrderOutboxEnabled() { return Platform.OS !== 'web' && asyncEnabled; }
 
+function setSendingCapability(userId: string | null, enabled: boolean) {
+  if (asyncEnabled === enabled) return;
+  asyncEnabled = enabled;
+  if (userId) emitOrderOutboxChange({ userId, capabilityChanged: true });
+}
+
 async function currentSessionUser() {
   if (hasAuthSessionExpired()) return null;
   const [token, profileJson] = await Promise.all([getAccessTokenForRequest(), AsyncStorage.getItem('profile')]);
@@ -77,7 +83,7 @@ export async function runOrderOutboxInBackground() {
       capabilityCache = { userId, checkedAt: Date.now(), value: capability };
       capabilityKnown = true;
       const enabled = capability.enabled && capability.protocol === 'client-order-inbox-v1';
-      if (asyncEnabled !== enabled) { asyncEnabled = enabled; emitOrderOutboxChange({ userId }); }
+      setSendingCapability(userId, enabled);
       if (!await database.hasPendingOrderUploads(userId) && !(await database.readAcceptedUploads(userId)).length) return;
       await drainOrderOutbox({ userId, isCurrent, transport: { ...api, capabilities: async () => capability }, store: {
         claim: database.claimOrderUploads, accept: database.acceptOrderUpload, fail: database.failOrderUpload,
@@ -87,8 +93,9 @@ export async function runOrderOutboxInBackground() {
       if (isCurrent()) await native?.setPending((asyncEnabled || !capabilityKnown) && await database.hasPendingOrderUploads(userId));
     }
   })().catch(error => {
-    if ([403,404].includes(error?.status)) {
-      capabilityKnown = true; asyncEnabled = false;
+    if (!signal.aborted && [403,404].includes(error?.status)) {
+      capabilityKnown = true;
+      setSendingCapability(activeUser, false);
       if (activeUser) capabilityCache = { userId: activeUser, checkedAt: Date.now(), value: { enabled: false, protocol: 'client-order-inbox-v1' } };
       void native?.setPending(false)?.catch(() => {});
     }

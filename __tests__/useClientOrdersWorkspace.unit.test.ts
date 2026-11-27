@@ -800,6 +800,30 @@ describe('useClientOrdersWorkspace', () => {
     return records;
   }
 
+  it('reconciles a change in sending capability without reloading ordinary drafts', async () => {
+    const { emitOrderOutboxChange } = require('../src/features/clientOrders/offline/orderOutboxEvents');
+    const outbox = jest.requireMock('../src/features/clientOrders/offline/orderOutbox');
+    const ordinary = localEntry('ordinary'), sending = localEntry('sending', 'SENDING');
+    memoryDraftStore([ordinary, sending]);
+    const harness = await ordersListWorkspace();
+    try {
+      for (const enabled of [true, false]) {
+        jest.mocked(readOfflineDrafts).mockClear();
+        outbox.isAsyncOrderOutboxEnabled.mockReturnValue(enabled);
+        await act(async () => {
+          emitOrderOutboxChange({ userId: '1', capabilityChanged: true });
+          await jest.advanceTimersByTimeAsync(50);
+        });
+        expect(readOfflineDrafts).toHaveBeenCalledTimes(1);
+        expect(readOfflineDrafts).toHaveBeenCalledWith('1', [sending.clientOrderId]);
+        expect(harness.current.orders.find(order => order.guid === sending.order.guid)?.offlineDraftStatus)
+          .toBe(enabled ? 'SENDING' : 'SEND_ERROR');
+      }
+    } finally {
+      await act(async () => harness.renderer.unmount());
+    }
+  });
+
   it('reads only notified draft IDs during edits and observes cross-runtime changes via stamps', async () => {
     const { emitOrderOutboxChange } = require('../src/features/clientOrders/offline/orderOutboxEvents');
     const a = localEntry('first-target'), b = localEntry('second-target');
@@ -821,6 +845,33 @@ describe('useClientOrdersWorkspace', () => {
       await act(async () => { await jest.advanceTimersByTimeAsync(30_000); });
       expect(readOfflineDrafts).toHaveBeenCalledWith('1', [b.clientOrderId]);
       expect(jest.mocked(readOfflineDrafts).mock.calls.every(call => call[1]?.length === 1)).toBe(true);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('persists an editor autosave once and still reloads another writer’s revision', async () => {
+    const entry = localEntry('autosaved');
+    const records = memoryDraftStore([entry]);
+    const { emitOrderOutboxChange } = require('../src/features/clientOrders/offline/orderOutboxEvents');
+    const write = jest.mocked(applyOfflineDraftChanges).getMockImplementation()!;
+    jest.mocked(applyOfflineDraftChanges).mockImplementation(async (userId, upserts, removals, writer) => {
+      const result = await write(userId, upserts, removals);
+      emitOrderOutboxChange({ userId, draftIds: upserts.map(row => row.clientOrderId), writer });
+      return result;
+    });
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      jest.mocked(readOfflineDrafts).mockClear();
+      await act(async () => { harness.current.setItemPatch(harness.current.draft.items[0].key, { quantity: '7' }); });
+      await act(async () => { await jest.advanceTimersByTimeAsync(1500); });
+      expect(records.get(entry.clientOrderId).payload.items[0].quantity).toBe(7);
+      expect(readOfflineDrafts).not.toHaveBeenCalled();
+
+      await act(async () => {
+        emitOrderOutboxChange({ userId: '1', draftIds: [entry.clientOrderId], writer: Symbol() });
+        await jest.advanceTimersByTimeAsync(50);
+      });
+      expect(readOfflineDrafts).toHaveBeenCalledWith('1', [entry.clientOrderId]);
     } finally { await act(async () => harness.renderer.unmount()); }
   });
 

@@ -435,14 +435,18 @@ export async function readOfflineDrafts(userId: string, ids?: readonly string[],
 async function loadOfflineDrafts(userId: string, ids?: readonly string[], signal?: AbortSignal): Promise<StoredOfflineDraft[]> {
   const db = await getCatalogDatabase();
   if (!db) throw new Error('SQLite draft storage is unavailable');
-  const legacyScope = await legacyOrderApiScope(db);
+  if (signal?.aborted) throw new Error('Draft read cancelled');
+  // SQLite evaluates the uncorrelated lookup once per statement, alongside the draft rows.
+  const selectDrafts = `SELECT offline_drafts.*,
+    (SELECT value FROM catalog_meta WHERE key='offlineDraftLegacyApiScope') AS legacy_scope
+    FROM offline_drafts WHERE user_id=?`;
   const drafts: StoredOfflineDraft[] = [];
   function decode(row: any) {
     // A stopped reader exits the async iterator, finalizing its SQLite statement.
     if (signal?.aborted) throw new Error('Draft read cancelled');
     try {
       const { _deviceApiBaseUrl, ...order } = JSON.parse(row.order_json);
-      if (localOrderApiScope({ _deviceApiBaseUrl }, legacyScope) !== ORDER_API_SCOPE) return;
+      if (localOrderApiScope({ _deviceApiBaseUrl }, row.legacy_scope ?? ORDER_API_SCOPE) !== ORDER_API_SCOPE) return;
       drafts.push({
         id: row.id,
         clientOrderId: row.client_order_id,
@@ -460,19 +464,19 @@ async function loadOfflineDrafts(userId: string, ids?: readonly string[], signal
     } catch { /* Preserve unreadable drafts in SQLite. */ }
   }
   if (ids?.length === 1) {
-    const row = await db.getFirstAsync('SELECT * FROM offline_drafts WHERE user_id=? AND client_order_id=?', userId, ids[0]);
+    const row = await db.getFirstAsync(selectDrafts + ' AND client_order_id=?', userId, ids[0]);
     if (row) decode(row);
   } else if (ids) {
     const unique = [...new Set(ids)];
     for (let offset = 0; offset < unique.length; offset += 400) {
       const batch = unique.slice(offset, offset + 400);
-      const sql = `SELECT * FROM offline_drafts WHERE user_id=? AND client_order_id IN (${batch.map(() => '?').join(',')})`;
+      const sql = `${selectDrafts} AND client_order_id IN (${batch.map(() => '?').join(',')})`;
       for await (const row of db.getEachAsync(sql, userId, ...batch)) decode(row);
     }
   } else {
     // A native cursor transfers one document per turn. Sorting the decoded
     // references also avoids SQLite sorting multi-MB order/payload strings.
-    for await (const row of db.getEachAsync('SELECT * FROM offline_drafts WHERE user_id=?', userId)) decode(row);
+    for await (const row of db.getEachAsync(selectDrafts, userId)) decode(row);
     drafts.sort((a, b) => a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0);
   }
   return drafts;
@@ -491,8 +495,8 @@ async function writeDraft(tx: SQLiteDatabase, userId: string, draft: StoredOffli
   if (delivery) throw new Error('Этот заказ уже отправляется. Дождитесь подтверждения API. Другие заказы можно редактировать.');
   // The editor's UI guid can still be null while its first save is finishing.
   // The client identity, not the temporary row id, identifies the document.
-  const existing = await tx.getFirstAsync<{ id: string; client_revision: number; apiScope: string | null }>(
-    `SELECT id, client_revision, CASE WHEN json_type(order_json,'$._deviceApiBaseUrl')='text'
+  const existing = await tx.getFirstAsync<{ id: string; client_revision: number; created_at: string; apiScope: string | null }>(
+    `SELECT id, client_revision, created_at, CASE WHEN json_type(order_json,'$._deviceApiBaseUrl')='text'
       THEN json_extract(order_json,'$._deviceApiBaseUrl') END AS apiScope
       FROM offline_drafts WHERE user_id = ? AND client_order_id = ?`,
     userId, draft.clientOrderId
@@ -533,18 +537,25 @@ async function writeDraft(tx: SQLiteDatabase, userId: string, draft: StoredOffli
       VALUES (?, ?, ?, ?, ?)
     `, userId, id, text(item?.lineGuid) || `line-${index}`, text(item?.productGuid) || '', JSON.stringify(item));
   }
+  // ON CONFLICT preserves the stored id and creation time. Only the editor
+  // that updated a known row with both matching may reuse its in-memory copy.
+  return existing?.id === draft.id && existing.created_at === draft.createdAt;
 }
 
 /** Persist only the intended changes, never replace another workspace's drafts. */
 export async function applyOfflineDraftChanges(
   userId: string,
   upserts: StoredOfflineDraft[],
-  removals: Pick<StoredOfflineDraft, 'clientOrderId' | 'clientRevision'>[] = []
+  removals: Pick<StoredOfflineDraft, 'clientOrderId' | 'clientRevision'>[] = [],
+  writer?: symbol,
 ) {
   const db = await getCatalogDatabase();
   if (!db) throw new Error('SQLite draft storage is unavailable');
+  let verifiedWriter = writer;
   await withSQLiteWriteTransaction(db, async (tx) => {
-    for (const draft of upserts) await writeDraft(tx, userId, draft);
+    for (const draft of upserts) {
+      if (!await writeDraft(tx, userId, draft)) verifiedWriter = undefined;
+    }
     for (const removed of removals) {
       const candidate = await tx.getFirstAsync<{ order_json: string }>(`SELECT order_json FROM offline_drafts WHERE user_id=? AND client_order_id=? AND client_revision=?`,
       userId, removed.clientOrderId, removed.clientRevision);
@@ -563,7 +574,9 @@ export async function applyOfflineDraftChanges(
     }
   });
   const draftIds = [...new Set([...upserts, ...removals].map(draft => draft.clientOrderId))];
-  if (draftIds.length) emitOrderOutboxChange({ userId, draftIds });
+  if (draftIds.length) emitOrderOutboxChange({
+    userId, draftIds, ...(verifiedWriter && !removals.length && { writer: verifiedWriter }),
+  });
   return true;
 }
 
